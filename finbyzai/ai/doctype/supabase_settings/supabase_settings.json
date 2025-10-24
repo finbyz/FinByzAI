@@ -1,0 +1,51 @@
+{
+ "actions": [],
+ "creation": "2025-09-15 16:46:07.977946",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "connection_string"
+ ],
+ "fields": [
+  {
+   "fieldname": "connection_string",
+   "fieldtype": "Password",
+   "in_list_view": 1,
+   "label": "Postgres Connection String",
+   "reqd": 1
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2025-09-18 16:34:20.112709",
+ "modified_by": "Administrator",
+ "module": "AI",
+ "name": "Supabase Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "AI Automation",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

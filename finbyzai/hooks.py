@@ -213,3 +213,14 @@ app_license = "MIT"
 # auth_hooks = [
 # 	"finbyzai.auth.validate"
 # ]
+
+fixtures = [
+    "LLM",
+    "AI Agent",
+    {
+        "doctype": "Custom Field",
+        "filters": [
+            ["module", "=", "FinByz AI"]
+        ]
+    }
+]

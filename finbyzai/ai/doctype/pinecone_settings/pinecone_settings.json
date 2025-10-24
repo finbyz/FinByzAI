@@ -1,0 +1,56 @@
+{
+ "actions": [],
+ "creation": "2025-09-15 16:46:08.103931",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "api_key",
+  "environment"
+ ],
+ "fields": [
+  {
+   "fieldname": "api_key",
+   "fieldtype": "Password",
+   "label": "API Key"
+  },
+  {
+   "description": "Optional. For legacy env or Host URL for v2.",
+   "fieldname": "environment",
+   "fieldtype": "Data",
+   "label": "Environment / Host"
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2025-09-18 16:34:09.839127",
+ "modified_by": "Administrator",
+ "module": "AI",
+ "name": "Pinecone Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "AI Automation",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

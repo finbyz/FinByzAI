@@ -1,0 +1,123 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-09-11 12:14:15.747119",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "title",
+  "content",
+  "subreddit",
+  "shedule_time",
+  "post_now",
+  "status",
+  "reddit__post_url",
+  "reddit_post_id",
+  "upvotes",
+  "comments",
+  "last_synced",
+  "posted_at",
+  "error_message"
+ ],
+ "fields": [
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "title"
+  },
+  {
+   "fieldname": "content",
+   "fieldtype": "Text",
+   "label": "Content"
+  },
+  {
+   "fieldname": "subreddit",
+   "fieldtype": "Data",
+   "label": "Subreddit"
+  },
+  {
+   "fieldname": "shedule_time",
+   "fieldtype": "Datetime",
+   "label": "Shedule time"
+  },
+  {
+   "default": "0",
+   "fieldname": "post_now",
+   "fieldtype": "Check",
+   "label": "post_now"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status"
+  },
+  {
+   "fieldname": "reddit__post_url",
+   "fieldtype": "Data",
+   "label": "reddit _post_url"
+  },
+  {
+   "fieldname": "reddit_post_id",
+   "fieldtype": "Data",
+   "label": "reddit_post_id"
+  },
+  {
+   "fieldname": "upvotes",
+   "fieldtype": "Int",
+   "label": "upvotes"
+  },
+  {
+   "fieldname": "comments",
+   "fieldtype": "Int",
+   "label": "comments"
+  },
+  {
+   "fieldname": "last_synced",
+   "fieldtype": "Datetime",
+   "label": "last_synced"
+  },
+  {
+   "fieldname": "posted_at",
+   "fieldtype": "Datetime",
+   "label": "posted_at"
+  },
+  {
+   "fieldname": "error_message",
+   "fieldtype": "Text",
+   "label": "error_message"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2025-09-25 14:36:27.235261",
+ "modified_by": "Administrator",
+ "module": "AI",
+ "name": "Reddit Campaign",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "if_owner": 1,
+   "read": 1,
+   "role": "Social Media Manager",
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
