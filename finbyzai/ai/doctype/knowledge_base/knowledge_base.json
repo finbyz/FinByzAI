@@ -1,0 +1,112 @@
+{
+ "actions": [],
+ "creation": "2025-09-10 17:49:13.072425",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "title",
+  "provider",
+  "embeding_model",
+  "vector_store",
+  "column_break_heaw",
+  "description",
+  "section_break_xavf",
+  "documents"
+ ],
+ "fields": [
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Title",
+   "unique": 1
+  },
+  {
+   "fieldname": "provider",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Provider",
+   "options": "LLM Provider",
+   "reqd": 1
+  },
+  {
+   "fieldname": "embeding_model",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Embeding Model",
+   "options": "LLM",
+   "reqd": 1
+  },
+  {
+   "fieldname": "vector_store",
+   "fieldtype": "Select",
+   "label": "Vector Store",
+   "options": "Pinecone\nQdrant\nSupabase\nChromaDB"
+  },
+  {
+   "fieldname": "documents",
+   "fieldtype": "Table",
+   "label": "Documents",
+   "options": "Knowledge Document"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  },
+  {
+   "fieldname": "column_break_heaw",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_break_xavf",
+   "fieldtype": "Section Break"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2025-09-25 14:33:54.352671",
+ "modified_by": "Administrator",
+ "module": "AI",
+ "name": "Knowledge Base",
+ "naming_rule": "By script",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "AI Automation",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "role": "Social Media Manager",
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title"
+}

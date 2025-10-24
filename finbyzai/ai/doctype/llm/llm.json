@@ -1,0 +1,148 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "prompt",
+ "creation": "2025-05-26 12:07:28.498143",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "title",
+  "enabled",
+  "column_break_utmd",
+  "provider",
+  "properties_section",
+  "is_reasoning",
+  "supports_vision",
+  "supports_image_generation",
+  "is_embedding_model",
+  "column_break_jpjj",
+  "size"
+ ],
+ "fields": [
+  {
+   "allow_in_quick_entry": 1,
+   "fieldname": "provider",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Provider",
+   "options": "LLM Provider",
+   "reqd": 1
+  },
+  {
+   "allow_in_quick_entry": 1,
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_utmd",
+   "fieldtype": "Column Break"
+  },
+  {
+   "allow_in_quick_entry": 1,
+   "default": "1",
+   "description": "Used to disable usage if the model is not working or is outdated",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_standard_filter": 1,
+   "label": "Enabled"
+  },
+  {
+   "default": "0",
+   "description": "Whether this is a reasoning LLM",
+   "fieldname": "is_reasoning",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Is Reasoning"
+  },
+  {
+   "fieldname": "properties_section",
+   "fieldtype": "Section Break",
+   "label": "Properties"
+  },
+  {
+   "fieldname": "column_break_jpjj",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Rough classifier of model size, smaller models are usually faster",
+   "fieldname": "size",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Size",
+   "options": "Very Small\nSmall\nMedium\nLarge"
+  },
+  {
+   "default": "0",
+   "description": "Whether the model can process images provided as input",
+   "fieldname": "supports_vision",
+   "fieldtype": "Check",
+   "label": "Supports Vision"
+  },
+  {
+   "default": "0",
+   "description": "Whether the model can generate images provided as input",
+   "fieldname": "supports_image_generation",
+   "fieldtype": "Check",
+   "label": "Supports image Generation"
+  },
+  {
+   "default": "0",
+   "description": "Whether the model for embeddings",
+   "fieldname": "is_embedding_model",
+   "fieldtype": "Check",
+   "label": "Is Embedding Model"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2025-09-25 14:37:08.707444",
+ "modified_by": "Administrator",
+ "module": "AI",
+ "name": "LLM",
+ "naming_rule": "Set by user",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "AI Automation",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Social Media Manager",
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "show_title_field_in_link": 1,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title"
+}
