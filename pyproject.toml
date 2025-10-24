@@ -9,8 +9,18 @@ readme = "README.md"
 dynamic = ["version"]
 dependencies = [
     # "frappe~=15.0.0" # Installed and managed by bench.
+    "langchain~=0.3.27",
+    "langchain-core~=0.3.74",
+    "langchain-litellm~=0.2.3",
+    "langchain-google-genai~=2.1.8",
+    "google-genai~=1.32.0",
+    "json-schema-to-pydantic~=0.4.1",
+    "langchain-chroma~=0.2.6",
+    "langchain-pinecone~=0.2.12",
+    "langchain-qdrant~=0.2.1",
+    "langchain-postgres~=0.0.15",
+    "langgraph~=0.6.7"
 ]
-
 [build-system]
 requires = ["flit_core >=3.4,<4"]
 build-backend = "flit_core.buildapi"
