@@ -162,7 +162,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-09-25 14:34:27.873277",
+ "modified": "2025-11-12 09:58:46.698786",
  "modified_by": "Administrator",
  "module": "AI",
  "name": "AI Agent",
@@ -203,5 +203,6 @@
  "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
- "states": []
+ "states": [],
+ "track_changes": 1
 }

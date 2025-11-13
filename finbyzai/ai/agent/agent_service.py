@@ -155,6 +155,7 @@ class AgentService:
                 tools=tools,
                 prompt=ChatPromptTemplate.from_messages(self.chat_messages),
                 name=self.agent_doc.name,
+                output_schema = self.agent_doc.output_schema
             )
             self._agent_instance = agent
             return agent
