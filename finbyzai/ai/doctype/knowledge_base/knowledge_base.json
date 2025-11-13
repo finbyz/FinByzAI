@@ -12,7 +12,9 @@
   "column_break_heaw",
   "description",
   "section_break_xavf",
-  "documents"
+  "documents",
+  "notes",
+  "links"
  ],
  "fields": [
   {
@@ -61,12 +63,24 @@
   {
    "fieldname": "section_break_xavf",
    "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Table",
+   "label": "Notes",
+   "options": "AI Note"
+  },
+  {
+   "fieldname": "links",
+   "fieldtype": "Table",
+   "label": "Links",
+   "options": "AI Links"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-11-05 12:05:54.524919",
+ "modified": "2025-11-13 15:01:03.783342",
  "modified_by": "Administrator",
  "module": "AI",
  "name": "Knowledge Base",

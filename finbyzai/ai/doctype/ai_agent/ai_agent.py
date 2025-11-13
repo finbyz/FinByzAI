@@ -1,8 +1,7 @@
 from finbyzai.ai.agent.agent_service import AgentService
 import frappe
 from frappe.model.document import Document
-import os
-
+import json
 
 
 class AIAgent(Document):
@@ -42,30 +41,89 @@ class AIAgent(Document):
         Test the AI agent with automatic memory and session management.
         
         Args:
-            query (str): The test query
-            test_type (str): Type of test (simple, workflow)
+            input (str): The test query from the dialog
+            **kwargs: Additional variables from the dialog
             
         Returns:
             dict: Test result with response and metadata
         """
         try:
-            query = kwargs.get('input', '')
+            # Get the query from 'input' field
+            query = kwargs.get('input', '').strip()
             
-            response = self.agent_service.invoke(query, **kwargs)
+            if not query:
+                frappe.throw("Query is required")
+            
+            # Remove 'input' from kwargs as we're passing it as 'query' parameter
+            additional_vars = {k: v for k, v in kwargs.items() if k != 'input'}
+            
+            # Log for debugging
+            frappe.logger().info(f"Testing agent with query: {query}")
+            frappe.logger().info(f"Additional variables: {additional_vars}")
+            
+            # Invoke the agent with query and additional variables
+            response = self.agent_service.invoke(query=query, **additional_vars)
+            
+            # Format response based on type
+            formatted_response = self._format_response(response)
             
             return {
                 "success": True,
-                "response": response,
+                "response": formatted_response,
+                "query": query,
+                "variables": additional_vars,
                 "agent_type": self.agent_type,
                 "llm": self.llm if self.agent_type != "Gemini Cache Agent" else self.gemini_cache,
                 "memory_enabled": self.enable_memory,
             }
+            
         except Exception as e:
-            frappe.log_error(f"Error in test_agent: {e}")
+            error_msg = str(e)
+            frappe.log_error(
+                title=f"Error in test_agent for {self.name}",
+                message=f"Query: {kwargs.get('input', '')}\nError: {error_msg}\n\n{frappe.get_traceback()}"
+            )
+            
             return {
                 "success": False,
-                "error": str(e),
-                "query": kwargs.get('query', ''),
+                "error": error_msg,
+                "query": kwargs.get('input', ''),
+                "variables": {k: v for k, v in kwargs.items() if k != 'input'},
                 "agent_type": self.agent_type,
                 "llm": self.llm if self.agent_type != "Gemini Cache Agent" else self.gemini_cache
             }
+    
+    def _format_response(self, response):
+        """Format response based on agent type and response structure"""
+        try:
+            # Handle different response types
+            if isinstance(response, dict):
+                # For agent responses with 'output' key
+                if 'output' in response:
+                    output = response['output']
+                    # If output is a Pydantic model, convert to dict
+                    if hasattr(output, 'model_dump'):
+                        return output.model_dump()
+                    elif hasattr(output, 'dict'):
+                        return output.dict()
+                    return output
+                return response
+            
+            # For Pydantic models
+            elif hasattr(response, 'model_dump'):
+                return response.model_dump()
+            elif hasattr(response, 'dict'):
+                return response.dict()
+            
+            # For string responses
+            elif isinstance(response, str):
+                return response
+            
+            # For other objects, try to convert to string
+            else:
+                return str(response)
+                
+        except Exception as e:
+            frappe.logger().error(f"Error formatting response: {e}")
+            return str(response)
+    
