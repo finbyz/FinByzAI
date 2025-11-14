@@ -103,7 +103,7 @@ class KnowledgeBase(Document):
             
             document.is_processed = 1
         # Process notes
-        for note in self.links:
+        for note in self.notes:
             if note.is_processed: 
                 continue
             
