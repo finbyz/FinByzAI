@@ -19,7 +19,8 @@ dependencies = [
     "langchain-pinecone~=0.2.12",
     "langchain-qdrant~=0.2.1",
     "langchain-postgres~=0.0.15",
-    "langgraph~=0.6.7"
+    "langgraph~=0.6.7",
+    "PyMuPDF~=1.26.5"
 ]
 [build-system]
 requires = ["flit_core >=3.4,<4"]
