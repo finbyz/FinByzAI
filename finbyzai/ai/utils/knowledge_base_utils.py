@@ -80,15 +80,10 @@ def get_file_path_from_url(file_url: str) -> str:
     Returns:
         Absolute file path
     """
-    if file_url.startswith("/private/files/"):
-        return os.path.join(
-            frappe.get_site_path("private", "files"), 
-            os.path.basename(file_url)
-        )
-    else:
-        # Remove leading slash if present
-        file_url = file_url.lstrip('/')
-        return frappe.get_site_path('public', file_url)
+    file_doc = frappe.get_doc("File", {"file_url": file_url})
+    file_path = file_doc.get_full_path()
+    return file_path
+    
 
 
 def validate_file_exists(file_url: str) -> bool:
