@@ -5,7 +5,8 @@
 Utility functions for extracting text content from various file formats and web links.
 These functions are decoupled from the Knowledge Document class for reusability.
 """
-
+from pathlib import Path
+import tempfile
 import fitz
 import frappe
 import os
@@ -70,20 +71,70 @@ def is_web_url(file_path: str) -> bool:
         return False
 
 
-def get_file_path_from_url(file_url: str) -> str:
+def get_file_path_from_url(file_url: str) -> Tuple[str, bool]:
     """
     Convert file URL to absolute file path.
+    Handles both local files and DFP external storage files.
     
     Args:
         file_url: File URL (e.g., '/files/document.pdf')
         
     Returns:
-        Absolute file path
+        Absolute file path (may be temporary for external storage)
     """
-    file_doc = frappe.get_doc("File", {"file_url": file_url})
-    file_path = file_doc.get_full_path()
-    return file_path
+    try:
+        file_doc = frappe.get_doc("File", {"file_url": file_url})
+    except Exception:
+        raise Exception("File not found")
     
+    if not file_doc or not file_doc.is_downloadable():
+        raise Exception("File not available")
+    
+    # Check if this is a DFP external storage file
+    has_dfp_storage = (
+        hasattr(file_doc, 'dfp_external_storage_doc') and 
+        file_doc.dfp_external_storage_doc and
+        hasattr(file_doc, 'dfp_external_storage_download_file')
+    )
+    
+    if has_dfp_storage:
+        try:
+            file_content = file_doc.dfp_external_storage_download_file()
+            
+            if not file_content:
+                raise Exception("Failed to download file from external storage")
+            
+            file_name = getattr(file_doc, 'file_name', '') or file_url
+            file_ext = Path(file_name).suffix or ''
+            
+            temp_fd, temp_path = tempfile.mkstemp(suffix=file_ext, prefix='dfp_')
+            
+            try:
+                with os.fdopen(temp_fd, 'wb') as temp_file:
+                    if isinstance(file_content, bytes):
+                        temp_file.write(file_content)
+                    elif hasattr(file_content, 'read'):
+                        temp_file.write(file_content.read())
+                    else:
+                        temp_file.write(str(file_content).encode('utf-8'))
+                
+                return temp_path, True
+            except Exception as write_error:
+                # Clean up temp file if writing fails
+                try:
+                    os.unlink(temp_path)
+                except:
+                    pass
+                raise Exception(f"Failed to write temporary file: {str(write_error)}")
+                
+        except Exception as dfp_error:
+            frappe.log_error(f"Error downloading DFP file {file_url}: {str(dfp_error)}")
+            raise Exception(f"Failed to download file from external storage: {str(dfp_error)}")
+    else:
+        # Standard local file - get the full path
+        file_path = file_doc.get_full_path()
+        return file_path, False
+
 
 
 def validate_file_exists(file_url: str) -> bool:
@@ -406,27 +457,29 @@ def extract_text_from_source(source: str, source_type: Optional[str] = None) -> 
             }
         
         # Get absolute file path
-        file_path = get_file_path_from_url(source)
-        
-        # Route to appropriate extraction function
-        if file_type == '.txt':
-            success, content, error = extract_text_from_file(file_path)
-        elif file_type == '.csv':
-            success, content, error = extract_csv_to_text(file_path)
-        elif file_type in ['.xlsx', '.xls']:
-            success, content, error = extract_excel_to_text(file_path)
-        elif file_type == '.pdf':
-            # PDF extraction requires external function
-            success, content, error = extract_pdf_to_text(file_path)
-            
-        else:
-            return {
-                'success': False,
-                'content': None,
-                'error': f'No extraction handler for {file_type}',
-                'source_type': 'file',
-                'file_type': file_type
-            }
+        file_path, is_temp = get_file_path_from_url(source)
+        try:
+            # Route to appropriate extraction function
+            if file_type == '.txt':
+                success, content, error = extract_text_from_file(file_path)
+            elif file_type == '.csv':
+                success, content, error = extract_csv_to_text(file_path)
+            elif file_type in ['.xlsx', '.xls']:
+                success, content, error = extract_excel_to_text(file_path)
+            elif file_type == '.pdf':
+                # PDF extraction requires external function
+                success, content, error = extract_pdf_to_text(file_path)
+            else:
+                return {
+                    'success': False,
+                    'content': None,
+                    'error': f'No extraction handler for {file_type}',
+                    'source_type': 'file',
+                    'file_type': file_type
+                }
+        finally:
+            if is_temp:
+                os.unlink(file_path)
         
         return {
             'success': success,
