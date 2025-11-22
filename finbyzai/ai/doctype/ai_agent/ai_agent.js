@@ -121,44 +121,7 @@ frappe.ui.form.on("AI Agent", {
                     freeze_message: __("Testing AI Agent... Please wait"),
                     callback: function(r) {
                         console.log("Response from test_agent:", r);
-                        
-                        if (r.message) {
-                            if (r.message.success) {
-                                // Format and display successful response
-                                let response_html = frm.trigger("format_test_result", r.message);
-                                
-                                frappe.msgprint({
-                                    title: __('Test Result'),
-                                    message: response_html,
-                                    indicator: 'green',
-                                    wide: true
-                                });
-                            } else {
-                                // Display error
-                                frappe.msgprint({
-                                    title: __('Test Failed'),
-                                    message: `
-                                        <div style="color: red;">
-                                            <strong>Error:</strong> ${r.message.error || 'Unknown error'}
-                                        </div>
-                                        <div style="margin-top: 10px;">
-                                            <strong>Query:</strong> ${r.message.query || 'N/A'}
-                                        </div>
-                                        <div style="margin-top: 10px;">
-                                            <strong>Agent Type:</strong> ${r.message.agent_type || 'N/A'}
-                                        </div>
-                                    `,
-                                    indicator: 'red',
-                                    wide: true
-                                });
-                            }
-                        } else {
-                            frappe.msgprint({
-                                title: __('Error'),
-                                message: __('No response received from agent'),
-                                indicator: 'red'
-                            });
-                        }
+                        return
                     },
                     error: function(err) {
                         console.error("Error calling test_agent:", err);

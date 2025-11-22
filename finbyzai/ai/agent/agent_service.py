@@ -164,7 +164,6 @@ class AgentService:
                     else HumanMessage
                 )
                 messages.insert(0, msg_cls(content="{format_instructions}"))
-        frappe.log_error(f"Agent Messages", f"Agent Messages {messages}")
         return messages
 
     def get_output_parser(self):
