@@ -52,7 +52,13 @@ class AIAgent(Document):
             query = kwargs.get('input', '').strip()
             
             if not query:
-                frappe.throw("Query is required")
+                return {
+                    "success": False,
+                    "error": "Query is required",
+                    "query": "",
+                    "variables": {},
+                    "agent_type": self.agent_type
+                }
             
             # Remove 'input' from kwargs as we're passing it as 'query' parameter
             additional_vars = {k: v for k, v in kwargs.items() if k != 'input'}
@@ -65,6 +71,10 @@ class AIAgent(Document):
             response = self.agent_service.invoke(query=query, **additional_vars)
             
             # Format response based on type
+            if type(response) == str:
+                frappe.msgprint(response)
+            else:
+                frappe.msgprint(str(response.model_dump()))
             formatted_response = self._format_response(response)
             
             return {
@@ -92,38 +102,3 @@ class AIAgent(Document):
                 "agent_type": self.agent_type,
                 "llm": self.llm if self.agent_type != "Gemini Cache Agent" else self.gemini_cache
             }
-    
-    def _format_response(self, response):
-        """Format response based on agent type and response structure"""
-        try:
-            # Handle different response types
-            if isinstance(response, dict):
-                # For agent responses with 'output' key
-                if 'output' in response:
-                    output = response['output']
-                    # If output is a Pydantic model, convert to dict
-                    if hasattr(output, 'model_dump'):
-                        return output.model_dump()
-                    elif hasattr(output, 'dict'):
-                        return output.dict()
-                    return output
-                return response
-            
-            # For Pydantic models
-            elif hasattr(response, 'model_dump'):
-                return response.model_dump()
-            elif hasattr(response, 'dict'):
-                return response.dict()
-            
-            # For string responses
-            elif isinstance(response, str):
-                return response
-            
-            # For other objects, try to convert to string
-            else:
-                return str(response)
-                
-        except Exception as e:
-            frappe.logger().error(f"Error formatting response: {e}")
-            return str(response)
-    
