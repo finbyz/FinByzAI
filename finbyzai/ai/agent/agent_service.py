@@ -1,5 +1,7 @@
+import base64
 from enum import Enum
 import json
+import mimetypes
 from typing import Union
 from finbyzai.ai.agent.react_agent import ReactAgent
 from finbyzai.ai.agent.structrued_agent import create_structured_agent
@@ -18,6 +20,8 @@ from langchain.memory import (
     ConversationSummaryMemory,
     ConversationBufferWindowMemory,
 )
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+
 import warnings
 
 import os
@@ -67,24 +71,100 @@ class AgentService:
 
     @property
     def chat_messages(self):
-        """Convert stored messages to LangChain message format"""
+        """
+        Convert stored messages into LangChain message objects.
+        Message format:
+        - type: system | human | ai
+        - content_type: text | image | file
+        - content: raw value (text, URL, filepath, base64)
+        """
+
+        MESSAGE_CLASS_MAP = {
+            "system": SystemMessage,
+            "human": HumanMessage,
+            "ai": AIMessage,
+        }
+
         messages = []
+
         for msg in self.agent_doc.messages:
-            messages.append((msg.type, msg.content))
+            message_class = MESSAGE_CLASS_MAP.get(msg.type)
+            if not message_class:
+                continue
 
-        if self.agent_doc.output_schema:
-            for i, (mtype, content) in enumerate(messages):
-                if mtype == "system":
-                    messages[i] = (mtype, content + "\n\n{format_instructions}")
-                    break
+            content_parts = []
+
+            if msg.content_type == "text":
+                content_parts.append({
+                    "type": "text",
+                    "text": msg.content or ""
+                })
+            elif msg.content_type == "image":
+                image_content = msg.content
+
+                if image_content:
+                    if image_content.startswith(("http://", "https://")):
+                        content_parts.append({
+                            "type": "image_url",
+                            "image_url": image_content
+                        })
+                    else:
+                        content_parts.append({
+                            "type": "image",
+                            "base64": image_content
+                        })
+            elif msg.content_type == "file":
+                doc_content = msg.content
+
+                if doc_content.startswith(("http://", "https://")):
+                    content_parts.append({
+                        "type": "document",
+                        "url": doc_content
+                    })
+                else:
+                    content_parts.append({
+                        "type": "document",
+                        "url": doc_content
+                    })
+
+            if not content_parts:
+                content = ""
+            elif len(content_parts) == 1 and content_parts[0]["type"] == "text":
+                content = content_parts[0]["text"]
             else:
-                message_type = (
-                    "system"
-                    if self.agent_doc.agent_type != "Gemini Cache Agent"
-                    else "human"
-                )
-                messages.insert(0, (message_type, "{format_instructions}"))
+                content = content_parts
 
+            messages.append(message_class(content=content))
+        if self.agent_doc.output_schema:
+            system_idx = next(
+                (i for i, m in enumerate(messages) if isinstance(m, SystemMessage)),
+                None
+            )
+
+            if system_idx is not None:
+                old_content = messages[system_idx].content
+
+                if isinstance(old_content, str):
+                    messages[system_idx].content = old_content + "\n\n{format_instructions}"
+
+                else:
+                    text_part = next((p for p in old_content if p["type"] == "text"), None)
+                    if text_part:
+                        text_part["text"] += "\n\n{format_instructions}"
+                    else:
+                        old_content.insert(0, {
+                            "type": "text",
+                            "text": "{format_instructions}"
+                        })
+
+            else:
+                msg_cls = (
+                    SystemMessage
+                    if self.agent_doc.agent_type != "Gemini Cache Agent"
+                    else HumanMessage
+                )
+                messages.insert(0, msg_cls(content="{format_instructions}"))
+        frappe.log_error(f"Agent Messages", f"Agent Messages {messages}")
         return messages
 
     def get_output_parser(self):
