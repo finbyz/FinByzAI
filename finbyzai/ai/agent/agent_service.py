@@ -72,82 +72,108 @@ class AgentService:
     @property
     def chat_messages(self):
         """
-        Convert stored messages into LangChain message objects.
+        Convert stored messages into LangChain message objects compatible with ChatPromptTemplate.
         Message format:
         - type: system | human | ai
         - content_type: text | image | file
         - content: raw value (text, URL, filepath, base64)
+        
+        Returns a list of tuples (role, content) suitable for ChatPromptTemplate.from_messages()
         """
-
-        MESSAGE_CLASS_MAP = {
-            "system": SystemMessage,
-            "human": HumanMessage,
-            "ai": AIMessage,
-        }
-
         messages = []
-
+        
         for msg in self.agent_doc.messages:
-            message_class = MESSAGE_CLASS_MAP.get(msg.type)
-            if not message_class:
+            # Map message types to LangChain roles
+            role_map = {
+                "system": "system",
+                "human": "user",
+                "ai": "assistant",
+            }
+            role = role_map.get(msg.type)
+            if not role:
                 continue
-
+            
             content_parts = []
-
+            
             if msg.content_type == "text":
+                # Text content - preserve template variables
                 content_parts.append({
                     "type": "text",
                     "text": msg.content or ""
                 })
+                
             elif msg.content_type == "image":
-                image_content = msg.content
+                input_value = msg.content.strip()
 
-                if image_content:
-                    if image_content.startswith(("http://", "https://")):
-                        content_parts.append({
-                            "type": "image_url",
-                            "image_url": image_content
-                        })
-                    else:
-                        content_parts.append({
-                            "type": "image",
-                            "base64": image_content
-                        })
+                if input_value.startswith("base64:"):
+                    source_type, image_content = input_value.split(":", 1)
+                elif input_value.startswith("file-id:"):
+                    source_type, image_content = input_value.split(":", 1)
+                elif input_value.startswith("image_url:"):
+                    source_type, image_content = input_value.split(":", 1)
+                else:
+                    source_type = "image_url"
+                    image_content = input_value
+                
+                mime_type = 'image/jpeg'
+                parts = {
+                    "type": "image",
+                    source_type: image_content,
+                }
+                if source_type == "base64":
+                    parts["mime_type"] = mime_type
+                content_parts.append(parts)
+     
             elif msg.content_type == "file":
                 doc_content = msg.content
-
-                if doc_content.startswith(("http://", "https://")):
-                    content_parts.append({
-                        "type": "document",
-                        "url": doc_content
-                    })
-                else:
-                    content_parts.append({
-                        "type": "document",
-                        "url": doc_content
-                    })
-
+                if doc_content:
+                    if doc_content.startswith(("http://", "https://")):
+                        # URL-based document
+                        content_parts.append({
+                            "type": "document",
+                            "url": doc_content
+                        })
+                    elif doc_content.startswith("file-"):
+                        # Provider-managed file ID
+                        content_parts.append({
+                            "type": "document",
+                            "file_id": doc_content
+                        })
+                    else:
+                        # Assume it's a file path or base64
+                        mime_type = getattr(msg, 'mime_type', 'application/pdf')
+                        content_parts.append({
+                            "type": "document",
+                            "base64": doc_content,
+                            "mime_type": mime_type
+                        })
+            
+            # Format content based on parts
             if not content_parts:
                 content = ""
             elif len(content_parts) == 1 and content_parts[0]["type"] == "text":
+                # Single text message - use string format for template compatibility
                 content = content_parts[0]["text"]
             else:
+                # Multi-part message
                 content = content_parts
-
-            messages.append(message_class(content=content))
+            
+            messages.append((role, content))
+        
+        # Handle output schema if present
         if self.agent_doc.output_schema:
             system_idx = next(
-                (i for i, m in enumerate(messages) if isinstance(m, SystemMessage)),
+                (i for i, (role, _) in enumerate(messages) if role == "system"),
                 None
             )
-
+            
             if system_idx is not None:
-                old_content = messages[system_idx].content
-
+                # Append to existing system message
+                role, old_content = messages[system_idx]
                 if isinstance(old_content, str):
-                    messages[system_idx].content = old_content + "\n\n{format_instructions}"
-
+                    messages[system_idx] = (role, old_content + "\n\n{format_instructions}")
                 else:
+                    # Multi-part content
                     text_part = next((p for p in old_content if p["type"] == "text"), None)
                     if text_part:
                         text_part["text"] += "\n\n{format_instructions}"
@@ -156,16 +182,16 @@ class AgentService:
                             "type": "text",
                             "text": "{format_instructions}"
                         })
-
             else:
-                msg_cls = (
-                    SystemMessage
+                # Insert new system message at the beginning
+                role = (
+                    "system"
                     if self.agent_doc.agent_type != "Gemini Cache Agent"
-                    else HumanMessage
+                    else "user"
                 )
-                messages.insert(0, msg_cls(content="{format_instructions}"))
+                messages.insert(0, (role, "{format_instructions}"))
+        
         return messages
-
     def get_output_parser(self):
         if self.agent_doc.output_schema:
             dynamic_model = create_model(
