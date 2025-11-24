@@ -1,5 +1,6 @@
 [
  {
+  "api_key": null,
   "disabled": 0,
   "docstatus": 0,
   "doctype": "LLM Provider",
@@ -8,14 +9,16 @@
   "provider": "Google"
  },
  {
+  "api_key": "********************************************************************************************************************************************************************",
   "disabled": 0,
   "docstatus": 0,
   "doctype": "LLM Provider",
-  "modified": "2025-08-27 14:55:15.287976",
+  "modified": "2025-11-24 12:44:04.375766",
   "name": "OpenAI",
   "provider": "OpenAI"
  },
  {
+  "api_key": null,
   "disabled": 0,
   "docstatus": 0,
   "doctype": "LLM Provider",
@@ -24,6 +27,7 @@
   "provider": "Anthropic"
  },
  {
+  "api_key": null,
   "disabled": 0,
   "docstatus": 0,
   "doctype": "LLM Provider",
