@@ -1,8 +1,7 @@
-import base64
 from enum import Enum
 import json
-import mimetypes
-from typing import Union
+from typing import Any, Optional, Union
+from finbyzai.ai.agent.agent_as_tool import AgentAsTool
 from finbyzai.ai.agent.react_agent import ReactAgent
 from finbyzai.ai.agent.structrued_agent import create_structured_agent
 import frappe
@@ -20,8 +19,7 @@ from langchain.memory import (
     ConversationSummaryMemory,
     ConversationBufferWindowMemory,
 )
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-
+from langchain.tools import BaseTool
 import warnings
 
 import os
@@ -233,12 +231,16 @@ class AgentService:
 
         if self.agent_doc.tools:
             for ai_agent_tool in self.agent_doc.tools:
-                tool = frappe.get_doc("AI Tool", ai_agent_tool.tool)
-                tools_list.append(tool.get_tool())
+                tool_doc = frappe.get_doc("AI Tool", ai_agent_tool.tool)
+                tool = tool_doc.get_tool()
+                if tool:
+                    tools_list.append(tool)
         if self.agent_doc.knowledge_base:
             kb = frappe.get_doc("Knowledge Base", self.agent_doc.knowledge_base)
             vs = kb.get_vector_store()
-            tools_list.append(vs.as_tool())
+            vs_tool = vs.as_tool()
+            if vs_tool:
+                tools_list.append(vs_tool)
 
         return tools_list
 
@@ -554,3 +556,26 @@ class AgentService:
         except Exception as e:
             frappe.log_error(f"Error in _invoke_basic_chain", e)
             raise
+
+
+    def as_tool(self, name: Optional[str] = None, description: Optional[str] = None) -> BaseTool:
+        """
+        Convert this agent instance into a tool that can be used by other agents.
+        
+        Args:
+            name: Custom name for the tool
+            description: Custom description for the tool
+            
+        Returns:
+            BaseTool: A tool that wraps this agent
+        """
+        
+        tool_name = name or f"{self.agent_doc.name}_tool"
+        
+        return AgentAsTool(
+            agent_service=self,
+            name=tool_name,
+            description=description or f"Tool that executes the {self.agent_doc.name} agent"
+        )
+        
+    
