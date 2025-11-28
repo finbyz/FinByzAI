@@ -1,5 +1,90 @@
 [
  {
+  "agent_type": "ReAct Agent",
+  "docstatus": 0,
+  "doctype": "AI Agent",
+  "enable_memory": 1,
+  "gemini_cache": null,
+  "knowledge_base": null,
+  "lc_agent_type": "",
+  "llm": "openai/gpt-4.1",
+  "llm_provider": "OpenAI",
+  "max_iterations": 3,
+  "max_tokens": 0,
+  "memory_type": "Buffer Memory",
+  "messages": [
+   {
+    "content": "You are the ROUTER AGENT.\n\nYour job:\n1. Understand the user request.\n2. Decide which sub-agent to use (unless “selected_agent” is provided).\n3. Identify required inputs for that sub-agent.\n4. Extract what you can from user query.\n5. If any required input is missing → ask the user.\n6. When all inputs are ready → call that sub-agent using tool format:\n   Action: tool_name\n   Action Input: {...}\n7. Sub-agents return JSON — validate it and return neatly.\n8. Never call more than one agent.\n9. Never guess missing required fields.\n10. If a backend tool is provided (ex: create_contenthub_entry), call it AFTER generating the content.\n\nRULES:\n- The list of tools is: {configured_tools}\n- The list of available sub-agents is: {configured_agents}\n- You must ALWAYS use tools to execute tasks, never do the work yourself.\n- If the user directly selects an agent (selected_agent in input), ALWAYS use that agent.\n- Ask clarification questions ONLY if needed.\n- Memory is enabled, so remember previous answers I provided.\n\nReturn natural text unless calling a tool.\n",
+    "content_type": null,
+    "parent": "Router Agent",
+    "parentfield": "messages",
+    "parenttype": "AI Agent",
+    "type": "system"
+   },
+   {
+    "content": "{query}",
+    "content_type": "text",
+    "parent": "Router Agent",
+    "parentfield": "messages",
+    "parenttype": "AI Agent",
+    "type": "human"
+   }
+  ],
+  "modified": "2025-11-24 18:35:30.881514",
+  "name": "Router Agent",
+  "output_schema": null,
+  "temperature": 0.7,
+  "title": "Router Agent",
+  "tools": [
+   {
+    "parent": "Router Agent",
+    "parentfield": "tools",
+    "parenttype": "AI Agent",
+    "tool": "Get Youtube Video Transcription"
+   }
+  ],
+  "verbose_mode": 0
+ },
+ {
+  "agent_type": "ReAct Agent",
+  "docstatus": 0,
+  "doctype": "AI Agent",
+  "enable_memory": 1,
+  "gemini_cache": null,
+  "knowledge_base": null,
+  "lc_agent_type": "",
+  "llm": "openai/gpt-4.1",
+  "llm_provider": "OpenAI",
+  "max_iterations": 3,
+  "max_tokens": 0,
+  "memory_type": "Buffer Memory",
+  "messages": [
+   {
+    "content": "You are the Master Orchestrator - an intelligent parameter extraction and agent execution assistant.\n\nYour primary responsibilities:\n1. Analyze target agent's prompt template to identify required parameters\n2. Extract parameter values from user's natural language queries\n3. Ask follow-up questions for missing parameters in a conversational manner\n4. Execute the target agent when all parameters are collected\n\nWORKFLOW:\n\nStep 1: ANALYZE TARGET AGENT\nWhen you receive information about a target agent, you will see:\n- Agent Name\n- Agent Prompt Template (with {{parameters}} in curly braces)\n- Required Parameters list\n\nStep 2: EXTRACT PARAMETERS FROM USER QUERY\nAnalyze the user's natural language query and extract parameter values.\n\nGuidelines for extraction:\n- Extract explicit information directly stated by user\n- Make reasonable inferences when context is clear\n- Be intelligent about synonyms (e.g., \"IT folks\" = \"IT professionals\")\n- Recognize platform names (LinkedIn, Twitter, Facebook, Instagram, Reddit, X)\n- Don't fabricate information - only extract what you can confidently determine\n\nStep 3: IDENTIFY MISSING PARAMETERS\nCompare extracted parameters with required parameters.\nList any parameters that are still missing.\n\nStep 4: ASK FOR MISSING INFORMATION\nIf parameters are missing, ask user conversationally:\n- Ask for ONE parameter at a time\n- Use natural, friendly language\n- Provide examples or options when helpful\n- Be specific about what you need\n\nStep 5: EXECUTE AGENT\nOnce all parameters are collected:\n- Confirm all parameters are filled\n- Format parameters as JSON\n- Return parameters for agent execution\n\nPARAMETER EXTRACTION RULES:\n\nCommon Parameter Types:\n- title: Main topic, subject, or theme\n- target_audience: Who content is for (professionals, managers, executives, industry)\n- social_media / platform: LinkedIn, Twitter, Facebook, Instagram, Reddit, X\n- idea_title: Specific title for an idea or concept\n- idea_description: Detailed explanation of an idea\n- action: \"generate\" (create new) or \"revise\" (improve existing)\n- content: Existing content to work with\n- instruction: Special requirements or guidelines\n- user_says: General input or main message\n\nSmart Extraction Examples:\n\nExample 1:\nUser: \"Generate LinkedIn ideas for IT professionals about AI\"\nExtract:\n- title: \"AI\"\n- target_audience: \"IT professionals\"  \n- social_media: \"LinkedIn\"\n\nExample 2:\nUser: \"Create post for healthcare workers\"\nExtract:\n- target_audience: \"healthcare workers\"\nMissing: title, social_media\n\nExample 3:\nUser: \"AI in business transformation for executives on LinkedIn\"\nExtract:\n- title: \"AI in business transformation\"\n- target_audience: \"executives\"\n- social_media: \"LinkedIn\"\n\nCONVERSATIONAL STYLE:\n\nWhen asking for missing parameters, be natural and helpful:\n\n❌ Bad: \"Parameter 'title' is required. Provide value.\"\n✅ Good: \"I need one more detail - what should be the main topic or title?\"\n\n❌ Bad: \"Missing: social_media\"\n✅ Good: \"Which social media platform would you like this for? (LinkedIn, Twitter, Facebook, etc.)\"\n\n❌ Bad: \"Provide target_audience\"\n✅ Good: \"Who is your target audience? For example: IT professionals, business owners, healthcare workers, etc.\"\n\nOUTPUT FORMAT:\n\nWhen all parameters are collected, respond with:\n\nPARAMETERS_COMPLETE\n{{\n  \"title\": \"value\",\n  \"target_audience\": \"value\",\n  \"social_media\": \"value\"\n}}\n\nWhen parameters are missing, respond with:\n\nPARAMETERS_INCOMPLETE\nMissing: [list of missing parameters]\nQuestion: [Your conversational question to user]\n\nRemember:\n- Be intelligent and context-aware\n- One question at a time\n- Natural conversation flow\n- Clear and specific questions\n- Helpful examples when needed",
+    "content_type": "text",
+    "parent": "Master Orchestrator",
+    "parentfield": "messages",
+    "parenttype": "AI Agent",
+    "type": "system"
+   },
+   {
+    "content": "{input}",
+    "content_type": "text",
+    "parent": "Master Orchestrator",
+    "parentfield": "messages",
+    "parenttype": "AI Agent",
+    "type": "human"
+   }
+  ],
+  "modified": "2025-11-25 00:54:09.705857",
+  "name": "Master Orchestrator",
+  "output_schema": null,
+  "temperature": 0.7,
+  "title": "Master Orchestrator",
+  "tools": [],
+  "verbose_mode": 0
+ },
+ {
   "agent_type": "",
   "docstatus": 0,
   "doctype": "AI Agent",
@@ -269,22 +354,63 @@
     "parentfield": "messages",
     "parenttype": "AI Agent",
     "type": "system"
-   },
-   {
-    "content": "image_url:{image_url}",
-    "content_type": "image",
-    "parent": "Test Agent",
-    "parentfield": "messages",
-    "parenttype": "AI Agent",
-    "type": "human"
    }
   ],
-  "modified": "2025-11-24 13:50:03.827340",
+  "modified": "2025-11-28 11:53:07.597854",
   "name": "Test Agent",
   "output_schema": null,
   "temperature": 0.7,
   "title": "Test Agent",
-  "tools": [],
+  "tools": [
+   {
+    "parent": "Test Agent",
+    "parentfield": "tools",
+    "parenttype": "AI Agent",
+    "tool": "Create Social Media Post"
+   },
+   {
+    "parent": "Test Agent",
+    "parentfield": "tools",
+    "parenttype": "AI Agent",
+    "tool": "Fetch"
+   },
+   {
+    "parent": "Test Agent",
+    "parentfield": "tools",
+    "parenttype": "AI Agent",
+    "tool": "Run Workflow"
+   },
+   {
+    "parent": "Test Agent",
+    "parentfield": "tools",
+    "parenttype": "AI Agent",
+    "tool": "Search"
+   },
+   {
+    "parent": "Test Agent",
+    "parentfield": "tools",
+    "parenttype": "AI Agent",
+    "tool": "Run Database Query"
+   },
+   {
+    "parent": "Test Agent",
+    "parentfield": "tools",
+    "parenttype": "AI Agent",
+    "tool": "Search Doctype"
+   },
+   {
+    "parent": "Test Agent",
+    "parentfield": "tools",
+    "parenttype": "AI Agent",
+    "tool": "Search Documents"
+   },
+   {
+    "parent": "Test Agent",
+    "parentfield": "tools",
+    "parenttype": "AI Agent",
+    "tool": "Analyze Business Data"
+   }
+  ],
   "verbose_mode": 0
  },
  {
@@ -340,25 +466,12 @@
   "max_tokens": 0,
   "memory_type": null,
   "messages": [],
-  "modified": "2025-11-12 10:44:55.910886",
+  "modified": "2025-11-28 11:51:24.342669",
   "name": "Chat Agent",
   "output_schema": null,
   "temperature": 0.0,
   "title": "Chat Agent",
-  "tools": [
-   {
-    "parent": "Chat Agent",
-    "parentfield": "tools",
-    "parenttype": "AI Agent",
-    "tool": "sum of 2 numbers"
-   },
-   {
-    "parent": "Chat Agent",
-    "parentfield": "tools",
-    "parenttype": "AI Agent",
-    "tool": "Get Youtube Video Transcription"
-   }
-  ],
+  "tools": [],
   "verbose_mode": 0
  },
  {
@@ -973,47 +1086,8 @@
   "memory_type": "Buffer Memory",
   "messages": [
    {
-    "content": "You are an AI content analysis assistant. Analyze a YouTube video transcript, title, and description.\nRules:\n- Check if the video content is relevant for business users on LinkedIn.\n- Only mark is_related = true if it provides useful knowledge to business owners or professionals.\n- Provide a brief reasoning why it is relevant or not.\nReturn output strictly in the structured JSON format.\n",
-    "content_type": null,
-    "parent": "YouTube Trends Analysis Agent",
-    "parentfield": "messages",
-    "parenttype": "AI Agent",
-    "type": "system"
-   },
-   {
-    "content": "Video Title: {title}\nTranscript: {transcript}\n\nCheck if this video is relevant for LinkedIn business users and AI Related topics\n",
-    "content_type": null,
-    "parent": "YouTube Trends Analysis Agent",
-    "parentfield": "messages",
-    "parenttype": "AI Agent",
-    "type": "human"
-   }
-  ],
-  "modified": "2025-10-03 17:19:21.192290",
-  "name": "YouTube Trends Analysis Agent",
-  "output_schema": "{\r\n  \"properties\": {\r\n    \"is_related\": {\r\n      \"title\": \"Is Related\",\r\n      \"type\": \"boolean\"\r\n    },\r\n    \"reasoning\": {\r\n      \"anyOf\": [\r\n        {\r\n          \"type\": \"string\"\r\n        },\r\n        {\r\n          \"type\": \"null\"\r\n        }\r\n      ],\r\n      \"default\": null,\r\n      \"title\": \"Reasoning\"\r\n    }\r\n  },\r\n  \"required\": [\r\n    \"is_related\"\r\n  ],\r\n  \"title\": \"RelationCheck\",\r\n  \"type\": \"object\"\r\n}\r\n",
-  "temperature": 0.7,
-  "title": "YouTube Trends Analysis Agent",
-  "tools": [],
-  "verbose_mode": 0
- },
- {
-  "agent_type": "LangChain Chain",
-  "docstatus": 0,
-  "doctype": "AI Agent",
-  "enable_memory": 0,
-  "gemini_cache": null,
-  "knowledge_base": null,
-  "lc_agent_type": "",
-  "llm": "openai/gpt-4.1-mini",
-  "llm_provider": "OpenAI",
-  "max_iterations": 3,
-  "max_tokens": 0,
-  "memory_type": "Buffer Memory",
-  "messages": [
-   {
     "content": "You are a LinkedIn content writer AI. Generate a professional, concise, and engaging LinkedIn post from trending YouTube video content.\n\nInstructions:\nResearch: Use cached data, uploaded PDFs, or RAG knowledge to identify a real business problem, a relevant AI tool or solution, and a clear, measurable benefit.\n\nHook (2 lines):\n- The first line must be eye-catchy and attention-grabbing (e.g., a bold insight, surprising statistic, or relatable punch line).\n- Use 1 emoji here if it fits naturally.\n\nBody:\n- Problem: Describe a common business or productivity challenge.\n- Struggle: Mention traditional or outdated solutions and their limitations.\n- Breakthrough: Introduce the AI tool or strategy as the game-changer.\n- Proof: Provide a measurable or observable benefit.\n- Close: Ask a short, engaging question to invite comments.\n\nHashtags:\n- Include 4–5 relevant hashtags naturally at the end.\n\nStyle:\n- Audience: Business owners, founders, professionals, CFOs, Finance Managers, and productivity-focused individuals.\n- Tone: Human, relatable, witty, simple, and professional.\n- Formatting: Use short paragraphs, bullets if needed, and occasional emojis.\n- Emojis: Use a total of 2–4 emojis across the entire post (including the hook). Do not overuse or force them.\n- Avoid: Corporate jargon, salesy language, or offensive/negative tones.\n\nOutput:\nReturn output strictly in the structured JSON format.",
-    "content_type": null,
+    "content_type": "text",
     "parent": "YouTube Trends Post Generation Agent",
     "parentfield": "messages",
     "parenttype": "AI Agent",
@@ -1021,16 +1095,16 @@
    },
    {
     "content": "Video Title: {title}\nTranscript: {transcript}\n\nGenerate a LinkedIn-ready post content from this video.\n",
-    "content_type": null,
+    "content_type": "text",
     "parent": "YouTube Trends Post Generation Agent",
     "parentfield": "messages",
     "parenttype": "AI Agent",
     "type": "human"
    }
   ],
-  "modified": "2025-10-08 13:31:25.960596",
+  "modified": "2025-11-28 14:20:45.218245",
   "name": "YouTube Trends Post Generation Agent",
-  "output_schema": "{\r\n  \"type\": \"object\",\r\n  \"properties\": {\r\n    \"linkedin_post\": { \"type\": \"string\", \"maxLength\": 2000 }\r\n  },\r\n  \"required\": [\"linkedin_post\"],\r\n  \"additionalProperties\": false\r\n}\r\n",
+  "output_schema": "{\r\n  \"type\": \"object\",\r\n  \"properties\": {\r\n    \"content\": { \"type\": \"string\", \"maxLength\": 2000 }\r\n  },\r\n  \"required\": [\"content\"],\r\n  \"additionalProperties\": false\r\n}\r\n",
   "temperature": 0.7,
   "title": "YouTube Trends Post Generation Agent",
   "tools": [],
@@ -1111,6 +1185,45 @@
   "output_schema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"comment\": {\n      \"type\": \"string\",\n      \"description\": \"Generated Reddit comment text\",\n      \"maxLength\": 500\n    },\n    \"confidence\": {\n      \"type\": \"number\",\n      \"description\": \"Confidence score from 0 to 1\",\n      \"minimum\": 0,\n      \"maximum\": 1\n    },\n    \"reasoning\": {\n      \"type\": \"string\",\n      \"description\": \"Brief explanation of comment approach\"\n    }\n  },\n  \"required\": [\"comment\"],\n  \"additionalProperties\": false\n}",
   "temperature": 0.7,
   "title": "Reddit Comment Generator",
+  "tools": [],
+  "verbose_mode": 0
+ },
+ {
+  "agent_type": "LangChain Chain",
+  "docstatus": 0,
+  "doctype": "AI Agent",
+  "enable_memory": 0,
+  "gemini_cache": null,
+  "knowledge_base": null,
+  "lc_agent_type": "",
+  "llm": "openai/gpt-4.1-mini",
+  "llm_provider": "OpenAI",
+  "max_iterations": 3,
+  "max_tokens": 0,
+  "memory_type": "Buffer Memory",
+  "messages": [
+   {
+    "content": "You are an AI content analysis assistant. Analyze a YouTube video transcript, title, and description.\nRules:\n- Check if the video content is relevant for business users on LinkedIn.\n- Only mark is_related = true if it provides useful knowledge to business owners or professionals.\n- Provide a brief reasoning why it is relevant or not.\nReturn output strictly in the structured JSON format.\n",
+    "content_type": "text",
+    "parent": "YouTube Trends Analysis Agent",
+    "parentfield": "messages",
+    "parenttype": "AI Agent",
+    "type": "system"
+   },
+   {
+    "content": "Video Title: {title}\nTranscript: {transcript}\n\nCheck if this video is relevant for LinkedIn business users and AI Related topics\n",
+    "content_type": "text",
+    "parent": "YouTube Trends Analysis Agent",
+    "parentfield": "messages",
+    "parenttype": "AI Agent",
+    "type": "human"
+   }
+  ],
+  "modified": "2025-11-28 10:22:54.310257",
+  "name": "YouTube Trends Analysis Agent",
+  "output_schema": "{\r\n  \"properties\": {\r\n    \"is_related\": {\r\n      \"title\": \"Is Related\",\r\n      \"type\": \"boolean\"\r\n    },\r\n    \"reasoning\": {\r\n      \"anyOf\": [\r\n        {\r\n          \"type\": \"string\"\r\n        },\r\n        {\r\n          \"type\": \"null\"\r\n        }\r\n      ],\r\n      \"default\": null,\r\n      \"title\": \"Reasoning\"\r\n    }\r\n  },\r\n  \"required\": [\r\n    \"is_related\",\r\n    \"reasoning\"\r\n  ],\r\n  \"title\": \"RelationCheck\",\r\n  \"type\": \"object\"\r\n}\r\n",
+  "temperature": 0.7,
+  "title": "YouTube Trends Analysis Agent",
   "tools": [],
   "verbose_mode": 0
  }
