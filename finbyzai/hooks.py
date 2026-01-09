@@ -216,7 +216,7 @@ app_license = "MIT"
 
 fixtures = [
     "LLM",
-    "AI Agent",
+    "LLM Provider",
     {
         "doctype": "Custom Field",
         "filters": [
