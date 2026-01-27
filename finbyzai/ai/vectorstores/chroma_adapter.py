@@ -5,6 +5,8 @@ from langchain_chroma import Chroma
 from langchain.agents import Tool
 import frappe
 from pathlib import Path
+from langchain.tools import tool
+
 
 
 
@@ -31,14 +33,16 @@ class ChromaAdapter(BaseVectorStore):
         ]
 
     def as_tool(self):
-        tool = create_retriever_tool(
-            retriever=self.vs.as_retriever(),
-            name=self.kb_name,
-            description=self.description
-        )
-        
-        return Tool(
-            name=tool.name,
-            func=lambda query: tool.run({"query": query}),
-            description=self.description
-        )
+        @tool(description=self.description)
+        def kb_search(query: str):
+            docs = self.vs.similarity_search(query, k=5)
+
+            return [
+                {
+                    "id": d.metadata.get("id"),
+                    "metadata": d.metadata,
+                    "content": d.page_content
+                }
+                for d in docs
+            ]
+        return kb_search
