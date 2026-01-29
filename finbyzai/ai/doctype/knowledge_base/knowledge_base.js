@@ -6,107 +6,48 @@ frappe.ui.form.on("Knowledge Base", {
 		if (frm.is_new()) {
 			return;
 		}
-		
+
 		frm.clear_custom_buttons();
-		
+
+		// Show processing status indicator
+		if (frm.doc.is_processing) {
+			frm.dashboard.set_headline_alert(
+				'<span class="indicator orange">Processing in background...</span>'
+			);
+		}
+
 		// Simple one-click upload
 		frm.add_custom_button(__("Add Files"), () => {
 			upload_and_add_files(frm);
 		});
-		
-		// Primary action: Extract text and index all unprocessed documents
-		frm.add_custom_button(__("Process & Index"), async () => {
+
+		// Process in Background button
+		frm.add_custom_button(__("Process in Background"), () => {
 			if (frm.is_dirty()) {
-				frappe.msgprint({
-					title: __("Save Changes"),
-					message: __("Please save the document before processing."),
-					indicator: "orange"
-				});
+				frappe.msgprint(__("Please save the document first."));
 				return;
 			}
-			
-			const unprocessed = (frm.doc.documents || []).filter(row => !row.is_process);
-			if (unprocessed.length === 0) {
-				frappe.msgprint({
-					title: __("Nothing to Process"),
-					message: __("All documents have already been processed."),
-					indicator: "blue"
-				});
+
+			if (frm.doc.is_processing) {
+				frappe.msgprint(__("Knowledge Base is already being processed."));
 				return;
 			}
-			
-			frappe.confirm(
-				__('Process and index {0} unprocessed document(s)?', [unprocessed.length]),
-				async () => {
-					frappe.dom.freeze(__('Processing documents...'));
-					
-					try {
-						await frappe.call({
-							method: 'extract_all_files',
-							doc: frm.doc
-						});
-						
-						await frappe.call({
-							method: 'upsert',
-							doc: frm.doc
-						});
-						
-						frappe.dom.unfreeze();
-						frappe.show_alert({
-							message: __('Processing completed successfully'),
-							indicator: 'green'
-						}, 5);
-						frm.reload_doc();
-						
-					} catch (e) {
-						frappe.dom.unfreeze();
-						frappe.msgprint({
-							title: __("Error"),
-							message: e?.message || String(e),
-							indicator: "red"
-						});
-					}
-				}
-			);
-		}).addClass("btn-primary");
-		
-		// Extract text only
-		frm.add_custom_button(__('Extract Text Only'), () => {
-			if (frm.is_dirty()) {
-				frappe.msgprint(__("Please save first"), __("Save Required"));
-				return;
-			}
-			
+
 			frappe.call({
-				method: 'extract_all_files',
-				doc: frm.doc,
+				method: "finbyzai.ai.doctype.knowledge_base.knowledge_base.process_knowledge_base",
+				args: { kb_name: frm.doc.name },
 				freeze: true,
-				freeze_message: __('Extracting text...'),
-				callback: (r) => frm.reload_doc()
-			});
-		}, __('Actions'));
-		
-		// Reprocess all
-		frm.add_custom_button(__('Mark for Reprocessing'), () => {
-			const processed = (frm.doc.documents || []).filter(row => row.is_process).length;
-			
-			if (processed === 0) {
-				frappe.msgprint(__("No processed documents found"));
-				return;
-			}
-			
-			frappe.confirm(
-				__("Mark {0} document(s) for re-indexing?", [processed]),
-				() => {
-					frappe.call({
-						method: 'reprocess_all_documents',
-						doc: frm.doc,
-						callback: (r) => frm.reload_doc()
-					});
+				freeze_message: __("Starting background processing..."),
+				callback: (r) => {
+					frappe.show_alert({
+						message: __("Processing started in background. Refresh to see progress."),
+						indicator: "green"
+					}, 5);
+					frm.reload_doc();
 				}
-			);
-		}, __('Actions'));
-		
+			});
+		}).addClass("btn-primary");
+
 		// Clear all
 		frm.add_custom_button(__('Clear All'), () => {
 			frappe.confirm(
@@ -127,7 +68,7 @@ frappe.ui.form.on("Knowledge Base", {
 function upload_and_add_files(frm) {
 	let uploaded_files = [];
 	let upload_complete = false;
-	
+
 	const uploader = new frappe.ui.FileUploader({
 		folder: 'Home/Attachments',
 		allow_multiple: true,
@@ -140,17 +81,17 @@ function upload_and_add_files(frm) {
 				file_url: file_doc.file_url,
 				file_name: file_doc.file_name
 			});
-			
+
 			console.log('File uploaded:', file_doc.file_name);
 		}
 	});
-	
+
 	// Monitor when the uploader dialog is closed/hidden
 	const check_interval = setInterval(() => {
 		// Check if dialog is closed
 		if (uploader.dialog && uploader.dialog.$wrapper && !uploader.dialog.$wrapper.is(':visible')) {
 			clearInterval(check_interval);
-			
+
 			// Give a small delay to ensure all files are processed
 			setTimeout(() => {
 				if (uploaded_files.length > 0 && !upload_complete) {
@@ -171,16 +112,16 @@ function show_add_confirmation(frm, uploaded_files) {
 	file_list_html += '<table class="table table-bordered" style="margin: 0;">';
 	file_list_html += '<thead><tr><th style="width: 40px;">#</th><th>File Name</th></tr></thead>';
 	file_list_html += '<tbody>';
-	
+
 	uploaded_files.forEach((file, index) => {
 		file_list_html += `<tr>
 			<td>${index + 1}</td>
 			<td><i class="fa fa-file text-success"></i> ${file.file_name}</td>
 		</tr>`;
 	});
-	
+
 	file_list_html += '</tbody></table></div>';
-	
+
 	let d = new frappe.ui.Dialog({
 		title: __('Add {0} File(s) to Knowledge Base?', [uploaded_files.length]),
 		fields: [
@@ -197,19 +138,19 @@ function show_add_confirmation(frm, uploaded_files) {
 		],
 		size: 'large',
 		primary_action_label: __('Add to Knowledge Base'),
-		primary_action: function() {
+		primary_action: function () {
 			add_files_to_table(frm, uploaded_files);
 			d.hide();
 		},
 		secondary_action_label: __('Cancel'),
-		secondary_action: function() {
+		secondary_action: function () {
 			frappe.show_alert({
 				message: __('Files uploaded but not added to Knowledge Base'),
 				indicator: 'orange'
 			}, 5);
 		}
 	});
-	
+
 	d.show();
 }
 
@@ -220,29 +161,29 @@ function add_files_to_table(frm, uploaded_files) {
 	let added = 0;
 	let duplicates = 0;
 	let existing_files = new Set((frm.doc.documents || []).map(r => r.file));
-	
+
 	uploaded_files.forEach(file => {
 		if (existing_files.has(file.file_url)) {
 			duplicates++;
 			return;
 		}
-		
+
 		let row = frm.add_child('documents');
 		row.file = file.file_url;
 		row.is_process = 0;
 		added++;
 		existing_files.add(file.file_url);
 	});
-	
+
 	if (added > 0) {
 		frm.refresh_field('documents');
-		
+
 		let msg = __('Added {0} file(s) to the table.', [added]);
 		if (duplicates > 0) {
 			msg += ' ' + __('Skipped {0} duplicate(s).', [duplicates]);
 		}
 		msg += ' <strong>' + __('Please click Save to confirm.') + '</strong>';
-		
+
 		frappe.show_alert({
 			message: msg,
 			indicator: 'green'
@@ -258,7 +199,7 @@ function add_files_to_table(frm, uploaded_files) {
 
 // Child table events
 frappe.ui.form.on("Knowledge Base Document", {
-	file: function(frm, cdt, cdn) {
+	file: function (frm, cdt, cdn) {
 		let row = locals[cdt][cdn];
 		if (row.file) {
 			frappe.model.set_value(cdt, cdn, 'is_process', 0);

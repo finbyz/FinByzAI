@@ -63,110 +63,76 @@ class KnowledgeBase(Document):
         )
         
     def on_update(self):
-        store = self.get_vector_store()
-        if not store:
-            raise frappe.ValidationError("No vector_store selected on Knowledge Base")
-        splitter = self.get_text_splitter()
-        
-        # Process documents (files)
-        for document in self.documents:
-            if document.is_processed: 
-                continue
-            
-            # Extract text from file
-            extraction_result = extract_text_from_source(document.file, 'file')
-            if not extraction_result['success']:
-                frappe.msgprint(f"Failed to extract text from {document.file}: {extraction_result['error']}")
-                continue
-            
-            # Split text into chunks
-            chunks = splitter.split_text(extraction_result['content'])
-            
-            # Prepare metadata and IDs for chunks
-            metadatas = []
-            ids = []
-            for i, chunk in enumerate(chunks):
-                metadatas.append({
-                    "kb": self.name,
-                    "file": document.file,
-                    "chunk_index": i,
-                    "doc_type": "file"
-                })
-                ids.append(f"{self.name}_{document.name}_{i}")
-            
-            # Upsert chunks to vector store
-            store.upsert(
-                texts=chunks,
-                metadatas=metadatas,
-                ids=ids
-            )
-            
-            document.is_processed = 1
-        # Process notes
-        for note in self.notes:
-            if note.is_processed: 
-                continue
-            
-            # Split note content into chunks
-            chunks = splitter.split_text(note.content)
-            
-            # Prepare metadata and IDs for chunks
-            metadatas = []
-            ids = []
-            for i, chunk in enumerate(chunks):
-                metadatas.append({
-                    "kb": self.name,
-                    "note_id": note.name,
-                    "chunk_index": i,
-                    "doc_type": "note"
-                })
-                ids.append(f"{self.name}_note_{note.name}_{i}")
-            
-            # Upsert chunks to vector store
-            store.upsert(
-                texts=chunks,
-                metadatas=metadatas,
-                ids=ids
-            )
-            
-            note.is_processed = 1
-        
-        # Process web links
-        for link in self.links:
-            if link.is_processed: 
-                continue
-            
-            # Extract text from web URL
-            extraction_result = extract_text_from_source(link.url, 'web_url')
-            if not extraction_result['success']:
-                frappe.msgprint(f"Failed to extract text from {link.url}: {extraction_result['error']}")
-                continue
-
-            # Split text into chunks
-            chunks = splitter.split_text(extraction_result['content'])
-            
-            # Prepare metadata and IDs for chunks
-            metadatas = []
-            ids = []
-            for i, chunk in enumerate(chunks):
-                metadatas.append({
-                    "kb": self.name,
-                    "url": link.url,
-                    "chunk_index": i,
-                    "doc_type": "web_link"
-                })
-                ids.append(f"{self.name}_link_{link.name}_{i}")
-            
-            # Upsert chunks to vector store
-            store.upsert(
-                texts=chunks,
-                metadatas=metadatas,
-                ids=ids
-            )
-            
-            link.is_processed = 1
-        
+        """No synchronous processing - use process_items() method via API."""
+        pass
     
+    def process_items(self):
+        """Process all unprocessed items in this Knowledge Base."""
+        if self.is_processing:
+            frappe.throw("Knowledge Base is already being processed.")
+        
+        # Lock the KB
+        self.is_processing = 1
+        self.save(ignore_permissions=True)
+        frappe.db.commit()
+        
+        try:
+            store = self.get_vector_store()
+            if not store:
+                frappe.throw("No vector store configured for this Knowledge Base.")
+                
+            splitter = self.get_text_splitter()
+
+            def process_item(row, source, source_type, parent_table):
+                """Process single item."""
+                try:
+                    result = extract_text_from_source(source, source_type)
+                    if not result.get('success'):
+                        return False
+                    
+                    chunks = splitter.split_text(result['content'])
+                    metadatas = []
+                    ids = []
+                    for i, chunk in enumerate(chunks):
+                        meta = {"kb": self.name, "doc_type": source_type, "chunk_index": i}
+                        if source_type == 'web_url':
+                            meta["url"] = source
+                        elif source_type == 'file':
+                            meta["file"] = source
+                        else:
+                            meta["note_id"] = row.name
+                        metadatas.append(meta)
+                        ids.append(f"{self.name}_{parent_table}_{row.name}_{i}")
+                    
+                    store.upsert(texts=chunks, metadatas=metadatas, ids=ids)
+                    
+                    frappe.db.set_value(row.doctype, row.name, "is_processed", 1)
+                    frappe.db.commit()
+                    return True
+                    
+                except Exception as e:
+                    frappe.log_error(f"Item processing error ({self.name}): {str(e)}", "FinbyzAI")
+                    return False
+
+            # Process all unprocessed items
+            for link in self.links:
+                if not link.is_processed:
+                    process_item(link, link.url, 'web_url', 'links')
+
+            for doc in self.documents:
+                if not doc.is_processed:
+                    process_item(doc, doc.file, 'file', 'documents')
+
+            for note in self.notes:
+                if not note.is_processed:
+                    process_item(note, note.content, 'note', 'notes')
+                    
+        finally:
+            # Always unlock the KB
+            frappe.db.set_value("Knowledge Base", self.name, "is_processing", 0)
+            frappe.db.commit()
+
+
 def _get_provider_api_key(kb: KnowledgeBase):
     try:
         if not kb.provider:
@@ -178,7 +144,6 @@ def _get_provider_api_key(kb: KnowledgeBase):
 
 
 def _get_embeddings(kb: KnowledgeBase):
-    # Resolve embeddings via the central embeddings registry
     from finbyzai.ai.embeddings.registry import create_embedding
 
     llm_name = getattr(kb, "embeding_model", None)
@@ -194,3 +159,37 @@ def _get_embeddings(kb: KnowledgeBase):
     model_name = llm_doc.name
 
     return create_embedding(provider_name, model=model_name, api_key=api_key)
+
+
+@frappe.whitelist()
+def process_knowledge_base(kb_name):
+    """Enqueue background job to process Knowledge Base items."""
+    if not frappe.db.exists("Knowledge Base", kb_name):
+        frappe.throw(f"Knowledge Base '{kb_name}' not found")
+    
+    kb = frappe.get_doc("Knowledge Base", kb_name)
+    
+    if kb.is_processing:
+        frappe.msgprint("Knowledge Base is already being processed.")
+        return {"status": "already_processing"}
+    
+    frappe.enqueue(
+        "finbyzai.ai.doctype.knowledge_base.knowledge_base._run_process_items",
+        queue="long",
+        kb_name=kb_name,
+        timeout=3600
+    )
+    
+    return {"status": "enqueued", "kb_name": kb_name}
+
+
+def _run_process_items(kb_name):
+    """Background job wrapper to call process_items on KB."""
+    try:
+        kb = frappe.get_doc("Knowledge Base", kb_name)
+        kb.process_items()
+    except Exception as e:
+        frappe.db.set_value("Knowledge Base", kb_name, "is_processing", 0)
+        frappe.db.commit()
+        frappe.log_error(f"KB Processing Error ({kb_name}): {str(e)}\n{frappe.get_traceback()}", "FinbyzAI")
+

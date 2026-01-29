@@ -9,6 +9,7 @@
   "provider",
   "embeding_model",
   "vector_store",
+"is_processing",
   "column_break_heaw",
   "description",
   "section_break_xavf",
@@ -46,6 +47,13 @@
    "options": "Pinecone\nQdrant\nSupabase\nChromaDB"
   },
   {
+"default": "0",
+"fieldname": "is_processing",
+"fieldtype": "Check",
+"label": "Is Processing",
+"read_only": 1
+},
+{
    "fieldname": "documents",
    "fieldtype": "Table",
    "label": "Documents",
