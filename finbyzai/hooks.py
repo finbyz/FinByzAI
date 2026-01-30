@@ -127,23 +127,11 @@ app_license = "MIT"
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
-# 	"all": [
-# 		"finbyzai.tasks.all"
-# 	],
-# 	"daily": [
-# 		"finbyzai.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"finbyzai.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"finbyzai.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"finbyzai.tasks.monthly"
-# 	],
-# }
+scheduler_events = {
+	"hourly": [
+		"finbyzai.ai.doctype.knowledge_base.knowledge_base.process_queued_knowledge_bases"
+	],
+}
 
 # Testing
 # -------
