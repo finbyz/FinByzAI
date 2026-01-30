@@ -10,9 +10,12 @@ frappe.ui.form.on("Knowledge Base", {
 		frm.clear_custom_buttons();
 
 		// Show processing status indicator
-		if (frm.doc.is_processing) {
+		if (frm.doc.status === "In Progress" || frm.doc.status === "Queue") {
+			const color = frm.doc.status === "In Progress" ? "orange" : "blue";
+			const status_msg = frm.doc.status === "In Progress" ? "Processing in background..." : "Queued for processing...";
+
 			frm.dashboard.set_headline_alert(
-				'<span class="indicator orange">Processing in background...</span>'
+				`<span class="indicator ${color}">${status_msg}</span>`
 			);
 		}
 
@@ -22,31 +25,32 @@ frappe.ui.form.on("Knowledge Base", {
 		});
 
 		// Process in Background button
-		frm.add_custom_button(__("Process in Background"), () => {
-			if (frm.is_dirty()) {
-				frappe.msgprint(__("Please save the document first."));
-				return;
-			}
-
-			if (frm.doc.is_processing) {
-				frappe.msgprint(__("Knowledge Base is already being processed."));
-				return;
-			}
-
-			frappe.call({
-				method: "finbyzai.ai.doctype.knowledge_base.knowledge_base.process_knowledge_base",
-				args: { kb_name: frm.doc.name },
-				freeze: true,
-				freeze_message: __("Starting background processing..."),
-				callback: (r) => {
-					frappe.show_alert({
-						message: __("Processing started in background. Refresh to see progress."),
-						indicator: "green"
-					}, 5);
-					frm.reload_doc();
+		if (frm.doc.status !== "In Progress") {
+			frm.add_custom_button(__("Process in Background"), () => {
+				if (frm.is_dirty()) {
+					frappe.msgprint(__("Please save the document first."));
+					return;
 				}
-			});
-		}).addClass("btn-primary");
+
+				frappe.call({
+					method: "finbyzai.ai.doctype.knowledge_base.knowledge_base.process_knowledge_base",
+					args: { kb_name: frm.doc.name },
+					freeze: true,
+					freeze_message: __("Starting background processing..."),
+					callback: (r) => {
+						if (r.message && r.message.status === "already_processing") {
+							frappe.msgprint(__("Knowledge Base is already being processed."));
+						} else {
+							frappe.show_alert({
+								message: __("Processing started in background. Refresh to see progress."),
+								indicator: "green"
+							}, 5);
+							frm.reload_doc();
+						}
+					}
+				});
+			}).addClass("btn-primary");
+		}
 
 		// Clear all
 		frm.add_custom_button(__('Clear All'), () => {

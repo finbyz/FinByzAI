@@ -4,12 +4,17 @@
 from finbyzai.ai.utils.knowledge_base_utils import extract_text_from_source
 import frappe
 from frappe.model.document import Document
-import os
 from typing import List, Dict, Any
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from finbyzai.ai.vectorstores.registry import create_vector_store
 from finbyzai.ai.embeddings.registry import create_embedding
+
+
+# Status constants
+STATUS_QUEUE = "Queue"
+STATUS_IN_PROGRESS = "In Progress"
+STATUS_COMPLETED = "Completed"
 
 
 class KnowledgeBase(Document):
@@ -20,19 +25,25 @@ class KnowledgeBase(Document):
     def autoname(self):
         self.name = frappe.scrub(self.title)
     
-    def get_text_splitter(self):
-        """
-        Get configured text splitter with optimal chunking parameters.
+    def on_update(self):            
+        unprocessed_count = self._get_unprocessed_count()
         
-        Recommended chunk sizes:
-        - OpenAI embeddings: 512-1000 tokens (typically 2000-4000 chars)
-        - Cohere embeddings: 512 tokens (typically 2000 chars)
-        - For general use: 1000 chars with 200 overlap works well
-        """
+        if unprocessed_count > 0 and self.status == STATUS_COMPLETED:
+            # New items added, change to Queue
+            frappe.db.set_value("Knowledge Base", self.name, "status", STATUS_QUEUE, update_modified=False)
+    
+    def _get_unprocessed_count(self):
+        """Count unprocessed items across all child tables."""
+        links = len([l for l in (self.links or []) if not l.is_processed])
+        docs = len([d for d in (self.documents or []) if not d.is_processed])
+        notes = len([n for n in (self.notes or []) if not n.is_processed])
+        return links + docs + notes
+    
+    def get_text_splitter(self):
+        """Get configured text splitter with optimal chunking parameters."""
         chunk_size = 1000
         chunk_overlap = 200
         
-        # Use RecursiveCharacterTextSplitter as it's the recommended default
         return RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
@@ -47,7 +58,6 @@ class KnowledgeBase(Document):
         if not store_name:
             return None
 
-        # get embeddings model (can be OpenAI, Google, etc.)
         emb = _get_embeddings(self)
         if not emb:
             raise frappe.ValidationError("Embeddings not configured")
@@ -61,18 +71,14 @@ class KnowledgeBase(Document):
             embeddings=emb,
             api_key=api_key,
         )
-        
-    def on_update(self):
-        """No synchronous processing - use process_items() method via API."""
-        pass
     
     def process_items(self):
         """Process all unprocessed items in this Knowledge Base."""
-        if self.is_processing:
+        if self.status == STATUS_IN_PROGRESS:
             frappe.throw("Knowledge Base is already being processed.")
         
-        # Lock the KB
-        self.is_processing = 1
+        # Set status to In Progress
+        self.status = STATUS_IN_PROGRESS
         self.save(ignore_permissions=True)
         frappe.db.commit()
         
@@ -126,11 +132,16 @@ class KnowledgeBase(Document):
             for note in self.notes:
                 if not note.is_processed:
                     process_item(note, note.content, 'note', 'notes')
-                    
-        finally:
-            # Always unlock the KB
-            frappe.db.set_value("Knowledge Base", self.name, "is_processing", 0)
+            
+            # Set status to Completed
+            frappe.db.set_value("Knowledge Base", self.name, "status", STATUS_COMPLETED)
             frappe.db.commit()
+                    
+        except Exception as e:
+            # On error, set back to Queue so scheduler can retry
+            frappe.db.set_value("Knowledge Base", self.name, "status", STATUS_QUEUE)
+            frappe.db.commit()
+            raise
 
 
 def _get_provider_api_key(kb: KnowledgeBase):
@@ -169,9 +180,13 @@ def process_knowledge_base(kb_name):
     
     kb = frappe.get_doc("Knowledge Base", kb_name)
     
-    if kb.is_processing:
+    if kb.status == STATUS_IN_PROGRESS:
         frappe.msgprint("Knowledge Base is already being processed.")
         return {"status": "already_processing"}
+    
+    # Set to Queue first
+    frappe.db.set_value("Knowledge Base", kb_name, "status", STATUS_QUEUE)
+    frappe.db.commit()
     
     frappe.enqueue(
         "finbyzai.ai.doctype.knowledge_base.knowledge_base._run_process_items",
@@ -189,7 +204,39 @@ def _run_process_items(kb_name):
         kb = frappe.get_doc("Knowledge Base", kb_name)
         kb.process_items()
     except Exception as e:
-        frappe.db.set_value("Knowledge Base", kb_name, "is_processing", 0)
+        frappe.db.set_value("Knowledge Base", kb_name, "status", STATUS_QUEUE)
         frappe.db.commit()
         frappe.log_error(f"KB Processing Error ({kb_name}): {str(e)}\n{frappe.get_traceback()}", "FinbyzAI")
 
+
+def process_queued_knowledge_bases():
+    """
+    Scheduler job: Process all Knowledge Bases in Queue or In Progress status.
+    Runs hourly to pick up any missed or failed processing.
+    """
+    kbs = frappe.get_all(
+        "Knowledge Base",
+        filters={"status": ["in", [STATUS_QUEUE, STATUS_IN_PROGRESS]]},
+        pluck="name"
+    )
+    
+    for kb_name in kbs:
+        try:
+            kb = frappe.get_doc("Knowledge Base", kb_name)
+            
+            # Skip if already In Progress (another job might be running)
+            if kb.status == STATUS_IN_PROGRESS:
+                continue
+                
+            # Check if there are actually unprocessed items
+            if kb._get_unprocessed_count() == 0:
+                frappe.db.set_value("Knowledge Base", kb_name, "status", STATUS_COMPLETED)
+                frappe.db.commit()
+                continue
+            
+            # Process the KB
+            kb.process_items()
+            
+        except Exception as e:
+            frappe.log_error(f"Scheduler KB Processing Error ({kb_name}): {str(e)}", "FinbyzAI")
+            continue
