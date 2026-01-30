@@ -24,6 +24,38 @@ frappe.ui.form.on("Knowledge Base", {
 			upload_and_add_files(frm);
 		});
 
+		// Add from Sitemap
+		frm.add_custom_button(__("Add from Sitemap"), () => {
+			if (frm.is_new()) return;
+
+			frappe.prompt(
+				{
+					label: __('Sitemap URL'),
+					fieldname: 'sitemap_url',
+					fieldtype: 'Data',
+					reqd: 1,
+					placeholder: 'https://example.com/sitemap.xml'
+				},
+				(values) => {
+					frappe.call({
+						method: "finbyzai.ai.doctype.knowledge_base.knowledge_base.fetch_sitemap_urls",
+						args: { sitemap_url: values.sitemap_url },
+						freeze: true,
+						freeze_message: __("Fetching URLs..."),
+						callback: (r) => {
+							if (r.message && r.message.length > 0) {
+								add_urls_to_table(frm, r.message);
+							} else {
+								frappe.msgprint(__('No URLs found in the sitemap.'));
+							}
+						}
+					});
+				},
+				__('Import using Sitemap'),
+				__('Import')
+			);
+		});
+
 		// Process in Background button
 		if (frm.doc.status !== "In Progress") {
 			frm.add_custom_button(__("Process in Background"), () => {
@@ -210,3 +242,47 @@ frappe.ui.form.on("Knowledge Base Document", {
 		}
 	}
 });
+
+/**
+ * Add URLs to the Links child table
+ */
+function add_urls_to_table(frm, urls) {
+	let added = 0;
+	let duplicates = 0;
+	let existing_urls = new Set((frm.doc.links || []).map(r => r.url));
+
+	urls.forEach(url => {
+		if (existing_urls.has(url)) {
+			duplicates++;
+			return;
+		}
+
+		let row = frm.add_child('links');
+		row.url = url;
+		row.description = "Imported from Sitemap";
+		row.is_process = 0;
+		added++;
+		existing_urls.add(url);
+	});
+
+	if (added > 0) {
+		frm.refresh_field('links');
+
+		let msg = __('Added {0} URL(s) to the Links table.', [added]);
+		if (duplicates > 0) {
+			msg += ' ' + __('Skipped {0} duplicate(s).', [duplicates]);
+		}
+		msg += ' <strong>' + __('Please click Save to confirm.') + '</strong>';
+
+		frappe.show_alert({
+			message: msg,
+			indicator: 'green'
+		}, 8);
+	} else if (duplicates > 0) {
+		frappe.msgprint({
+			title: __('Duplicates Found'),
+			message: __('All {0} URL(s) already exist in the table.', [duplicates]),
+			indicator: 'orange'
+		});
+	}
+}
