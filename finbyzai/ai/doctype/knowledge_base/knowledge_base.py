@@ -239,4 +239,48 @@ def process_queued_knowledge_bases():
             
         except Exception as e:
             frappe.log_error(f"Scheduler KB Processing Error ({kb_name}): {str(e)}", "FinbyzAI")
-            continue
+
+@frappe.whitelist()
+def fetch_sitemap_urls(sitemap_url):
+    """
+    Fetch URLs from a sitemap XML.
+    """
+    import requests
+    import xml.etree.ElementTree as ET
+    
+    try:
+        if not sitemap_url:
+            return []
+            
+        response = requests.get(sitemap_url, timeout=10)
+        response.raise_for_status()
+        
+        root = ET.fromstring(response.content)
+        
+        # XML namespace for sitemaps
+        namespace = {'ns': 'http://www.sitemaps.org/schemas/sitemap/0.9'}
+        
+        urls = []
+        for url in root.findall('ns:url', namespace):
+            loc = url.find('ns:loc', namespace)
+            if loc is not None and loc.text:
+                urls.append(loc.text)
+                
+        # Fallback if namespace parsing fails (some sitemaps might not adhere strictly)
+        if not urls:
+             for url in root.findall('.//{http://www.sitemaps.org/schemas/sitemap/0.9}loc'):
+                if url.text:
+                    urls.append(url.text)
+        
+        # Fallback 2: simple tag search (ignoring namespaces if they are messy)
+        if not urls:
+            for elem in root.iter():
+                if elem.tag.endswith('loc') and elem.text:
+                    urls.append(elem.text)
+
+        return sorted(list(set(urls))) # Return unique sorted URLs
+
+    except Exception as e:
+        frappe.log_error(f"Sitemap Fetch Error: {str(e)}", "FinbyzAI")
+        return []
+
