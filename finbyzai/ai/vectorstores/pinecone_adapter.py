@@ -8,6 +8,7 @@ from pinecone import Pinecone, ServerlessSpec
 import frappe
 import os
 import re
+from langchain.tools import tool
 
 
 @register_vector_store("pinecone")
