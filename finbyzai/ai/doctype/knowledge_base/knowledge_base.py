@@ -244,43 +244,82 @@ def process_queued_knowledge_bases():
 def fetch_sitemap_urls(sitemap_url):
     """
     Fetch URLs from a sitemap XML.
+    Recursively follows sub-sitemaps in sitemap index files.
     """
     import requests
     import xml.etree.ElementTree as ET
-    
-    try:
-        if not sitemap_url:
+
+    visited = set()
+
+    def _fetch(url):
+        """Recursively collect page URLs from a sitemap or sitemap index."""
+        if not url or url in visited:
             return []
-            
-        response = requests.get(sitemap_url, timeout=10)
-        response.raise_for_status()
-        
-        root = ET.fromstring(response.content)
-        
-        # XML namespace for sitemaps
-        namespace = {'ns': 'http://www.sitemaps.org/schemas/sitemap/0.9'}
-        
-        urls = []
-        for url in root.findall('ns:url', namespace):
-            loc = url.find('ns:loc', namespace)
+        visited.add(url)
+
+        try:
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+        except Exception as e:
+            frappe.log_error(f"Sitemap Fetch Error ({url}): {str(e)}", "FinbyzAI")
+            return []
+
+        try:
+            root = ET.fromstring(response.content)
+        except ET.ParseError as e:
+            frappe.log_error(f"Sitemap Parse Error ({url}): {str(e)}", "FinbyzAI")
+            return []
+
+        ns = "http://www.sitemaps.org/schemas/sitemap/0.9"
+        namespace = {"ns": ns}
+        page_urls = []
+
+        # ── Sitemap Index: recurse into each child sitemap ──────────────────
+        sub_sitemaps = root.findall("ns:sitemap", namespace)
+        if not sub_sitemaps:
+            # Fallback: tag-based search ignoring namespace prefix
+            sub_sitemaps = [
+                e
+                for e in root.iter()
+                if e.tag.endswith("}sitemap") or e.tag == "sitemap"
+            ]
+
+        for sitemap_elem in sub_sitemaps:
+            loc = sitemap_elem.find("ns:loc", namespace)
+            if loc is None:
+                # Fallback: any child <loc>
+                loc = next((c for c in sitemap_elem if c.tag.endswith("loc")), None)
             if loc is not None and loc.text:
-                urls.append(loc.text)
-                
-        # Fallback if namespace parsing fails (some sitemaps might not adhere strictly)
-        if not urls:
-             for url in root.findall('.//{http://www.sitemaps.org/schemas/sitemap/0.9}loc'):
-                if url.text:
-                    urls.append(url.text)
-        
-        # Fallback 2: simple tag search (ignoring namespaces if they are messy)
-        if not urls:
+                page_urls.extend(_fetch(loc.text.strip()))
+
+        # ── Regular sitemap: collect <url><loc> entries ──────────────────────
+        url_elems = root.findall("ns:url", namespace)
+        if not url_elems:
+            url_elems = root.findall(f"{{{ns}}}url")
+        if not url_elems:
+            url_elems = [
+                e for e in root.iter() if e.tag.endswith("}url") or e.tag == "url"
+            ]
+
+        for url_elem in url_elems:
+            loc = url_elem.find("ns:loc", namespace)
+            if loc is None:
+                loc = url_elem.find(f"{{{ns}}}loc")
+            if loc is None:
+                loc = next((c for c in url_elem if c.tag.endswith("loc")), None)
+            if loc is not None and loc.text:
+                page_urls.append(loc.text.strip())
+
+        # ── Final fallback: grab every <loc> in this document ────────────────
+        if not page_urls and not sub_sitemaps:
             for elem in root.iter():
-                if elem.tag.endswith('loc') and elem.text:
-                    urls.append(elem.text)
+                if elem.tag.endswith("loc") and elem.text:
+                    page_urls.append(elem.text.strip())
 
-        return sorted(list(set(urls))) # Return unique sorted URLs
+        return page_urls
 
-    except Exception as e:
-        frappe.log_error(f"Sitemap Fetch Error: {str(e)}", "FinbyzAI")
+    if not sitemap_url:
         return []
 
+    all_urls = _fetch(sitemap_url)
+    return sorted(list(set(all_urls)))
