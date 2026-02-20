@@ -28,3 +28,13 @@ class SupabaseAdapter(BaseVectorStore):
             {"id": d.metadata.get("id"), "score": score, "metadata": d.metadata}
             for d, score in docs_and_scores
         ]
+
+    def delete(self, filter):
+        """Delete all vectors matching the metadata filter via PGVector."""
+        try:
+            # PGVector delete method accepts a filter dict
+            self.vs.delete(filter=filter)
+        except Exception as e:
+            import frappe
+
+            frappe.log_error(f"SupabaseAdapter delete error: {e}", "FinbyzAI KB")

@@ -8,8 +8,6 @@ from pathlib import Path
 from langchain.tools import tool
 
 
-
-
 @register_vector_store("chroma")
 @register_vector_store("chromadb")
 class ChromaAdapter(BaseVectorStore):
@@ -20,7 +18,7 @@ class ChromaAdapter(BaseVectorStore):
         private_folder = site_path / "private"
         pd = persist_directory or (private_folder / "chroma_db")
         self.vs = Chroma(collection_name=kb_name, embedding_function=embeddings, persist_directory=pd)
-        
+
     def upsert(self, texts, metadatas, ids):
         self.vs.add_texts(texts=texts, metadatas=metadatas, ids=ids)
         return len(texts)
@@ -31,6 +29,15 @@ class ChromaAdapter(BaseVectorStore):
             {"id": d.metadata.get("id"), "score": score, "metadata": d.metadata}
             for d, score in docs_and_scores
         ]
+
+    def delete(self, filter):
+        """Delete all vectors matching the metadata filter using Chroma's where clause."""
+        try:
+            self.vs._collection.delete(where=filter)
+        except Exception as e:
+            import frappe
+
+            frappe.log_error(f"ChromaAdapter delete error: {e}", "FinbyzAI KB")
 
     def as_tool(self):
         @tool(description=self.description)

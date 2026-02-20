@@ -24,7 +24,7 @@ import warnings
 
 import os
 
-os.environ["LANGSMITH_API_KEY"] = "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"
+os.environ["LANGSMITH_API_KEY"] = "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"
 os.environ["LANGSMITH_TRACING"] = "true"
 
 
@@ -577,5 +577,3 @@ class AgentService:
             name=tool_name,
             description=description or f"Tool that executes the {self.agent_doc.name} agent"
         )
-        
-    
