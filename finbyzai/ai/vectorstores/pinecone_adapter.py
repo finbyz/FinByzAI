@@ -15,7 +15,7 @@ from langchain.tools import tool
 class PineconeAdapter(BaseVectorStore):
     def __init__(self, kb_name: str, description: str, embeddings, api_key: str = None, **kwargs):
         super().__init__(kb_name, description, embeddings, api_key, **kwargs)
-        
+
         # Read settings inside adapter
         try:
             s = frappe.get_single("Pinecone Settings")
@@ -24,13 +24,13 @@ class PineconeAdapter(BaseVectorStore):
                 os.environ["PINECONE_API_KEY"] = pinecone_api_key
         except Exception:
             pass
-        
+
         # Sanitize index name (Pinecone requirements: lowercase, alphanumeric, hyphens)
         index_name = self._sanitize_index_name(kb_name)
-        
+
         # Initialize Pinecone and ensure index exists
         self._ensure_index_exists(index_name, embeddings)
-        
+
         # Initialize the vector store
         self.vs = PineconeVectorStore(index_name=index_name, embedding=embeddings)
 
@@ -51,17 +51,17 @@ class PineconeAdapter(BaseVectorStore):
     def _ensure_index_exists(self, index_name: str, embeddings):
         """Check if index exists, create if it doesn't."""
         pc = Pinecone(api_key=os.environ.get("PINECONE_API_KEY"))
-        
+
         # Get list of existing indexes
         existing_indexes = [index.name for index in pc.list_indexes()]
-        
+
         if index_name not in existing_indexes:
             # Get embedding dimension
             # Create a sample embedding to determine dimension
             sample_text = "sample"
             sample_embedding = embeddings.embed_query(sample_text)
             dimension = len(sample_embedding)
-            
+
             # Create the index
             pc.create_index(
                 name=index_name,
@@ -86,7 +86,17 @@ class PineconeAdapter(BaseVectorStore):
             {"id": d.metadata.get("id"), "score": score, "metadata": d.metadata}
             for d, score in docs_and_scores
         ]
-    
+
+    def delete(self, filter):
+        """Delete all vectors matching the metadata filter using Pinecone's delete by filter."""
+        try:
+            pc = Pinecone(api_key=os.environ.get("PINECONE_API_KEY"))
+            index_name = self._sanitize_index_name(self.kb_name)
+            index = pc.Index(index_name)
+            index.delete(filter=filter)
+        except Exception as e:
+            frappe.log_error(f"PineconeAdapter delete error: {e}", "FinbyzAI KB")
+
     def as_tool(self):
         @tool(description=self.description)
         def kb_search(query: str):

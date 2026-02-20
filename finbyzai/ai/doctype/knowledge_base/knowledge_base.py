@@ -31,9 +31,22 @@ class KnowledgeBase(Document):
 
     def on_update(self):
         """
-        After a save: if there are unprocessed items AND we are not already
-        running / already queued, set status → Queue and enqueue a job.
+        After a save:
+        1. Delete vectors for any rows that were removed from child tables.
+        2. If there are new unprocessed items, enqueue processing.
         """
+        # Step 1: Remove vectors for deleted rows (runs in background to avoid blocking save)
+        frappe.enqueue(
+            "finbyzai.ai.doctype.knowledge_base.knowledge_base._run_delete_removed_rows",
+            queue="short",
+            kb_name=self.name,
+            current_links=[r.name for r in (self.links or [])],
+            current_docs=[r.name for r in (self.documents or [])],
+            current_notes=[r.name for r in (self.notes or [])],
+            timeout=300,
+        )
+
+        # Step 2: Enqueue processing for new unprocessed items
         unprocessed = self._get_unprocessed_count()
 
         if unprocessed > 0 and self.status not in (STATUS_IN_PROGRESS, STATUS_QUEUE):
@@ -184,10 +197,14 @@ class KnowledgeBase(Document):
                         return False
 
                     # 4. Build metadata & IDs
+                    #    source_id is the stable identifier used to delete all
+                    #    chunks for this row when the row is removed.
+                    source_id = f"{self.name}_{parent_table}_{row.name}"
                     metadatas, ids = [], []
                     for i, chunk in enumerate(chunks):
                         meta = {
                             "kb": self.name,
+                            "source_id": source_id,
                             "doc_type": source_type,
                             "chunk_index": i,
                         }
@@ -199,7 +216,7 @@ class KnowledgeBase(Document):
                             meta["note_id"] = row.name
 
                         metadatas.append(meta)
-                        ids.append(f"{self.name}_{parent_table}_{row.name}_{i}")
+                        ids.append(f"{source_id}_{i}")
 
                     # 5. Upsert into vector store
                     store.upsert(texts=chunks, metadatas=metadatas, ids=ids)
@@ -353,6 +370,67 @@ def _run_process_items(kb_name):
             f"Background job failed for KB '{kb_name}'.\n{frappe.get_traceback()}",
             "FinbyzAI KB",
         )
+
+
+def _run_delete_removed_rows(kb_name, current_links, current_docs, current_notes):
+    """
+    Background job: detect rows that were deleted from the child tables
+    (links / documents / notes) and remove their vectors from the vector store.
+
+    Comparison strategy
+    ───────────────────
+    For each child table, fetch all *processed* rows that were in the DB
+    *before* this save (i.e., those that existed in the DB).  Any row whose
+    ``name`` is no longer present in the current doc is considered deleted and
+    its vectors are purged.
+
+    ``current_links / current_docs / current_notes`` are the row names that
+    survived the save (passed from on_update so we don't need a second DB read).
+    """
+    try:
+        kb = frappe.get_doc("Knowledge Base", kb_name)
+        store = kb.get_vector_store()
+    except Exception:
+        frappe.log_error(
+            f"KB '{kb_name}': failed to load KB/store for row-deletion.\n"
+            f"{frappe.get_traceback()}",
+            "FinbyzAI KB",
+        )
+        return
+
+    def _purge_removed(child_doctype, parent_table, current_names):
+        """Find processed rows that are no longer in current_names and delete."""
+        # All rows that exist in the DB for this KB (they may be in the child
+        # table or already deleted from the doc but still in DB due to child saves).
+        # We look at processed rows: only those have vectors in the store.
+        existing_processed = frappe.get_all(
+            child_doctype,
+            filters={"parent": kb_name, "is_processed": 1},
+            fields=["name"],
+            ignore_permissions=True,
+        )
+        existing_names = {r["name"] for r in existing_processed}
+        current_set = set(current_names or [])
+
+        removed = existing_names - current_set
+        for row_name in removed:
+            source_id = f"{kb_name}_{parent_table}_{row_name}"
+            try:
+                store.delete({"source_id": source_id})
+                frappe.logger().info(
+                    f"KB '{kb_name}': deleted vectors for removed row "
+                    f"{child_doctype}::{row_name} (source_id={source_id})"
+                )
+            except Exception:
+                frappe.log_error(
+                    f"KB '{kb_name}': failed to delete vectors for "
+                    f"{child_doctype}::{row_name}.\n{frappe.get_traceback()}",
+                    "FinbyzAI KB",
+                )
+
+    _purge_removed("AI Links", "links", current_links)
+    _purge_removed("Knowledge Document", "documents", current_docs)
+    _purge_removed("AI Note", "notes", current_notes)
 
 
 def process_queued_knowledge_bases():

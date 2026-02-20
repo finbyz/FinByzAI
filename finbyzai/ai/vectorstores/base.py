@@ -17,6 +17,10 @@ class BaseVectorStore:
     def search(self, query: str, k: int = 5) -> List[Dict[str, Any]]:
         """Return list of {id, score, metadata} results."""
         raise NotImplementedError
-    
+
+    def delete(self, filter: Dict[str, Any]) -> None:
+        """Delete all vectors matching the given metadata filter."""
+        raise NotImplementedError
+
     def as_tool(self):
         raise NotImplementedError

@@ -3,6 +3,33 @@
 
 frappe.ui.form.on("Knowledge Base", {
 	refresh(frm) {
+
+		
+        frm.set_query('provider', function() {
+            return {
+                filters: {
+                    'disabled': 0
+                }
+            };
+        });
+		
+		frm.set_query('embeding_model', function() {
+
+			 let filters = {
+                'enabled': 1,
+                'is_embedding_model': 1
+            };
+
+            // If a provider is selected, filter models by that provider
+            if (frm.doc.provider) {
+                filters['provider'] = frm.doc.provider;
+            }
+            return {
+                filters: filters
+            };
+        });
+
+
 		if (frm.is_new()) {
 			return;
 		}
