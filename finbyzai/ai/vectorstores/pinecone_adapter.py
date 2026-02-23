@@ -99,8 +99,8 @@ class PineconeAdapter(BaseVectorStore):
 
     def as_tool(self):
         @tool(description=self.description)
-        def kb_search(query: str):
-            docs = self.vs.similarity_search(query, k=5)
+        def kb_search(query: str, fields=[], k=5):
+            docs = self.vs.similarity_search(query, k=k)
 
             return [
                 {
@@ -110,4 +110,5 @@ class PineconeAdapter(BaseVectorStore):
                 }
                 for d in docs
             ]
+
         return kb_search
