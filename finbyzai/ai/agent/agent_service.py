@@ -24,7 +24,7 @@ import warnings
 
 import os
 
-os.environ["LANGSMITH_API_KEY"] = "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"
+os.environ["LANGSMITH_API_KEY"] = "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"
 os.environ["LANGSMITH_TRACING"] = "true"
 
 
