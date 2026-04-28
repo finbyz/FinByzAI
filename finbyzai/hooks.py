@@ -112,17 +112,20 @@ app_license = "MIT"
 # 	"ToDo": "custom_app.overrides.CustomToDo"
 # }
 
-# Document Events
-# ---------------
-# Hook on document methods and events
-
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+doc_events = {
+	"Web Page": {
+		"on_update": "finbyzai.ai.doctype.knowledge_base.knowledge_base.update_ai_links_on_route_change"
+	},
+	"Blog Post": {
+		"on_update": "finbyzai.ai.doctype.knowledge_base.knowledge_base.update_ai_links_on_route_change"
+	},
+	"Website Item": {
+		"on_update": "finbyzai.ai.doctype.knowledge_base.knowledge_base.update_ai_links_on_route_change"
+	},
+	"Website Item Group": {
+		"on_update": "finbyzai.ai.doctype.knowledge_base.knowledge_base.update_ai_links_on_route_change"
+	}
+}
 
 # Scheduled Tasks
 # ---------------
