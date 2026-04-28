@@ -176,6 +176,10 @@ class KnowledgeBase(Document):
                                 f"[{source_type}] '{source}': {result.get('error')}"
                             ),
                         )
+                        if source_type == "web_url":
+                            frappe.db.delete(row.doctype, row.name)
+                            frappe.db.commit()
+                            return True
                         all_succeeded = False
                         return False
 
@@ -188,6 +192,10 @@ class KnowledgeBase(Document):
                                 f"[{source_type}] '{source}'."
                             ),
                         )
+                        if source_type == "web_url":
+                            frappe.db.delete(row.doctype, row.name)
+                            frappe.db.commit()
+                            return True
                         all_succeeded = False
                         return False
 
@@ -201,6 +209,10 @@ class KnowledgeBase(Document):
                                 f"[{source_type}] '{source}'."
                             ),
                         )
+                        if source_type == "web_url":
+                            frappe.db.delete(row.doctype, row.name)
+                            frappe.db.commit()
+                            return True
                         all_succeeded = False
                         return False
 
@@ -584,3 +596,111 @@ def fetch_sitemap_urls(sitemap_url):
         return []
 
     return sorted(set(_fetch(sitemap_url)))
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Webpage Updates & Route Change Hooks
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _path_matches(stored_url: str, old_route: str) -> bool:
+    from urllib.parse import urlparse
+    path = urlparse(stored_url).path.strip("/")
+    return path == old_route.strip("/")
+
+
+def update_ai_links_on_route_change(doc, method):
+    """
+    Hook for Web Page, Blog Post, Website Item, Item on_update.
+    Detects route change and enqueues AI Links update.
+    """
+    old_doc = doc.get_doc_before_save()
+    if not old_doc:
+        return
+
+    old_route = (
+        getattr(old_doc, "route", None) or
+        getattr(old_doc, "website_slug", None) or ""
+    ).strip("/")
+
+    new_route = (
+        getattr(doc, "route", None) or
+        getattr(doc, "website_slug", None) or ""
+    ).strip("/")
+
+    if not old_route or old_route == new_route:
+        return  # nothing changed
+
+    frappe.enqueue(
+        "finbyzai.ai.doctype.knowledge_base.knowledge_base._run_update_ai_links",
+        queue="short",
+        old_route=old_route,
+        new_route=new_route,
+        timeout=300,
+    )
+
+
+def _run_update_ai_links(old_route, new_route):
+    """
+    Background job:
+    1. Find all AI Links rows matching old_route across all KBs.
+    2. Delete their old vectors from the vector store.
+    3. Update url to new_full_url, set is_processed=0.
+    4. Save KB → on_update picks up unprocessed row → fetches live content.
+    """
+    new_full_url = frappe.utils.get_url(new_route)
+
+    all_links = frappe.get_all(
+        "AI Links",
+        fields=["name", "parent", "url"],
+        ignore_permissions=True,
+    )
+
+    # Group matching rows by KB
+    kb_updates = {}
+    for row in all_links:
+        if _path_matches(row.url, old_route):
+            kb_updates.setdefault(row.parent, []).append(row.name)
+
+    if not kb_updates:
+        return  # no matching links found
+
+    for kb_name, row_names in kb_updates.items():
+        try:
+            kb = frappe.get_doc("Knowledge Base", kb_name)
+
+            # Step 1: Delete old vectors explicitly for each matching row
+            try:
+                store = kb.get_vector_store()
+                for row_name in row_names:
+                    source_id = f"{kb_name}_links_{row_name}"
+                    store.delete({"source_id": source_id})
+            except Exception:
+                frappe.log_error(
+                    title="FinbyzAI Route Update Error",
+                    message=(
+                        f"KB '{kb_name}': failed to delete old vectors "
+                        f"for route '{old_route}'.\n{frappe.get_traceback()}"
+                    ),
+                )
+                # Continue anyway — we still want to update the URL
+                # so it gets reprocessed with fresh content
+
+            # Step 2: Update url + mark unprocessed
+            for link in kb.links:
+                if link.name in row_names:
+                    link.url = new_full_url
+                    link.is_processed = 0
+
+            # Step 3: Save → triggers on_update → _run_process_items
+            #          → fetches live content from new_full_url → fresh vectors
+            kb.save(ignore_permissions=True)
+
+        except Exception:
+            frappe.log_error(
+                title="FinbyzAI Route Update Error",
+                message=(
+                    f"KB '{kb_name}': failed to update AI Links "
+                    f"for route change '{old_route}' → '{new_route}'.\n"
+                    f"{frappe.get_traceback()}"
+                ),
+            )
