@@ -155,9 +155,11 @@ class KnowledgeBase(Document):
                 # 1. Validate source is present
                 if not source or not str(source).strip():
                     frappe.log_error(
-                        f"KB '{self.name}': skipping {row.doctype} '{row.name}' — "
-                        f"source field is empty.",
-                        "FinbyzAI KB",
+                        title="FinbyzAI KB Processing Error",
+                        message=(
+                            f"KB '{self.name}': skipping {row.doctype} '{row.name}' — "
+                            f"source field is empty."
+                        ),
                     )
                     all_succeeded = False
                     return False
@@ -168,9 +170,11 @@ class KnowledgeBase(Document):
 
                     if not result.get("success"):
                         frappe.log_error(
-                            f"KB '{self.name}': extraction failed for "
-                            f"[{source_type}] '{source}': {result.get('error')}",
-                            "FinbyzAI KB",
+                            title="FinbyzAI KB Processing Error",
+                            message=(
+                                f"KB '{self.name}': extraction failed for "
+                                f"[{source_type}] '{source}': {result.get('error')}"
+                            ),
                         )
                         all_succeeded = False
                         return False
@@ -178,9 +182,11 @@ class KnowledgeBase(Document):
                     content = (result.get("content") or "").strip()
                     if not content:
                         frappe.log_error(
-                            f"KB '{self.name}': extracted content is empty for "
-                            f"[{source_type}] '{source}'.",
-                            "FinbyzAI KB",
+                            title="FinbyzAI KB Processing Error",
+                            message=(
+                                f"KB '{self.name}': extracted content is empty for "
+                                f"[{source_type}] '{source}'."
+                            ),
                         )
                         all_succeeded = False
                         return False
@@ -189,9 +195,11 @@ class KnowledgeBase(Document):
                     chunks = splitter.split_text(content)
                     if not chunks:
                         frappe.log_error(
-                            f"KB '{self.name}': no chunks produced for "
-                            f"[{source_type}] '{source}'.",
-                            "FinbyzAI KB",
+                            title="FinbyzAI KB Processing Error",
+                            message=(
+                                f"KB '{self.name}': no chunks produced for "
+                                f"[{source_type}] '{source}'."
+                            ),
                         )
                         all_succeeded = False
                         return False
@@ -226,11 +234,14 @@ class KnowledgeBase(Document):
                     frappe.db.commit()
                     return True
 
-                except Exception:
+                except Exception as e:
                     frappe.log_error(
-                        f"KB '{self.name}': unhandled error processing "
-                        f"[{source_type}] '{source}'.\n{frappe.get_traceback()}",
-                        "FinbyzAI KB",
+                        title="FinbyzAI KB Processing Error",
+                        message=(
+                            f"KB '{self.name}': unhandled error processing "
+                            f"[{source_type}] '{source}'.\n"
+                            f"Error: {e}\n{frappe.get_traceback()}"
+                        ),
                     )
                     all_succeeded = False
                     return False
@@ -248,13 +259,15 @@ class KnowledgeBase(Document):
                 if not note.is_processed:
                     process_item(note, note.content, "note", "notes")
 
-        except Exception:
+        except Exception as e:
             # Fatal error (e.g. bad vector-store config, network unreachable).
             # Reset to Queue so the scheduler will retry.
             frappe.log_error(
-                f"KB '{self.name}': fatal error during processing.\n"
-                f"{frappe.get_traceback()}",
-                "FinbyzAI KB",
+                title="FinbyzAI KB Processing Error",
+                message=(
+                    f"KB '{self.name}': fatal error during processing.\n"
+                    f"Error: {e}\n{frappe.get_traceback()}"
+                ),
             )
             frappe.db.set_value("Knowledge Base", self.name, "status", STATUS_QUEUE)
             frappe.db.commit()
@@ -297,20 +310,25 @@ def _get_embeddings(kb: KnowledgeBase):
 
     try:
         llm_doc = frappe.get_doc("LLM", llm_name)
-    except Exception:
+    except Exception as e:
         frappe.log_error(
-            f"KB '{kb.name}': embedding model '{llm_name}' not found in LLM doctype.",
-            "FinbyzAI KB",
+            title="FinbyzAI KB Config Error",
+            message=(
+                f"KB '{kb.name}': embedding model '{llm_name}' not found in LLM doctype.\n"
+                f"Error: {e}"
+            ),
         )
         return None
 
     # Guard: don't try to use a generative/chat model as an embedding model
     if not getattr(llm_doc, "is_embedding_model", False):
         frappe.log_error(
-            f"KB '{kb.name}': LLM '{llm_name}' is not an embedding model "
-            f"(is_embedding_model=0). "
-            f"Please select a proper embedding model (e.g. gemini-embedding-001).",
-            "FinbyzAI KB",
+            title="FinbyzAI KB Config Error",
+            message=(
+                f"KB '{kb.name}': LLM '{llm_name}' is not an embedding model "
+                f"(is_embedding_model=0). "
+                f"Please select a proper embedding model (e.g. gemini-embedding-001)."
+            ),
         )
         frappe.throw(
             f"'{llm_name}' is not an embedding model. "
@@ -364,11 +382,14 @@ def _run_process_items(kb_name):
     try:
         kb = frappe.get_doc("Knowledge Base", kb_name)
         kb.process_items()
-    except Exception:
+    except Exception as e:
         # process_items already set status → Queue and logged the root cause.
         frappe.log_error(
-            f"Background job failed for KB '{kb_name}'.\n{frappe.get_traceback()}",
-            "FinbyzAI KB",
+            title="FinbyzAI KB Processing Error",
+            message=(
+                f"Background job failed for KB '{kb_name}'.\n"
+                f"Error: {e}\n{frappe.get_traceback()}"
+            ),
         )
 
 
@@ -390,19 +411,18 @@ def _run_delete_removed_rows(kb_name, current_links, current_docs, current_notes
     try:
         kb = frappe.get_doc("Knowledge Base", kb_name)
         store = kb.get_vector_store()
-    except Exception:
+    except Exception as e:
         frappe.log_error(
-            f"KB '{kb_name}': failed to load KB/store for row-deletion.\n"
-            f"{frappe.get_traceback()}",
-            "FinbyzAI KB",
+            title="FinbyzAI KB Processing Error",
+            message=(
+                f"KB '{kb_name}': failed to load KB/store for row-deletion.\n"
+                f"Error: {e}\n{frappe.get_traceback()}"
+            ),
         )
         return
 
     def _purge_removed(child_doctype, parent_table, current_names):
         """Find processed rows that are no longer in current_names and delete."""
-        # All rows that exist in the DB for this KB (they may be in the child
-        # table or already deleted from the doc but still in DB due to child saves).
-        # We look at processed rows: only those have vectors in the store.
         existing_processed = frappe.get_all(
             child_doctype,
             filters={"parent": kb_name, "is_processed": 1},
@@ -421,11 +441,14 @@ def _run_delete_removed_rows(kb_name, current_links, current_docs, current_notes
                     f"KB '{kb_name}': deleted vectors for removed row "
                     f"{child_doctype}::{row_name} (source_id={source_id})"
                 )
-            except Exception:
+            except Exception as e:
                 frappe.log_error(
-                    f"KB '{kb_name}': failed to delete vectors for "
-                    f"{child_doctype}::{row_name}.\n{frappe.get_traceback()}",
-                    "FinbyzAI KB",
+                    title="FinbyzAI KB Processing Error",
+                    message=(
+                        f"KB '{kb_name}': failed to delete vectors for "
+                        f"{child_doctype}::{row_name}.\n"
+                        f"Error: {e}\n{frappe.get_traceback()}"
+                    ),
                 )
 
     _purge_removed("AI Links", "links", current_links)
@@ -470,10 +493,13 @@ def process_queued_knowledge_bases():
                 timeout=3600,
             )
 
-        except Exception:
+        except Exception as e:
             frappe.log_error(
-                f"Scheduler: error queuing KB '{kb_name}'.\n{frappe.get_traceback()}",
-                "FinbyzAI KB",
+                title="FinbyzAI Scheduler Error",
+                message=(
+                    f"Scheduler: error queuing KB '{kb_name}'.\n"
+                    f"Error: {e}\n{frappe.get_traceback()}"
+                ),
             )
 
 
@@ -501,13 +527,19 @@ def fetch_sitemap_urls(sitemap_url):
             response = requests.get(url, timeout=10)
             response.raise_for_status()
         except Exception as e:
-            frappe.log_error(f"Sitemap fetch error ({url}): {e}", "FinbyzAI KB")
+            frappe.log_error(
+                title="FinbyzAI Sitemap Fetch Error",
+                message=f"Sitemap fetch error ({url}): {e}\n{frappe.get_traceback()}",
+            )
             return []
 
         try:
             root = ET.fromstring(response.content)
         except ET.ParseError as e:
-            frappe.log_error(f"Sitemap parse error ({url}): {e}", "FinbyzAI KB")
+            frappe.log_error(
+                title="FinbyzAI Sitemap Parse Error",
+                message=f"Sitemap parse error ({url}): {e}\n{frappe.get_traceback()}",
+            )
             return []
 
         ns = "http://www.sitemaps.org/schemas/sitemap/0.9"
