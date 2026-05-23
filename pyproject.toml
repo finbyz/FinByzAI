@@ -4,7 +4,7 @@ authors = [
     { name = "Finbyz Tech Pvt Ltd", email = "info@finbyz.tech"}
 ]
 description = "AI-Powered Agents, Tools, and Knowledge Base Platform"
-requires-python = ">=3.10"
+requires-python = ">=3.14"
 readme = "README.md"
 dynamic = ["version"]
 dependencies = [
@@ -29,3 +29,6 @@ build-backend = "flit_core.buildapi"
 # These dependencies are only installed when developer mode is enabled
 [tool.bench.dev-dependencies]
 # package_name = "~=1.1.0"
+
+[tool.bench.frappe-dependencies]
+frappe = ">=16.0.0,<17.0.0"
