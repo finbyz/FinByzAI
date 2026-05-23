@@ -80,14 +80,6 @@ REMINDER: Respond ONLY with valid JSON format:
 {format_instructions}"""
 
 
-structured_prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system", system),
-        MessagesPlaceholder("chat_history", optional=True),
-        ("human", human),
-    ]
-)
-
 
 def create_structured_agent(
     llm: BaseLanguageModel,
@@ -103,6 +95,13 @@ def create_structured_agent(
     from langchain_core.tools import BaseTool
     from langchain_core.tools.render import ToolsRenderer
     from langchain.tools.render import render_text_description_and_args
+    structured_prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", system),
+        MessagesPlaceholder("chat_history", optional=True),
+        ("human", human),
+    ]
+)
     if prompt:
         structured_prompt.messages[2:2] = prompt.messages
     chat_agent = create_structured_chat_agent(
