@@ -4,7 +4,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.language_models import BaseLanguageModel
 from langchain_core.tools import BaseTool
 from langchain_core.tools.render import ToolsRenderer
-from langchain.tools.render import render_text_description_and_args
+from langchain_classic.tools.render import render_text_description_and_args
 
 
 system = """You are a helpful AI assistant that responds with structured JSON output. You have access to the following tools:
