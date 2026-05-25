@@ -1,3 +1,12 @@
+from collections.abc import Sequence
+from langchain_classic.agents import create_structured_chat_agent, AgentExecutor
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.language_models import BaseLanguageModel
+from langchain_core.tools import BaseTool
+from langchain_core.tools.render import ToolsRenderer
+from langchain.tools.render import render_text_description_and_args
+
+
 system = """You are a helpful AI assistant that responds with structured JSON output. You have access to the following tools:
 
 {tools}
@@ -80,6 +89,14 @@ REMINDER: Respond ONLY with valid JSON format:
 {format_instructions}"""
 
 
+structured_prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", system),
+        MessagesPlaceholder("chat_history", optional=True),
+        ("human", human),
+    ]
+)
+
 
 def create_structured_agent(
     llm: BaseLanguageModel,
@@ -89,19 +106,6 @@ def create_structured_agent(
     *,
     stop_sequence: bool | list[str] = True,
 ) -> AgentExecutor:
-    from langchain.agents import create_structured_chat_agent, AgentExecutor
-    from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-    from langchain_core.language_models import BaseLanguageModel
-    from langchain_core.tools import BaseTool
-    from langchain_core.tools.render import ToolsRenderer
-    from langchain.tools.render import render_text_description_and_args
-    structured_prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system", system),
-        MessagesPlaceholder("chat_history", optional=True),
-        ("human", human),
-    ]
-)
     if prompt:
         structured_prompt.messages[2:2] = prompt.messages
     chat_agent = create_structured_chat_agent(
