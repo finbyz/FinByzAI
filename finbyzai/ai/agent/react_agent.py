@@ -1,6 +1,6 @@
 from typing import List, Dict, Any, Optional
 from langchain_core.prompts import ChatPromptTemplate
-from langchain.tools import Tool
+from langchain_core.tools import Tool
 from langgraph.prebuilt import create_react_agent
 from langchain_core.tools.base import BaseTool
 from langchain_core.runnables import RunnableConfig

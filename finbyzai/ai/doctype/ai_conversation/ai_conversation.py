@@ -2,7 +2,7 @@ import frappe
 from frappe.model.document import Document
 from frappe.utils import now, get_datetime
 from datetime import datetime
-from langchain.memory.chat_memory import BaseChatMemory
+from langchain_classic.memory.chat_memory import BaseChatMemory
 from langchain_core.messages import BaseMessage, get_buffer_string,HumanMessage,AIMessage
 from typing import Any
 
