@@ -1,8 +1,8 @@
 from typing import Any
-from langchain.tools import BaseTool
+from langchain_core.tools import BaseTool
 from pydantic import Field, create_model
 import re
-from langchain.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 
 
 def sanitize(name: str) -> str:

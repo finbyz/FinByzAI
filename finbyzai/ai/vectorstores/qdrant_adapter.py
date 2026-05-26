@@ -2,7 +2,7 @@ from .base import BaseVectorStore
 from .registry import register_vector_store
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
-from langchain.agents import Tool
+from langchain_core.tools import Tool
 from langchain_core.tools import create_retriever_tool
 import frappe
 

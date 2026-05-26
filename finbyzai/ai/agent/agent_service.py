@@ -8,18 +8,18 @@ import frappe
 from frappe.model.document import Document
 from langchain_litellm.chat_models import ChatLiteLLM
 from langchain_core.output_parsers import PydanticOutputParser
-from langchain.schema import StrOutputParser
-from langchain.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
 from json_schema_to_pydantic import create_model
 from langgraph.prebuilt import create_react_agent
-from langchain.agents import AgentType, initialize_agent
-from langchain.memory import (
+from langchain_classic.agents import AgentType, initialize_agent
+from langchain_classic.memory import (
     ConversationBufferMemory,
     VectorStoreRetrieverMemory,
     ConversationSummaryMemory,
     ConversationBufferWindowMemory,
 )
-from langchain.tools import BaseTool
+from langchain_core.tools import BaseTool
 import warnings
 
 import os

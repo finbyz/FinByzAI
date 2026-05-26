@@ -1,5 +1,5 @@
-from langchain.memory.chat_memory import BaseChatMemory
-from langchain.schema import messages_from_dict, messages_to_dict
+from langchain_classic.memory.chat_memory import BaseChatMemory
+from langchain_core.messages import messages_from_dict, messages_to_dict
 import frappe
 
 class FrappeChatMemory(BaseChatMemory):

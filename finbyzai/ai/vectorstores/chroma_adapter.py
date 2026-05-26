@@ -2,10 +2,10 @@ from .base import BaseVectorStore
 from .registry import register_vector_store
 from langchain_core.tools import create_retriever_tool
 from langchain_chroma import Chroma
-from langchain.agents import Tool
+from langchain_core.tools import Tool
 import frappe
 from pathlib import Path
-from langchain.tools import tool
+from langchain_core.tools import tool
 
 
 @register_vector_store("chroma")

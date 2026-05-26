@@ -3,12 +3,12 @@ from .registry import register_vector_store
 from langchain_pinecone import PineconeVectorStore
 from typing import List, Dict
 from langchain_core.tools import create_retriever_tool
-from langchain.agents import Tool
+from langchain_core.tools import Tool
 from pinecone import Pinecone, ServerlessSpec
 import frappe
 import os
 import re
-from langchain.tools import tool
+from langchain_core.tools import tool
 
 
 @register_vector_store("pinecone")

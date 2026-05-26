@@ -5,7 +5,7 @@ import importlib
 import os
 import frappe
 from frappe.model.document import Document
-from langchain.tools import BaseTool,Tool, StructuredTool
+from langchain_core.tools import BaseTool,Tool, StructuredTool
 import sys
 
 
@@ -22,7 +22,7 @@ class AITool(Document):
 # Module: {self.module}
 
 from typing import Any
-from langchain.tools import tool
+from langchain_core.tools import tool
 
 @tool("{safe_name}", return_direct=False)
 def {frappe.scrub(self.name)}_tool(input: Any) -> Any:
