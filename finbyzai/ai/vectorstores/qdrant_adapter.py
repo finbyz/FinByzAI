@@ -2,8 +2,7 @@ from .base import BaseVectorStore
 from .registry import register_vector_store
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
-from qdrant_client.http import models as qdrant_models
-from langchain.agents import Tool
+from langchain_core.tools import Tool
 from langchain_core.tools import create_retriever_tool
 from urllib.parse import urlparse
 import uuid

@@ -4,7 +4,7 @@
 import frappe
 from frappe.model.document import Document
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from finbyzai.ai.vectorstores.registry import create_vector_store
 from finbyzai.ai.embeddings.registry import create_embedding
 from finbyzai.ai.utils.knowledge_base_utils import extract_text_from_source

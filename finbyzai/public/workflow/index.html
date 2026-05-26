@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex,nofollow" />
+    <link rel="icon" href="{{ boot.favicon }}" />
+    <title>Workflow Builder</title>
+    <script type="module" crossorigin src="/assets/finbyzai/workflow/assets/index-CLjts9rk.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/finbyzai/workflow/assets/rolldown-runtime-B0Z9INg1.js">
+    <link rel="modulepreload" crossorigin href="/assets/finbyzai/workflow/assets/react-vendor-DlPriuaL.js">
+    <link rel="modulepreload" crossorigin href="/assets/finbyzai/workflow/assets/frappe-sdk-2REwZ1bE.js">
+    <link rel="modulepreload" crossorigin href="/assets/finbyzai/workflow/assets/forms-validation-Cbq5hfd_.js">
+    <link rel="modulepreload" crossorigin href="/assets/finbyzai/workflow/assets/workflow-canvas-FWAV-o3P.js">
+    <link rel="stylesheet" crossorigin href="/assets/finbyzai/workflow/assets/workflow-canvas-DLioOiRN.css">
+    <link rel="stylesheet" crossorigin href="/assets/finbyzai/workflow/assets/index-BUeZDipP.css">
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      window.csrf_token = '{{ boot.csrf_token }}';
+      window.frappe = window.frappe || {};
+      window.frappe.boot = {{ boot_json }};
+    </script>
+  </body>
+</html>
