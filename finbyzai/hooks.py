@@ -1,3 +1,6 @@
+import os
+os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
+
 app_name = "finbyzai"
 app_title = "FinByz AI"
 app_publisher = "Finbyz Tech Pvt Ltd"
