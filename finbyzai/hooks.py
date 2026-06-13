@@ -3,8 +3,9 @@ app_title = "FinByz AI"
 app_publisher = "Finbyz Tech Pvt Ltd"
 app_description = "AI-Powered Agents, Tools, and Knowledge Base Platform"
 app_email = "info@finbyz.tech"
-app_license = "gpl-3.0"
-
+app_license = "MIT"
+import os
+os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 # Includes in <head>
 # ------------------
 
