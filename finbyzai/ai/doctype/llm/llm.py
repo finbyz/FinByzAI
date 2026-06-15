@@ -19,6 +19,8 @@ class LLM(Document):
 	@property
 	def llm(self):
 		provider = frappe.get_doc("LLM Provider", self.provider)
+		if not provider.api_key:
+			frappe.throw(f"API key is not set for provider {self.provider}. Please set it in the LLM Provider doctype.")
 		if self.supports_image_generation:
 			if self.provider == "Google":
 				os.environ['GEMINI_API_KEY'] = provider.get_password("api_key")
