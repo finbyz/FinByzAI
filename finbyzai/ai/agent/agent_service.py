@@ -24,8 +24,9 @@ import warnings
 
 import os
 
-os.environ["LANGSMITH_API_KEY"] = "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"
-os.environ["LANGSMITH_TRACING"] = "true"
+# Get your API key from https://smith.langchain.com/
+# os.environ["LANGSMITH_API_KEY"] = ""
+# os.environ["LANGSMITH_TRACING"] = "true"
 
 
 class AgentTypes(Enum):
