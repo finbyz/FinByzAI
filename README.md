@@ -51,7 +51,7 @@ FinByz AI introduces several specialized Doctypes that work in tandem:
 
 FinByz AI leverages **LiteLLM** under the hood, meaning it supports **100+ LLMs from any provider** right out of the box.
 
-![Supported LLM list via LiteLLM](image.png)
+![Supported LLM list via LiteLLM](finbyzai/images/image.png)
 
 **Supported Models Include (but are not limited to):**
 - OpenAI (GPT-4o, GPT-4, GPT-3.5, DALL-E)
@@ -84,7 +84,7 @@ bench --site [your-site-name] install-app finbyzai
 
 ### 1. LLM Provider Setup
 
-![LLM Provider Setup Form](image-1.png)
+![LLM Provider Setup Form](finbyzai/images/image-1.png)
 
 1. Navigate to **LLM Provider** in your Frappe Desk.
 2. Create a new provider (e.g., "OpenAI").
@@ -101,7 +101,7 @@ If you intend to use Retrieval-Augmented Generation (RAG):
 
 ### 3. Creating an AI Agent
 
-![AI Agent List View](image-2.png)
+![AI Agent List View](finbyzai/images/image-2.png)
 
 1. Navigate to **AI Agent** and create a new record.
 2. Select the `Agent Type` (e.g., ReAct Agent or Conversational Agent).
@@ -112,7 +112,7 @@ If you intend to use Retrieval-Augmented Generation (RAG):
 
 ## Knowledge Base & RAG
 
-![Knowledge Base Form View](image-3.png)
+![Knowledge Base Form View](finbyzai/images/image-3.png)
 
 The Knowledge Base module automatically syncs your data into your configured Vector Store. 
 
