@@ -6,7 +6,7 @@ app_title = "FinByz AI"
 app_publisher = "Finbyz Tech Pvt Ltd"
 app_description = "AI-Powered Agents, Tools, and Knowledge Base Platform"
 app_email = "info@finbyz.tech"
-app_license = "MIT"
+app_license = "gpl-3.0"
 
 # Includes in <head>
 # ------------------
