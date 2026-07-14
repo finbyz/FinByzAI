@@ -15,47 +15,38 @@ import os
 from finbyzai.ai.doctype.llm.image_llm import ImageGeneration
 
 
+def _clean_api_key(value):
+	if isinstance(value, str):
+		return value.strip()
+	return value
+
+
 class LLM(Document):
 	@property
 	def llm(self):
 		provider = frappe.get_doc("LLM Provider", self.provider)
-		base_url = provider.base_url
-
-		kwargs = {
-			"api_key": provider.get_password("api_key"),
-			"model": self.name,
-		}
-		if base_url:
-			kwargs["api_base"] = base_url
-			kwargs["custom_llm_provider"] = "openai"
-
+		api_key = _clean_api_key(provider.get_password("api_key"))
 		if self.supports_image_generation:
 			if self.provider == "Google":
-				os.environ['GEMINI_API_KEY'] = provider.get_password("api_key")
-
-			image_kwargs = {
-				"api_key": provider.get_password("api_key"),
-			}
-			if base_url:
-				image_kwargs["api_base"] = base_url
-
-			return ImageGeneration(self.name, **image_kwargs)
-		return ChatLiteLLM(**kwargs)
+				os.environ['GEMINI_API_KEY'] = api_key or ""
+			
+			return ImageGeneration(
+       			self.name,
+          		api_key=api_key
+        	)
+		return ChatLiteLLM(
+			api_key = api_key,
+			model = self.name,
+		)
 
 
 	def get_embeding_function(self):
 		provider = frappe.get_doc("LLM Provider", self.provider)
-		base_url = provider.base_url
-
-		kwargs = {
-			"model": self.name,
-			"api_key": provider.get_password("api_key")
-		}
-		if base_url:
-			kwargs["api_base"] = base_url
-			kwargs["custom_llm_provider"] = "openai"
-
-		return embedding(**kwargs)
+		api_key = _clean_api_key(provider.get_password("api_key"))
+		return embedding(
+			model=self.name,
+			api_key = api_key
+		)
 
 class ImageLiteLLM:
 	"""
