@@ -1,0 +1,38 @@
+[
+    {
+        "api_key": null,
+        "disabled": 0,
+        "docstatus": 0,
+        "doctype": "LLM Provider",
+        "modified": "2026-01-09 10:37:54.286395",
+        "name": "Anthropic",
+        "provider": "Anthropic"
+    },
+    {
+        "api_key": null,
+        "disabled": 0,
+        "docstatus": 0,
+        "doctype": "LLM Provider",
+        "modified": "2026-03-12 13:08:03.749915",
+        "name": "Perplexity",
+        "provider": "Perplexity"
+    },
+    {
+        "api_key": null,
+        "disabled": 0,
+        "docstatus": 0,
+        "doctype": "LLM Provider",
+        "modified": "2026-03-11 09:04:54.058892",
+        "name": "OpenAI",
+        "provider": "OpenAI"
+    },
+    {
+        "api_key": null,
+        "disabled": 0,
+        "docstatus": 0,
+        "doctype": "LLM Provider",
+        "modified": "2026-06-10 13:42:58.420900",
+        "name": "Google",
+        "provider": "Google"
+    }
+]
