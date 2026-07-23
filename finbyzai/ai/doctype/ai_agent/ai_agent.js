@@ -29,6 +29,26 @@ function extractVariables(msgs) {
   return { perMessage, unique };
 }
 
+function applySchemaDefaults(schema, current = {}) {
+  const result = { ...current };
+  const properties = schema?.properties || {};
+
+  Object.entries(properties).forEach(([key, definition]) => {
+    if (result[key] === undefined && definition.default !== undefined) {
+      result[key] = definition.default;
+    }
+    if (
+      result[key] &&
+      typeof result[key] === "object" &&
+      !Array.isArray(result[key])
+    ) {
+      result[key] = applySchemaDefaults(definition, result[key]);
+    }
+  });
+
+  return result;
+}
+
 frappe.ui.form.on("AI Agent", {
     refresh(frm) {
         if (frm.doc.name) {
@@ -145,4 +165,47 @@ frappe.ui.form.on("AI Agent", {
         
         dialog.show();
     }
+});
+
+frappe.ui.form.on("AI Agent Tool", {
+    async tool(frm, cdt, cdn) {
+        const row = locals[cdt][cdn];
+        if (!row.tool) {
+            return;
+        }
+
+        const response = await frappe.db.get_value(
+            "AI Tool",
+            row.tool,
+            ["tool_type", "configuration_schema"]
+        );
+        const values = response?.message || {};
+        await frappe.model.set_value(
+            cdt,
+            cdn,
+            "tool_type",
+            values.tool_type || "Function"
+        );
+
+        if (values.tool_type !== "Provider Built-in" || row.configuration) {
+            return;
+        }
+
+        try {
+            const schema = JSON.parse(values.configuration_schema || "{}");
+            const defaults = applySchemaDefaults(schema);
+            await frappe.model.set_value(
+                cdt,
+                cdn,
+                "configuration",
+                JSON.stringify(defaults, null, 2)
+            );
+        } catch (error) {
+            frappe.msgprint({
+                title: __("Invalid Tool Configuration Schema"),
+                message: error.message,
+                indicator: "red",
+            });
+        }
+    },
 });

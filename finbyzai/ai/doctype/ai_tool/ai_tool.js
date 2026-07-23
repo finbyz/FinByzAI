@@ -8,5 +8,20 @@ frappe.ui.form.on("AI Tool", {
             frm.get_field('is_custom').df.hidden = 1
             frm.refresh_fields()
         }
-    }
+        frm.trigger("tool_type");
+    },
+
+    tool_type(frm) {
+        const is_builtin = frm.doc.tool_type === "Provider Built-in";
+        frm.set_df_property(
+            "execution_side",
+            "description",
+            is_builtin
+                ? __("Executed and billed by the model provider.")
+                : __("Executed by this Frappe application.")
+        );
+        if (frm.doc.execution_side !== (is_builtin ? "Provider" : "Application")) {
+            frm.set_value("execution_side", is_builtin ? "Provider" : "Application");
+        }
+    },
 });

@@ -2,6 +2,7 @@ from enum import Enum
 import json
 from typing import Any, Optional, Union
 from finbyzai.ai.agent.agent_as_tool import AgentAsTool
+from finbyzai.ai.agent.builtin_tools import BuiltinToolCompiler
 from finbyzai.ai.agent.react_agent import ReactAgent
 from finbyzai.ai.agent.structrued_agent import create_structured_agent
 import frappe
@@ -250,7 +251,13 @@ class AgentService:
 
         if self.agent_doc.tools:
             for ai_agent_tool in self.agent_doc.tools:
+                if not getattr(ai_agent_tool, "enabled", 1):
+                    continue
                 tool_doc = frappe.get_doc("AI Tool", ai_agent_tool.tool)
+                if not getattr(tool_doc, "enabled", 1):
+                    continue
+                if (getattr(tool_doc, "tool_type", None) or "Function") != "Function":
+                    continue
                 tool = tool_doc.get_tool()
                 if tool:
                     tools_list.append(tool)
@@ -340,6 +347,33 @@ class AgentService:
             else:
                 llm_doc = frappe.get_doc("LLM", self.agent_doc.llm)
                 llm = llm_doc.llm
+                function_tools_present = bool(self.agent_doc.knowledge_base)
+                if not function_tools_present:
+                    for selected_tool in self.agent_doc.tools or []:
+                        if not getattr(selected_tool, "enabled", 1):
+                            continue
+                        tool_type = frappe.db.get_value(
+                            "AI Tool", selected_tool.tool, "tool_type"
+                        ) or "Function"
+                        if tool_type == "Function":
+                            function_tools_present = True
+                            break
+
+                compiled = BuiltinToolCompiler(
+                    self.agent_doc,
+                    llm_doc,
+                    has_function_tools=function_tools_present,
+                ).compile()
+                built_in_kwargs = compiled.as_model_kwargs()
+                if built_in_kwargs:
+                    llm = llm.model_copy(
+                        update={
+                            "model_kwargs": {
+                                **(llm.model_kwargs or {}),
+                                **built_in_kwargs,
+                            }
+                        },
+                    )
             return llm
         except Exception as e:
             frappe.log_error(f"Failed to get LLM for agent {self.agent_doc.name}", e)
