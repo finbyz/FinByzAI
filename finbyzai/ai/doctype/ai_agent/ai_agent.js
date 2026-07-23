@@ -45,16 +45,15 @@ frappe.ui.form.on("AI Agent", {
     
     agent_type(frm) {
         if (frm.doc.agent_type == "Gemini Cache Agent") {
-            frm.doc.llm_provider = null
-            frm.doc.llm = null
-            frm.refresh_fields()
+            frm.set_value("llm_provider", null);
+            frm.set_value("llm", null);
         }
         let fields_to_hide_and_clear = ['output_schema', 'lc_agent_type', 'tools'];
 
         let hide_fields = ["Image Generation Agent"].includes(frm.doc.agent_type);
 
         fields_to_hide_and_clear.forEach(field => {
-            frm.toggle_display(field, !hide_fields); 
+            frm.toggle_display(field, !hide_fields);
         });
     },
     
@@ -120,8 +119,15 @@ frappe.ui.form.on("AI Agent", {
                     freeze: true,
                     freeze_message: __("Testing AI Agent... Please wait"),
                     callback: function(r) {
-                        console.log("Response from test_agent:", r);
-                        return
+                        if (r.message) {
+                            frappe.msgprint({
+                                title: r.message.success ? __('Success') : __('Error'),
+                                message: r.message.success
+                                    ? `<pre style="white-space:pre-wrap;word-wrap:break-word;">${JSON.stringify(r.message.response, null, 2)}</pre>`
+                                    : __(r.message.error || 'Unknown error'),
+                                indicator: r.message.success ? 'green' : 'red'
+                            });
+                        }
                     },
                     error: function(err) {
                         console.error("Error calling test_agent:", err);
@@ -138,67 +144,5 @@ frappe.ui.form.on("AI Agent", {
         });
         
         dialog.show();
-    },
-    
-    format_test_result(frm, result) {
-        let response_display = '';
-        
-        // Format response based on type
-        if (typeof result.response === 'object') {
-            // Check if it's a structured output with specific keys
-            if (result.response.output) {
-                response_display = frm.trigger("format_response_content", result.response.output);
-            } else {
-                response_display = `<pre style="background: #f9f9f9; padding: 10px; border-radius: 5px; white-space: pre-wrap; word-wrap: break-word;">${JSON.stringify(result.response, null, 2)}</pre>`;
-            }
-        } else if (typeof result.response === 'string') {
-            // Try to parse as markdown or just display as text
-            response_display = frappe.markdown(result.response) || result.response;
-        } else {
-            response_display = String(result.response);
-        }
-
-        let html = `
-            <div class="test-result-container" style="padding: 15px;">
-                <div class="test-status" style="margin-bottom: 15px;">
-                    <h4 style="color: ${result.success ? 'green' : 'red'};">
-                        ${result.success ? '✓ Test Successful' : '✗ Test Failed'}
-                    </h4>
-                </div>
-                
-                <div class="test-details" style="margin-bottom: 15px; background: #f5f5f5; padding: 10px; border-radius: 5px;">
-                    <strong>Query:</strong> <span style="color: #333;">${result.query}</span><br>
-                    <strong>Agent Type:</strong> ${result.agent_type}<br>
-                    <strong>LLM:</strong> ${result.llm}<br>
-                    ${result.memory_enabled ? '<strong>Memory:</strong> <span style="color: green;">Enabled</span><br>' : ''}
-                    ${result.variables && Object.keys(result.variables).length > 0 ? 
-                        `<strong>Variables:</strong> <pre style="background: #fff; padding: 5px; border-radius: 3px; margin-top: 5px;">${JSON.stringify(result.variables, null, 2)}</pre>` : 
-                        ''
-                    }
-                </div>
-                
-                <div class="test-response" style="margin-bottom: 15px;">
-                    <strong>Response:</strong>
-                    <div style="background: #fff; padding: 15px; border-radius: 5px; margin-top: 5px; max-height: 400px; overflow-y: auto; border: 1px solid #e0e0e0;">
-                        ${response_display}
-                    </div>
-                </div>
-            </div>
-        `;
-        return html;
-    },
-    
-    format_response_content(frm, content) {
-        // Helper function to format different types of content
-        if (typeof content === 'object') {
-            return `<pre style="background: #f9f9f9; padding: 10px; border-radius: 5px; white-space: pre-wrap; word-wrap: break-word;">${JSON.stringify(content, null, 2)}</pre>`;
-        } else if (typeof content === 'string') {
-            // Check if it looks like markdown
-            if (content.includes('#') || content.includes('*') || content.includes('[')) {
-                return frappe.markdown(content);
-            }
-            return content;
-        }
-        return String(content);
     }
 });

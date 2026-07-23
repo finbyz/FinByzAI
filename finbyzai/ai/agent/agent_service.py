@@ -11,7 +11,6 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from json_schema_to_pydantic import create_model
-from langgraph.prebuilt import create_react_agent
 from langchain_classic.agents import AgentType, initialize_agent
 from langchain_classic.memory import (
     ConversationBufferMemory,
@@ -24,8 +23,16 @@ import warnings
 
 import os
 
-os.environ["LANGSMITH_API_KEY"] = "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"
-os.environ["LANGSMITH_TRACING"] = "true"
+
+def _configure_langsmith():
+    """Configure LangSmith tracing from site_config or env vars (lazy, safe at import time)."""
+    try:
+        key = frappe.get_conf().get("langsmith_api_key") or os.getenv("LANGSMITH_API_KEY")
+        if key:
+            os.environ["LANGSMITH_API_KEY"] = key
+            os.environ["LANGSMITH_TRACING"] = "true"
+    except Exception:
+        pass  # Frappe may not be fully booted at import time
 
 
 class AgentTypes(Enum):
@@ -57,6 +64,7 @@ class AgentService:
         self._agent_instance = None
         self._memory = None
         self._is_basic_chain = False
+        _configure_langsmith()
         try:
             # Accept both name and Document
             if isinstance(agent, str):
@@ -64,7 +72,10 @@ class AgentService:
             else:
                 self.agent_doc = agent
         except Exception as e:
-            frappe.log_error(f"Failed to initialize AgentService", e)
+            frappe.log_error(
+                title="Failed to initialize AgentService",
+                message=f"Agent: {agent!r}\nError: {e}"
+            )
             raise
 
     @property
@@ -190,6 +201,7 @@ class AgentService:
                 messages.insert(0, (role, "{format_instructions}"))
         
         return messages
+
     def get_output_parser(self):
         if self.agent_doc.output_schema:
             dynamic_model = create_model(
@@ -198,6 +210,13 @@ class AgentService:
             output_parser = PydanticOutputParser(pydantic_object=dynamic_model)
             return output_parser
         return None
+
+    def _get_output_parser_and_instructions(self):
+        """Return (output_parser, format_instructions) tuple for structured output."""
+        output_parser = self.get_output_parser()
+        if output_parser:
+            return output_parser, output_parser.get_format_instructions()
+        return StrOutputParser(), ""
     
     def get_memory(self):
         """Initialize memory with persistent context in Frappe"""
@@ -278,31 +297,6 @@ class AgentService:
         else:
             return self._create_basic_chain(model)
 
-    def _create_langgraph_agent(self, tools, model, memory):
-        """Create a LangGraph-based agent"""
-        dynamic_model = None
-        if self.agent_doc.output_schema:
-            dynamic_model = create_model(
-                schema=json.loads(self.agent_doc.output_schema)
-            )
-
-        messages = self.chat_messages
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                *messages,
-            ]
-        )
-
-        agent = create_react_agent(
-            tools=tools,
-            prompt=prompt or None,
-            model=model,
-            name=self.agent_doc.name,
-            response_format=dynamic_model,
-        )
-        self._agent_instance = agent
-        return agent
-
     def _create_conversational_agent(self, tools, model, memory):
         """Create a conversational agent with enhanced memory"""
         if not memory:
@@ -325,25 +319,12 @@ class AgentService:
 
     def _create_basic_chain(self, model):
         """Create a simple LangChain chain as a safe fallback when agent type is not defined."""
-        dynamic_model = None
-        if self.agent_doc.output_schema:
-            dynamic_model = create_model(
-                schema=json.loads(self.agent_doc.output_schema)
-            )
-
         messages = self.chat_messages
         # Ensure the chain consumes the dynamic query input
         messages.append(("human", "{query}"))
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                *messages,
-            ]
-        )
+        prompt = ChatPromptTemplate.from_messages([*messages])
 
-        if dynamic_model:
-            output_parser = PydanticOutputParser(pydantic_object=dynamic_model)
-        else:
-            output_parser = StrOutputParser()
+        output_parser, _ = self._get_output_parser_and_instructions()
 
         chain = prompt | model | output_parser
         self._agent_instance = chain
@@ -431,8 +412,8 @@ class AgentService:
 
             # Prepare input data
             input_data = {"input": query, "format_instructions": ""}
-            if output_parser := self.get_output_parser():
-                input_data["format_instructions"] = output_parser.get_format_instructions()
+            output_parser, format_instructions = self._get_output_parser_and_instructions()
+            input_data["format_instructions"] = format_instructions
             
             if memory:
                 memory_vars = memory.load_memory_variables(input_data)
@@ -498,19 +479,7 @@ class AgentService:
 
             prompt = ChatPromptTemplate.from_messages([*messages])
 
-            # Handle output schema
-            dynamic_model = None
-            if self.agent_doc.output_schema:
-                dynamic_model = create_model(
-                    schema=json.loads(self.agent_doc.output_schema)
-                )
-
-            format_instructions = ""
-            if dynamic_model:
-                output_parser = PydanticOutputParser(pydantic_object=dynamic_model)
-                format_instructions = output_parser.get_format_instructions()
-            else:
-                output_parser = StrOutputParser()
+            output_parser, format_instructions = self._get_output_parser_and_instructions()
 
             chain = prompt | llm | output_parser
 
@@ -535,14 +504,9 @@ class AgentService:
         """Invoke the cached basic chain fallback and handle memory save."""
         try:
             chain = self.agent
+            memory = self.get_memory()
 
-            format_instructions = ""
-            if self.agent_doc.output_schema:
-                dynamic_model = create_model(
-                    schema=json.loads(self.agent_doc.output_schema)
-                )
-                output_parser = PydanticOutputParser(pydantic_object=dynamic_model)
-                format_instructions = output_parser.get_format_instructions()
+            output_parser, format_instructions = self._get_output_parser_and_instructions()
 
             input_vars = {
                 "format_instructions": format_instructions,
@@ -551,6 +515,10 @@ class AgentService:
             }
 
             response = chain.invoke(input_vars)
+
+            # Auto-save to memory
+            if memory and query and response:
+                memory.save_context({"input": query}, {"output": response})
 
             return response
         except Exception as e:
