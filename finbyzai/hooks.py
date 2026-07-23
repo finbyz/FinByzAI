@@ -67,6 +67,8 @@ app_license = "gpl-3.0"
 # before_install = "finbyzai.install.before_install"
 # after_install = "finbyzai.install.after_install"
 
+after_migrate = "finbyzai.install.after_migrate"
+
 # Uninstallation
 # ------------
 
@@ -209,8 +211,6 @@ scheduler_events = {
 # ]
 
 fixtures = [
-    "LLM",
-    "LLM Provider",
     {
         "doctype": "Custom Field",
         "filters": [

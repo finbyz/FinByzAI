@@ -22,9 +22,6 @@ class AIAgent(Document):
         if self.agent_type == "Gemini Cache Agent":
             if any(map(lambda x:x.type == 'system', self.messages)):
                 frappe.throw("You can not set system message for Gemini Cache Agent")
-        if not self.output_schema:
-            self.output_schema = None
-
         if self.enable_memory and not self.memory_type:
             frappe.throw("Memory type is required when memory is enabled")
         
@@ -34,6 +31,17 @@ class AIAgent(Document):
             return self._agent_service
         self._agent_service = AgentService(self)
         return self._agent_service
+    
+    @staticmethod
+    def _format_response(response):
+        """Safely format an agent response into a serializable value."""
+        if isinstance(response, str):
+            return response
+        if hasattr(response, "model_dump"):
+            return response.model_dump()
+        if isinstance(response, dict):
+            return response
+        return str(response)
     
     @frappe.whitelist()
     def test_agent(self, **kwargs):
@@ -69,14 +77,9 @@ class AIAgent(Document):
             
             # Invoke the agent with query and additional variables
             response = self.agent_service.invoke(query=query, **additional_vars)
-            
-            # Format response based on type
-            if type(response) == str:
-                frappe.msgprint(response)
-            else:
-                frappe.msgprint(str(response.model_dump()))
+
             formatted_response = self._format_response(response)
-            
+
             return {
                 "success": True,
                 "response": formatted_response,
