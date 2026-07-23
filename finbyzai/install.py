@@ -1,5 +1,7 @@
 """Installation and migration hooks for finbyzai."""
 
+import json
+
 import frappe
 
 
@@ -67,11 +69,44 @@ LLMS = [
     {"name": "perplexity/sonar-reasoning-pro", "provider": "Perplexity", "title": "Perplexity Sonar Reasoning Pro", "size": "Very Small", "is_reasoning": 1, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
 ]
 
+BUILTIN_AI_TOOLS = [
+    {
+        "name": "Web Search",
+        "tool_type": "Provider Built-in",
+        "tool_key": "web_search",
+        "enabled": 1,
+        "execution_side": "Provider",
+        "cost_sensitive": 1,
+        "requires_confirmation": 0,
+        "description": (
+            "Search the public web for current information using the model "
+            "provider's managed search capability."
+        ),
+        "configuration_schema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+        "provider_mappings": [
+            {
+                "provider": "Google",
+                "model_pattern": r"^gemini/gemini-(2\.0|2\.5|3).*",
+                "transport_strategy": "LiteLLM Parameter",
+                "enabled": 1,
+                "request_template": {"web_search_options": {}},
+                "compatibility_rules": {},
+                "response_mapping": {},
+            }
+        ],
+    }
+]
+
 
 def after_migrate():
-    """Create default LLM Providers and LLMs after every migrate."""
+    """Create default providers, models, and built-in tool definitions."""
     _sync_llm_providers()
     _sync_llms()
+    _sync_builtin_ai_tools()
 
 
 def _sync_llm_providers():
@@ -96,4 +131,32 @@ def _sync_llms():
             "doctype": "LLM",
             **llm_data,
         })
+        doc.insert(ignore_permissions=True)
+
+
+def _sync_builtin_ai_tools():
+    """Create missing standard tool definitions without overwriting user changes."""
+    for tool_data in BUILTIN_AI_TOOLS:
+        if frappe.db.exists("AI Tool", tool_data["name"]):
+            continue
+
+        doc = frappe.new_doc("AI Tool")
+        for fieldname, value in tool_data.items():
+            if fieldname in ("name", "provider_mappings"):
+                continue
+            if fieldname == "configuration_schema":
+                value = json.dumps(value, indent=2)
+            setattr(doc, fieldname, value)
+        doc.name = tool_data["name"]
+
+        for mapping in tool_data["provider_mappings"]:
+            row = dict(mapping)
+            for fieldname in (
+                "request_template",
+                "response_mapping",
+                "compatibility_rules",
+            ):
+                row[fieldname] = json.dumps(row[fieldname], indent=2)
+            doc.append("provider_mappings", row)
+
         doc.insert(ignore_permissions=True)
