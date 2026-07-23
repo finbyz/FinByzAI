@@ -21,7 +21,7 @@ from langchain_classic.memory import (
     ConversationSummaryMemory,
     ConversationBufferWindowMemory
 )
-from finbyzai.ai.memory.base import FrappeChatMemory
+from finbyzai.ai.memory.base import FrappeChatMessageHistory
 
 
 class BaseAgentMemory(ABC):
@@ -53,38 +53,35 @@ class BaseAgentMemory(ABC):
 class FrappeAgentMemory(BaseAgentMemory):
     """Frappe-specific agent memory implementation."""
     
-    def get_memory(self) -> Optional[FrappeChatMemory]:
-        """Get Frappe chat memory instance."""
+    def get_memory(self) -> Optional[Any]:
+        """Get memory backed by the authenticated user's Frappe conversation."""
         try:
-            base_memory = self._create_base_memory()
-            if base_memory:
-                return FrappeChatMemory(
-                    memory=base_memory,
-                    agent_name=self.agent_name
+            history = FrappeChatMessageHistory(
+                agent_name=self.agent_name,
+                conversation_name=self.kwargs.get("conversation_id"),
+            )
+            if self.memory_type == "Buffer Memory":
+                return ConversationBufferMemory(
+                    chat_memory=history,
+                    memory_key="chat_history",
+                    return_messages=True,
+                )
+            if self.memory_type == "Window Memory":
+                return ConversationBufferWindowMemory(
+                    chat_memory=history,
+                    memory_key="chat_history",
+                    k=self.kwargs.get("window_size", 5),
+                    return_messages=True,
+                )
+            if self.memory_type in {"Summary Memory", "Vector Memory"}:
+                raise ValueError(
+                    f"{self.memory_type} must be initialized through AgentService "
+                    "to preserve user isolation"
                 )
             return None
         except Exception as e:
             frappe.log_error(f"Error creating memory for agent '{self.agent_name}': {e}")
             return None
-    
-    def _create_base_memory(self) -> Optional[Any]:
-        """Create the base memory instance based on type."""
-        if self.memory_type == "Buffer Memory":
-            return ConversationBufferMemory(return_messages=True)
-        elif self.memory_type == "Window Memory":
-            window_size = self.kwargs.get('window_size', 5)
-            return ConversationBufferWindowMemory(k=window_size, return_messages=True)
-        elif self.memory_type == "Summary Memory":
-            llm = self.kwargs.get('llm')
-            if not llm:
-                raise ValueError("LLM is required for Summary Memory")
-            return ConversationSummaryMemory(llm=llm)
-        elif self.memory_type == "Vector Memory":
-            retriever = self.kwargs.get('retriever')
-            if not retriever:
-                raise ValueError("Retriever is required for Vector Memory")
-            return VectorStoreRetrieverMemory(retriever=retriever)
-        return None
 
 
 class BaseAgentTools(ABC):

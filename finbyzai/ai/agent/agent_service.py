@@ -5,6 +5,10 @@ from finbyzai.ai.agent.agent_as_tool import AgentAsTool
 from finbyzai.ai.agent.builtin_tools import BuiltinToolCompiler
 from finbyzai.ai.agent.react_agent import ReactAgent
 from finbyzai.ai.agent.structrued_agent import create_structured_agent
+from finbyzai.ai.memory.base import (
+    FrappeChatMessageHistory,
+    FrappeConversationSummaryMemory,
+)
 import frappe
 from frappe.model.document import Document
 from langchain_litellm.chat_models import ChatLiteLLM
@@ -15,8 +19,6 @@ from json_schema_to_pydantic import create_model
 from langchain_classic.agents import AgentType, initialize_agent
 from langchain_classic.memory import (
     ConversationBufferMemory,
-    VectorStoreRetrieverMemory,
-    ConversationSummaryMemory,
     ConversationBufferWindowMemory,
 )
 from langchain_core.tools import BaseTool
@@ -64,6 +66,7 @@ class AgentService:
         """
         self._agent_instance = None
         self._memory = None
+        self._conversation_id = None
         self._is_basic_chain = False
         _configure_langsmith()
         try:
@@ -219,28 +222,66 @@ class AgentService:
             return output_parser, output_parser.get_format_instructions()
         return StrOutputParser(), ""
     
-    def get_memory(self):
-        """Initialize memory with persistent context in Frappe"""
+    @property
+    def conversation_id(self):
+        """Return the active persistent conversation identifier."""
+        return self._conversation_id
+
+    def get_memory(self, conversation_id=None):
+        """Initialize durable memory scoped to the current user and agent."""
         if not self.agent_doc.enable_memory:
             return None
+
+        requested_conversation = conversation_id or self._conversation_id
         if self._memory:
+            if (
+                requested_conversation
+                and requested_conversation != self._conversation_id
+            ):
+                frappe.throw(
+                    "This agent service is already bound to another conversation",
+                    frappe.PermissionError,
+                )
             return self._memory
 
-        base_memory = None
+        if self.agent_doc.memory_type == "Vector Memory":
+            frappe.throw(
+                "Vector Memory is disabled because the configured vector store is "
+                "shared and cannot guarantee user-specific isolation"
+            )
+
+        chat_history = FrappeChatMessageHistory(
+            agent_name=self.agent_doc.name,
+            conversation_name=requested_conversation,
+        )
+        self._conversation_id = chat_history.conversation_name
+
         if self.agent_doc.memory_type == "Buffer Memory":
-            base_memory = ConversationBufferMemory(return_messages=True)
+            memory = ConversationBufferMemory(
+                chat_memory=chat_history,
+                memory_key="chat_history",
+                return_messages=True,
+            )
         elif self.agent_doc.memory_type == "Window Memory":
-            base_memory = ConversationBufferWindowMemory(
-                k=self.agent_doc.window_size or 5, return_messages=True
+            memory = ConversationBufferWindowMemory(
+                chat_memory=chat_history,
+                k=getattr(self.agent_doc, "window_size", None) or 5,
+                memory_key="chat_history",
+                return_messages=True,
             )
         elif self.agent_doc.memory_type == "Summary Memory":
-            base_memory = ConversationSummaryMemory(llm=self.get_llm())
-        elif self.agent_doc.memory_type == "Vector Memory":
-            base_memory = VectorStoreRetrieverMemory(
-                retriever=self.get_vector_retriever()
+            memory = FrappeConversationSummaryMemory(
+                chat_memory=chat_history,
+                llm=self.get_llm(),
+                memory_key="chat_history",
+                return_messages=True,
+                conversation_name=self._conversation_id,
             )
-        self._memory = base_memory
-        return base_memory
+        else:
+            frappe.throw(f"Unsupported memory type: {self.agent_doc.memory_type}")
+
+        self._memory = memory
+        return memory
 
     def get_tools(self):
         """
@@ -288,7 +329,8 @@ class AgentService:
                 tools=tools,
                 prompt=ChatPromptTemplate.from_messages(self.chat_messages),
                 name=self.agent_doc.name,
-                output_schema = self.agent_doc.output_schema
+                output_schema=self.agent_doc.output_schema,
+                max_iterations=self.agent_doc.max_iterations or 25,
             )
             self._agent_instance = agent
             return agent
@@ -300,17 +342,14 @@ class AgentService:
                 llm=model,
                 tools=tools,
                 prompt=ChatPromptTemplate.from_messages(self.chat_messages),
+                max_iterations=self.agent_doc.max_iterations or 25,
+                verbose=bool(self.agent_doc.verbose_mode),
             )
         else:
             return self._create_basic_chain(model)
 
     def _create_conversational_agent(self, tools, model, memory):
         """Create a conversational agent with enhanced memory"""
-        if not memory:
-            memory = ConversationBufferMemory(
-                memory_key="chat_history", return_messages=True, output_key="output"
-            )
-
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
             agent = initialize_agent(
@@ -374,6 +413,11 @@ class AgentService:
                             }
                         },
                     )
+            model_updates = {"temperature": self.agent_doc.temperature}
+            if self.agent_doc.max_tokens:
+                model_updates["max_tokens"] = self.agent_doc.max_tokens
+            if hasattr(llm, "model_copy"):
+                llm = llm.model_copy(update=model_updates)
             return llm
         except Exception as e:
             frappe.log_error(f"Failed to get LLM for agent {self.agent_doc.name}", e)
@@ -403,6 +447,10 @@ class AgentService:
             kwargs (dict, optional): Additional context and parameters
         """
         try:
+            conversation_id = kwargs.pop("conversation_id", None)
+            if self.agent_doc.enable_memory:
+                self.get_memory(conversation_id=conversation_id)
+
             if self.agent_doc.agent_type == AgentTypes.IMAGE_GENERATION_AGENT.value:
                 return self._invoke_image_generation(query, **kwargs)
             elif self.agent_doc.agent_type in [
@@ -457,7 +505,13 @@ class AgentService:
             
             response = agent.invoke(input_data)
             # Auto-save to memory
-            if memory and query and response:
+            if (
+                memory
+                and self.agent_doc.agent_type
+                != AgentTypes.CONVERSATIONAL_AGENT.value
+                and query
+                and response
+            ):
                 memory.save_context(
                     {"input": query},
                     {
@@ -535,12 +589,25 @@ class AgentService:
             raise
 
     def _invoke_basic_chain(self, query, **kwargs):
-        """Invoke the cached basic chain fallback and handle memory save."""
+        """Invoke the basic chain and include configured conversation memory."""
         try:
-            chain = self.agent
             memory = self.get_memory()
+            messages = self.chat_messages
+
+            if memory:
+                memory_vars = memory.load_memory_variables({"input": query})
+                for message in memory_vars.get("chat_history", []):
+                    role = {"human": "human", "ai": "assistant"}.get(
+                        getattr(message, "type", "")
+                    )
+                    if role:
+                        messages.append((role, message.content))
+
+            messages.append(("human", "{query}"))
+            prompt = ChatPromptTemplate.from_messages(messages)
 
             output_parser, format_instructions = self._get_output_parser_and_instructions()
+            chain = prompt | self.get_llm() | output_parser
 
             input_vars = {
                 "format_instructions": format_instructions,
