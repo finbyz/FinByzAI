@@ -2,15 +2,44 @@
 # For license information, please see license.txt
 
 import importlib
+import json
 import os
+import re
 import frappe
 from frappe.model.document import Document
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
 from langchain_core.tools import BaseTool,Tool, StructuredTool
 import sys
 
 
 class AITool(Document):
+    def validate(self):
+        self.tool_type = self.tool_type or "Function"
+        self.execution_side = (
+            "Provider" if self.tool_type == "Provider Built-in" else "Application"
+        )
+
+        if self.tool_type != "Provider Built-in":
+            return
+
+        if not self.tool_key or not re.fullmatch(r"[a-z][a-z0-9_]*", self.tool_key):
+            frappe.throw(
+                "Tool Key is required for provider built-in tools and must use "
+                "lowercase letters, numbers, and underscores"
+            )
+        if self.configuration_schema:
+            try:
+                schema = json.loads(self.configuration_schema)
+                Draft202012Validator.check_schema(schema)
+            except (TypeError, json.JSONDecodeError, SchemaError) as exc:
+                frappe.throw(f"Configuration Schema is invalid: {exc}")
+        if not self.provider_mappings:
+            frappe.throw("At least one Provider Mapping is required")
+
     def after_insert(self):
+        if (self.tool_type or "Function") != "Function":
+            return
         if not frappe.conf.developer_mode and not self.from_package and self.is_custom:
             return
 
@@ -47,6 +76,8 @@ def {frappe.scrub(self.name)}_tool(input: Any) -> Any:
 
     def on_update(self):
         """Handle renaming (if the AI Tool name changes)"""
+        if (self.tool_type or "Function") != "Function":
+            return
         if not frappe.conf.developer_mode:
             return
 
@@ -61,6 +92,8 @@ def {frappe.scrub(self.name)}_tool(input: Any) -> Any:
 
     def on_trash(self):
         """Delete the tool file if AI Tool is deleted"""
+        if (self.tool_type or "Function") != "Function":
+            return
         if not frappe.conf.developer_mode:
             return
 
@@ -99,6 +132,11 @@ def {frappe.scrub(self.name)}_tool(input: Any) -> Any:
         return base_path
     
     def get_tool(self):
+        if (self.tool_type or "Function") != "Function":
+            frappe.throw(
+                f"{self.name} is a provider built-in tool and cannot be loaded "
+                "as an application function"
+            )
         tool_path = self.get_tool_path()
         safe_name = frappe.scrub(self.name)
         try:

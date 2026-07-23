@@ -102,7 +102,7 @@
   },
   {
    "fieldname": "tools",
-   "fieldtype": "Table MultiSelect",
+   "fieldtype": "Table",
    "label": "Tools",
    "options": "AI Agent Tool"
   },

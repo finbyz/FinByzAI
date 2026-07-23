@@ -1,4 +1,5 @@
 from finbyzai.ai.agent.agent_service import AgentService
+from finbyzai.ai.agent.builtin_tools import BuiltinToolCompiler
 import frappe
 from frappe.model.document import Document
 import json
@@ -19,11 +20,17 @@ class AIAgent(Document):
         super().__init__(*args, **kwargs)
     
     def validate(self):
+        selected_tools = [row.tool for row in self.tools or [] if row.tool]
+        if len(selected_tools) != len(set(selected_tools)):
+            frappe.throw("Each AI Tool can only be selected once")
         if self.agent_type == "Gemini Cache Agent":
             if any(map(lambda x:x.type == 'system', self.messages)):
                 frappe.throw("You can not set system message for Gemini Cache Agent")
         if self.enable_memory and not self.memory_type:
             frappe.throw("Memory type is required when memory is enabled")
+        if self.agent_type != "Gemini Cache Agent" and self.llm:
+            llm_doc = frappe.get_doc("LLM", self.llm)
+            BuiltinToolCompiler(self, llm_doc).compile()
         
     @property
     def agent_service(self):

@@ -6,7 +6,10 @@
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
-  "tool"
+  "tool",
+  "enabled",
+  "tool_type",
+  "configuration"
  ],
  "fields": [
   {
@@ -14,7 +17,30 @@
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Tool",
-   "options": "AI Tool"
+   "options": "AI Tool",
+   "reqd": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled"
+  },
+  {
+   "fetch_from": "tool.tool_type",
+   "fieldname": "tool_type",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Tool Type",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.tool_type == 'Provider Built-in'",
+   "description": "Agent-specific JSON configuration. Validated against the selected tool's schema.",
+   "fieldname": "configuration",
+   "fieldtype": "JSON",
+   "label": "Configuration"
   }
  ],
  "index_web_pages_for_search": 1,

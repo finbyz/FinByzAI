@@ -1,0 +1,88 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-07-23 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "provider",
+  "model_pattern",
+  "transport_strategy",
+  "enabled",
+  "request_template",
+  "response_mapping",
+  "compatibility_rules",
+  "minimum_package_version"
+ ],
+ "fields": [
+  {
+   "fieldname": "provider",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Provider",
+   "options": "LLM Provider",
+   "reqd": 1
+  },
+  {
+   "description": "Regular expression matched against the complete model name.",
+   "fieldname": "model_pattern",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Model Pattern"
+  },
+  {
+   "default": "LiteLLM Parameter",
+   "fieldname": "transport_strategy",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Transport Strategy",
+   "options": "LiteLLM Parameter\nLiteLLM Model Kwargs\nProvider Native Tool",
+   "reqd": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled"
+  },
+  {
+   "description": "Declarative JSON request fragment. Values may reference config, agent, model, or provider.",
+   "fieldname": "request_template",
+   "fieldtype": "JSON",
+   "label": "Request Template",
+   "reqd": 1
+  },
+  {
+   "description": "Optional declarative paths for extracting citations and provider metadata.",
+   "fieldname": "response_mapping",
+   "fieldtype": "JSON",
+   "label": "Response Mapping"
+  },
+  {
+   "description": "Optional constraints such as incompatible_with or allowed_agent_types.",
+   "fieldname": "compatibility_rules",
+   "fieldtype": "JSON",
+   "label": "Compatibility Rules"
+  },
+  {
+   "fieldname": "minimum_package_version",
+   "fieldtype": "Data",
+   "label": "Minimum Package Version"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-07-23 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "AI",
+ "name": "AI Tool Provider Mapping",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

@@ -6,53 +6,137 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "tool_type",
+  "tool_key",
+  "enabled",
+  "execution_side",
   "description",
+  "cost_sensitive",
+  "requires_confirmation",
+  "function_section",
   "column_break_cpcx",
   "from_package",
   "tool_function",
   "is_custom",
-  "module"
+  "module",
+  "built_in_configuration_section",
+  "configuration_schema",
+  "provider_mappings"
  ],
  "fields": [
+  {
+   "default": "Function",
+   "fieldname": "tool_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Tool Type",
+   "options": "Function\nProvider Built-in",
+   "reqd": 1
+  },
+  {
+   "depends_on": "eval:doc.tool_type == 'Provider Built-in'",
+   "description": "Provider-neutral identifier such as web_search or code_execution.",
+   "fieldname": "tool_key",
+   "fieldtype": "Data",
+   "label": "Tool Key",
+   "mandatory_depends_on": "eval:doc.tool_type == 'Provider Built-in'",
+   "unique": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_standard_filter": 1,
+   "label": "Enabled"
+  },
+  {
+   "default": "Application",
+   "fieldname": "execution_side",
+   "fieldtype": "Select",
+   "label": "Execution Side",
+   "options": "Application\nProvider",
+   "read_only": 1
+  },
   {
    "fieldname": "description",
    "fieldtype": "Text",
    "label": "Description"
   },
   {
+   "default": "0",
+   "depends_on": "eval:doc.tool_type == 'Provider Built-in'",
+   "fieldname": "cost_sensitive",
+   "fieldtype": "Check",
+   "label": "Cost Sensitive"
+  },
+  {
+   "default": "0",
+   "depends_on": "eval:doc.tool_type == 'Provider Built-in'",
+   "fieldname": "requires_confirmation",
+   "fieldtype": "Check",
+   "label": "Requires Confirmation"
+  },
+  {
+   "depends_on": "eval:doc.tool_type == 'Function'",
+   "fieldname": "function_section",
+   "fieldtype": "Section Break",
+   "label": "Function"
+  },
+  {
    "default": "langchain_community.tools",
-   "depends_on": "eval:!doc.is_custom",
+   "depends_on": "eval:doc.tool_type == 'Function' && !doc.is_custom",
    "fieldname": "from_package",
    "fieldtype": "Select",
    "label": "From Package",
    "options": "\nlangchain_community.tools"
   },
   {
-   "depends_on": "eval:!doc.is_custom",
+   "depends_on": "eval:doc.tool_type == 'Function' && !doc.is_custom",
    "fieldname": "tool_function",
    "fieldtype": "Data",
    "label": "Tool Function",
-   "mandatory_depends_on": "from_package"
+   "mandatory_depends_on": "eval:doc.tool_type == 'Function' && doc.from_package"
   },
   {
    "fieldname": "column_break_cpcx",
    "fieldtype": "Column Break"
   },
   {
-   "depends_on": "is_custom",
+   "depends_on": "eval:doc.tool_type == 'Function' && doc.is_custom",
    "fieldname": "module",
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Module",
-   "mandatory_depends_on": "is_custom",
-   "options": "Module Def",
-   "reqd": 1
+   "mandatory_depends_on": "eval:doc.tool_type == 'Function' && doc.is_custom",
+   "options": "Module Def"
   },
   {
    "default": "0",
+   "depends_on": "eval:doc.tool_type == 'Function'",
    "fieldname": "is_custom",
    "fieldtype": "Check",
    "label": "Custom"
+  },
+  {
+   "depends_on": "eval:doc.tool_type == 'Provider Built-in'",
+   "fieldname": "built_in_configuration_section",
+   "fieldtype": "Section Break",
+   "label": "Built-in Tool Configuration"
+  },
+  {
+   "depends_on": "eval:doc.tool_type == 'Provider Built-in'",
+   "description": "JSON Schema used to validate each agent's configuration for this tool.",
+   "fieldname": "configuration_schema",
+   "fieldtype": "JSON",
+   "label": "Configuration Schema"
+  },
+  {
+   "depends_on": "eval:doc.tool_type == 'Provider Built-in'",
+   "fieldname": "provider_mappings",
+   "fieldtype": "Table",
+   "label": "Provider Mappings",
+   "options": "AI Tool Provider Mapping"
   }
  ],
  "index_web_pages_for_search": 1,
