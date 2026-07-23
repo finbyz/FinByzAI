@@ -31,8 +31,10 @@ class ReactAgent:
         post_model_hook: Optional[Any] = None,
         version: str = "v2",
         output_schema: Optional[str] = None,  # Add output_schema parameter
+        max_iterations: int = 25,
     ) -> None:
         self._prompt = prompt or ChatPromptTemplate.from_messages([("human", "{input}")])
+        self._recursion_limit = max(2 * max_iterations + 1, 3)
         
         # Handle output_schema similar to your existing pattern
         self._output_parser = None
@@ -137,6 +139,7 @@ class ReactAgent:
         graph_input = self._build_graph_input(input, config)
         
         # Invoke the graph
+        config = {**(config or {}), "recursion_limit": self._recursion_limit}
         result = self._graph.invoke(graph_input, config=config, **kwargs)
         
         # Extract output text
@@ -173,6 +176,7 @@ class ReactAgent:
             graph_input = {"messages": messages}
         
         # Invoke the graph
+        config = {**(config or {}), "recursion_limit": self._recursion_limit}
         result = await self._graph.ainvoke(graph_input, config=config, **kwargs)
         
         # Extract output text
@@ -193,6 +197,7 @@ class ReactAgent:
         # Build proper graph input
         graph_input = self._build_graph_input(inputs, config)
         
+        config = {**(config or {}), "recursion_limit": self._recursion_limit}
         return self._graph.stream(graph_input, config=config)
 
     @property

@@ -109,6 +109,19 @@ after_migrate = "finbyzai.install.after_migrate"
 # 	"Event": "frappe.desk.doctype.event.event.has_permission",
 # }
 
+permission_query_conditions = {
+    "AI Conversation": (
+        "finbyzai.ai.doctype.ai_conversation.ai_conversation."
+        "get_permission_query_conditions"
+    ),
+}
+
+has_permission = {
+    "AI Conversation": (
+        "finbyzai.ai.doctype.ai_conversation.ai_conversation.has_permission"
+    ),
+}
+
 # DocType Class
 # ---------------
 # Override standard doctype classes

@@ -105,11 +105,18 @@ def create_structured_agent(
     tools_renderer: ToolsRenderer = render_text_description_and_args,
     *,
     stop_sequence: bool | list[str] = True,
+    max_iterations: int = 25,
+    verbose: bool = False,
 ) -> AgentExecutor:
     if prompt:
         structured_prompt.messages[2:2] = prompt.messages
     chat_agent = create_structured_chat_agent(
         llm, tools, structured_prompt, tools_renderer, stop_sequence=stop_sequence
     )
-    agent_executor = AgentExecutor(agent=chat_agent, tools=tools)
+    agent_executor = AgentExecutor(
+        agent=chat_agent,
+        tools=tools,
+        max_iterations=max_iterations,
+        verbose=verbose,
+    )
     return agent_executor

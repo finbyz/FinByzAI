@@ -130,16 +130,23 @@ frappe.ui.form.on("AI Agent", {
                     return;
                 }
 
-                console.log("Sending values to test_agent:", values);
+                const requestValues = {
+                    ...values,
+                    conversation_id: frm.__ai_test_conversation_id || null,
+                };
+                console.log("Sending values to test_agent:", requestValues);
 
                 frappe.call({
                     method: "test_agent",
-                    args: values,  // This sends all dialog values including 'input'
+                    args: requestValues,
                     doc: frm.doc,
                     freeze: true,
                     freeze_message: __("Testing AI Agent... Please wait"),
                     callback: function(r) {
                         if (r.message) {
+                            if (r.message.conversation_id) {
+                                frm.__ai_test_conversation_id = r.message.conversation_id;
+                            }
                             frappe.msgprint({
                                 title: r.message.success ? __('Success') : __('Error'),
                                 message: r.message.success

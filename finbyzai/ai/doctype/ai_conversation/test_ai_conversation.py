@@ -5,10 +5,13 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 from frappe.utils import now
 
+from finbyzai.ai.doctype.ai_conversation.ai_conversation import AIConversation
+
 
 class TestAIConversation(FrappeTestCase):
     def setUp(self):
         """Set up test data"""
+        frappe.set_user("Administrator")
         # Create a test user if not exists
         if not frappe.db.exists("User", "test@example.com"):
             user = frappe.new_doc("User")
@@ -21,22 +24,27 @@ class TestAIConversation(FrappeTestCase):
         if not frappe.db.exists("AI Agent", "Test Agent"):
             agent = frappe.new_doc("AI Agent")
             agent.title = "Test Agent"
-            agent.agent_type = "LangGraph Agent"
+            agent.agent_type = "LangChain Chain"
             agent.insert()
+
+        self.agent_name = frappe.db.get_value(
+            "AI Agent", {"title": "Test Agent"}, "name"
+        )
+        frappe.set_user("test@example.com")
     
     def test_create_conversation(self):
         """Test creating a new conversation"""
         conversation = frappe.new_doc("AI Conversation")
         conversation.title = "Test Conversation"
         conversation.user = "test@example.com"
-        conversation.agent = "Test Agent"
+        conversation.agent = self.agent_name
         conversation.start_time = now()
         conversation.status = "Active"
         conversation.insert()
         
         self.assertEqual(conversation.title, "Test Conversation")
         self.assertEqual(conversation.user, "test@example.com")
-        self.assertEqual(conversation.agent, "Test Agent")
+        self.assertEqual(conversation.agent, self.agent_name)
         self.assertEqual(conversation.status, "Active")
         self.assertEqual(conversation.message_count, 0)
     
@@ -45,7 +53,7 @@ class TestAIConversation(FrappeTestCase):
         conversation = frappe.new_doc("AI Conversation")
         conversation.title = "Test Conversation with Messages"
         conversation.user = "test@example.com"
-        conversation.agent = "Test Agent"
+        conversation.agent = self.agent_name
         conversation.start_time = now()
         conversation.status = "Active"
         conversation.insert()
@@ -71,7 +79,7 @@ class TestAIConversation(FrappeTestCase):
         conversation = frappe.new_doc("AI Conversation")
         conversation.title = "Test Conversation Summary"
         conversation.user = "test@example.com"
-        conversation.agent = "Test Agent"
+        conversation.agent = self.agent_name
         conversation.start_time = now()
         conversation.status = "Active"
         conversation.insert()
@@ -97,7 +105,7 @@ class TestAIConversation(FrappeTestCase):
         conversation = frappe.new_doc("AI Conversation")
         conversation.title = "Test Status Changes"
         conversation.user = "test@example.com"
-        conversation.agent = "Test Agent"
+        conversation.agent = self.agent_name
         conversation.start_time = now()
         conversation.status = "Active"
         conversation.insert()
@@ -124,7 +132,7 @@ class TestAIConversation(FrappeTestCase):
         conversation = frappe.new_doc("AI Conversation")
         conversation.title = "Test Message Search"
         conversation.user = "test@example.com"
-        conversation.agent = "Test Agent"
+        conversation.agent = self.agent_name
         conversation.start_time = now()
         conversation.status = "Active"
         conversation.insert()
@@ -154,13 +162,13 @@ class TestAIConversation(FrappeTestCase):
         # Test create_conversation
         conversation = AIConversation.create_conversation(
             user="test@example.com",
-            agent="Test Agent",
+            agent=self.agent_name,
             title="Static Test Conversation"
         )
         
         self.assertEqual(conversation.title, "Static Test Conversation")
         self.assertEqual(conversation.user, "test@example.com")
-        self.assertEqual(conversation.agent, "Test Agent")
+        self.assertEqual(conversation.agent, self.agent_name)
         self.assertEqual(conversation.status, "Active")
         
         # Test get_user_conversations
@@ -168,11 +176,12 @@ class TestAIConversation(FrappeTestCase):
         self.assertGreaterEqual(len(conversations), 1)
         
         # Test get_agent_conversations
-        conversations = AIConversation.get_agent_conversations("Test Agent")
+        conversations = AIConversation.get_agent_conversations(self.agent_name)
         self.assertGreaterEqual(len(conversations), 1)
     
     def tearDown(self):
         """Clean up test data"""
-        # Clean up test conversations
-        frappe.db.sql("DELETE FROM `tabAI Conversation` WHERE user = 'test@example.com'")
+        frappe.set_user("Administrator")
+        frappe.db.delete("AI Conversation", {"user": "test@example.com"})
+        frappe.db.commit()
         

@@ -28,6 +28,12 @@ class AIAgent(Document):
                 frappe.throw("You can not set system message for Gemini Cache Agent")
         if self.enable_memory and not self.memory_type:
             frappe.throw("Memory type is required when memory is enabled")
+        if self.max_iterations is not None and self.max_iterations < 1:
+            frappe.throw("Max Iterations must be at least 1")
+        if self.temperature is not None and not 0 <= self.temperature <= 2:
+            frappe.throw("Temperature must be between 0 and 2")
+        if self.max_tokens is not None and self.max_tokens < 0:
+            frappe.throw("Max Tokens cannot be negative")
         if self.agent_type != "Gemini Cache Agent" and self.llm:
             llm_doc = frappe.get_doc("LLM", self.llm)
             BuiltinToolCompiler(self, llm_doc).compile()
@@ -75,15 +81,21 @@ class AIAgent(Document):
                     "agent_type": self.agent_type
                 }
             
-            # Remove 'input' from kwargs as we're passing it as 'query' parameter
-            additional_vars = {k: v for k, v in kwargs.items() if k != 'input'}
-            
-            # Log for debugging
+            conversation_id = kwargs.get("conversation_id")
+            additional_vars = {
+                key: value
+                for key, value in kwargs.items()
+                if key not in {"input", "conversation_id"}
+            }
+
             frappe.logger().info(f"Testing agent with query: {query}")
             frappe.logger().info(f"Additional variables: {additional_vars}")
-            
-            # Invoke the agent with query and additional variables
-            response = self.agent_service.invoke(query=query, **additional_vars)
+
+            response = self.agent_service.invoke(
+                query=query,
+                conversation_id=conversation_id,
+                **additional_vars,
+            )
 
             formatted_response = self._format_response(response)
 
@@ -95,6 +107,7 @@ class AIAgent(Document):
                 "agent_type": self.agent_type,
                 "llm": self.llm if self.agent_type != "Gemini Cache Agent" else self.gemini_cache,
                 "memory_enabled": self.enable_memory,
+                "conversation_id": self.agent_service.conversation_id,
             }
             
         except Exception as e:
