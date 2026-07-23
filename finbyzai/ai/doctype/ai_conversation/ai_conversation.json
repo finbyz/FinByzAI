@@ -15,6 +15,7 @@
   "end_time",
   "session_id",
   "message_count",
+  "memory_summary",
   "messages"
  ],
  "fields": [
@@ -81,6 +82,13 @@
    "fieldtype": "Int",
    "in_list_view": 1,
    "label": "Message Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "memory_summary",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "label": "Memory Summary",
    "read_only": 1
   },
   {
