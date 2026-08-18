@@ -1,0 +1,95 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-08-05 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "workflow",
+  "record_doctype",
+  "record_name",
+  "record_key",
+  "run",
+  "occurrence_key",
+  "enrollment_count",
+  "last_enrolled_at"
+ ],
+ "fields": [
+  {
+   "fieldname": "workflow",
+   "fieldtype": "Link",
+   "label": "Workflow",
+   "reqd": 1,
+   "options": "Automation Workflow"
+  },
+  {
+   "fieldname": "record_doctype",
+   "fieldtype": "Link",
+   "label": "Record DocType",
+   "reqd": 1,
+   "options": "DocType"
+  },
+  {
+   "fieldname": "record_name",
+   "fieldtype": "Dynamic Link",
+   "label": "Record Name",
+   "reqd": 1,
+   "options": "record_doctype"
+  },
+  {
+   "fieldname": "record_key",
+   "fieldtype": "Data",
+   "label": "Record Key",
+   "reqd": 1
+  },
+  {
+   "fieldname": "run",
+   "fieldtype": "Link",
+   "label": "Run",
+   "reqd": 1,
+   "options": "Automation Run"
+  },
+  {
+   "fieldname": "occurrence_key",
+   "fieldtype": "Data",
+   "label": "Occurrence Key",
+   "reqd": 1
+  },
+  {
+   "fieldname": "enrollment_count",
+   "fieldtype": "Int",
+   "label": "Enrollment Count",
+   "default": "0"
+  },
+  {
+   "fieldname": "last_enrolled_at",
+   "fieldtype": "Datetime",
+   "label": "Last Enrolled At"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-05 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Workflow Builder",
+ "name": "Automation Enrollment Ledger",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "Automation Operator",
+   "read": 1
+  },
+  {
+   "role": "Automation Publisher",
+   "read": 1
+  },
+  {
+   "role": "System Manager",
+   "read": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}

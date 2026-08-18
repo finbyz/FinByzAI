@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex,nofollow" />
+    <link rel="icon" href="{{ boot.favicon }}" />
+    <title>Workflow Builder</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      window.csrf_token = '{{ boot.csrf_token }}';
+      window.frappe = window.frappe || {};
+      window.frappe.boot = {{ boot_json }};
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

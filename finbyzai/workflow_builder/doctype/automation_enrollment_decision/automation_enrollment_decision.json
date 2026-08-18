@@ -1,0 +1,39 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:AED-{#####}",
+ "creation": "2026-08-06 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": ["workflow", "workflow_version", "record_doctype", "record_name", "record_key", "source", "occurrence_key", "decision", "reason_code", "evidence_json", "trace_id", "run", "decided_at"],
+ "fields": [
+  {"fieldname":"workflow","fieldtype":"Link","label":"Workflow","options":"Automation Workflow","reqd":1},
+  {"fieldname":"workflow_version","fieldtype":"Link","label":"Workflow Version","options":"Automation Workflow Version"},
+  {"fieldname":"record_doctype","fieldtype":"Link","label":"Record DocType","options":"DocType","reqd":1},
+  {"fieldname":"record_name","fieldtype":"Dynamic Link","label":"Record Name","options":"record_doctype","reqd":1},
+  {"fieldname":"record_key","fieldtype":"Data","label":"Record Key","reqd":1},
+  {"fieldname":"source","fieldtype":"Data","label":"Source","reqd":1},
+  {"fieldname":"occurrence_key","fieldtype":"Data","label":"Occurrence Key"},
+  {"fieldname":"decision","fieldtype":"Select","label":"Decision","options":"ENROLLED\nSUPPRESSED\nDUPLICATE\nREJECTED\nGOAL_ALREADY_MET\nELIGIBILITY_LOST","reqd":1},
+  {"fieldname":"reason_code","fieldtype":"Data","label":"Reason Code","reqd":1},
+  {"fieldname":"evidence_json","fieldtype":"JSON","label":"Evidence"},
+  {"fieldname":"trace_id","fieldtype":"Data","label":"Trace ID"},
+  {"fieldname":"run","fieldtype":"Link","label":"Run","options":"Automation Run"},
+  {"fieldname":"decided_at","fieldtype":"Datetime","label":"Decided At","reqd":1}
+ ],
+ "index_web_pages_for_search": 0,
+ "modified": "2026-08-06 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Workflow Builder",
+ "name": "Automation Enrollment Decision",
+ "owner": "Administrator",
+ "permissions": [
+  {"role":"Automation Operator","read":1},
+  {"role":"Automation Publisher","read":1},
+  {"role":"System Manager","read":1}
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}

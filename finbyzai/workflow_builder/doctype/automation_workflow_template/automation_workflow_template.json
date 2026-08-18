@@ -1,0 +1,94 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:{title}-{category}",
+ "creation": "2026-08-07 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "title",
+  "category",
+  "primary_doctype",
+  "preview_image",
+  "description",
+  "graph_json",
+  "settings_json"
+ ],
+ "fields": [
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title",
+   "reqd": 1
+  },
+  {
+   "fieldname": "category",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Category",
+   "options": "Sales\nMarketing\nOperations\nSupport",
+   "reqd": 1
+  },
+  {
+   "fieldname": "primary_doctype",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Primary DocType",
+   "options": "DocType",
+   "reqd": 1
+  },
+  {
+   "fieldname": "preview_image",
+   "fieldtype": "Attach Image",
+   "label": "Preview Image"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  },
+  {
+   "fieldname": "graph_json",
+   "fieldtype": "Code",
+   "label": "Graph JSON",
+   "reqd": 1
+  },
+  {
+   "fieldname": "settings_json",
+   "fieldtype": "Code",
+   "label": "Settings JSON"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-07 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Workflow Builder",
+ "name": "Automation Workflow Template",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "role": "Automation Publisher",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Automation Builder"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

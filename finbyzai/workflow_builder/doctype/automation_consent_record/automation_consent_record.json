@@ -1,0 +1,36 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2026-08-05 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": ["record_doctype", "record_name", "channel", "purpose", "recipient", "status", "effective_at", "expires_at", "evidence"],
+ "fields": [
+  {"fieldname": "record_doctype", "fieldtype": "Link", "label": "Record DocType", "options": "DocType", "reqd": 1},
+  {"fieldname": "record_name", "fieldtype": "Dynamic Link", "label": "Record Name", "options": "record_doctype", "reqd": 1},
+  {"fieldname": "channel", "fieldtype": "Select", "label": "Channel", "options": "EMAIL\nSMS\nWEBHOOK", "reqd": 1},
+  {"fieldname": "purpose", "fieldtype": "Data", "label": "Purpose", "reqd": 1},
+  {"fieldname": "recipient", "fieldtype": "Data", "label": "Recipient"},
+  {"fieldname": "status", "fieldtype": "Select", "label": "Status", "options": "GRANTED\nDENIED\nREVOKED", "reqd": 1},
+  {"fieldname": "effective_at", "fieldtype": "Datetime", "label": "Effective At", "reqd": 1},
+  {"fieldname": "expires_at", "fieldtype": "Datetime", "label": "Expires At"},
+  {"fieldname": "evidence", "fieldtype": "Small Text", "label": "Evidence"}
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-05 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Workflow Builder",
+ "name": "Automation Consent Record",
+ "owner": "Administrator",
+ "permissions": [
+  {"create": 1, "read": 1, "role": "Automation Operator", "write": 1},
+  {"create": 1, "read": 1, "role": "Automation Publisher", "write": 1},
+  {"create": 1, "delete": 1, "read": 1, "role": "System Manager", "write": 1}
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

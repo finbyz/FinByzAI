@@ -1,0 +1,22 @@
+{
+ "actions":[], "allow_rename":0, "autoname":"format:ADL-{#####}", "creation":"2026-08-06 00:00:00.000000", "doctype":"DocType", "engine":"InnoDB",
+ "field_order":["source_type","source_name","workflow","run","node_id","status","error_code","message","attempts","incident","created_at","resolved_at","resolution"],
+ "fields":[
+  {"fieldname":"source_type","fieldtype":"Select","label":"Source Type","options":"OUTBOX\nRUN\nBACKFILL\nEXTERNAL","reqd":1},
+  {"fieldname":"source_name","fieldtype":"Data","label":"Source Name","reqd":1},
+  {"fieldname":"workflow","fieldtype":"Link","label":"Workflow","options":"Automation Workflow"},
+  {"fieldname":"run","fieldtype":"Link","label":"Run","options":"Automation Run"},
+  {"fieldname":"node_id","fieldtype":"Data","label":"Node ID"},
+  {"fieldname":"status","fieldtype":"Select","label":"Status","options":"OPEN\nRETRYING\nRESOLVED\nDISCARDED","reqd":1},
+  {"fieldname":"error_code","fieldtype":"Data","label":"Error Code","reqd":1},
+  {"fieldname":"message","fieldtype":"Small Text","label":"Message"},
+  {"fieldname":"attempts","fieldtype":"Int","label":"Attempts","default":"0"},
+  {"fieldname":"incident","fieldtype":"Link","label":"Incident","options":"Automation Incident"},
+  {"fieldname":"created_at","fieldtype":"Datetime","label":"Created At","reqd":1},
+  {"fieldname":"resolved_at","fieldtype":"Datetime","label":"Resolved At"},
+  {"fieldname":"resolution","fieldtype":"Small Text","label":"Resolution"}
+ ],
+ "index_web_pages_for_search":0, "modified":"2026-08-06 00:00:00.000000", "modified_by":"Administrator", "module":"Workflow Builder", "name":"Automation Dead Letter", "owner":"Administrator",
+ "permissions":[{"role":"Automation Operator","read":1},{"role":"Automation Publisher","read":1},{"role":"System Manager","read":1}],
+ "sort_field":"creation", "sort_order":"DESC", "states":[], "track_changes":0
+}

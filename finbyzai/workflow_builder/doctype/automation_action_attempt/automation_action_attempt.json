@@ -1,0 +1,110 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-08-05 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "run",
+  "token",
+  "node_id",
+  "attempt_no",
+  "status",
+  "effect_key",
+  "started_at",
+  "completed_at",
+  "error_code",
+  "error_message",
+  "output_json"
+ ],
+ "fields": [
+  {
+   "fieldname": "run",
+   "fieldtype": "Link",
+   "label": "Run",
+   "reqd": 1,
+   "options": "Automation Run"
+  },
+  {
+   "fieldname": "token",
+   "fieldtype": "Link",
+   "label": "Token",
+   "reqd": 1,
+   "options": "Automation Run Token"
+  },
+  {
+   "fieldname": "node_id",
+   "fieldtype": "Data",
+   "label": "Node ID",
+   "reqd": 1
+  },
+  {
+   "fieldname": "attempt_no",
+   "fieldtype": "Int",
+   "label": "Attempt Number",
+   "reqd": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "reqd": 1,
+   "options": "STARTED\nWAITING\nCOMPLETED\nFAILED\nCANCELLED\nUNKNOWN_COMMIT"
+  },
+  {
+   "fieldname": "effect_key",
+   "fieldtype": "Data",
+   "label": "Effect Key"
+  },
+  {
+   "fieldname": "started_at",
+   "fieldtype": "Datetime",
+   "label": "Started At"
+  },
+  {
+   "fieldname": "completed_at",
+   "fieldtype": "Datetime",
+   "label": "Completed At"
+  },
+  {
+   "fieldname": "error_code",
+   "fieldtype": "Data",
+   "label": "Error Code"
+  },
+  {
+   "fieldname": "error_message",
+   "fieldtype": "Small Text",
+   "label": "Error Message"
+  },
+  {
+   "fieldname": "output_json",
+   "fieldtype": "JSON",
+   "label": "Output"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-05 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Workflow Builder",
+ "name": "Automation Action Attempt",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "Automation Operator",
+   "read": 1
+  },
+  {
+   "role": "Automation Publisher",
+   "read": 1
+  },
+  {
+   "role": "System Manager",
+   "read": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}

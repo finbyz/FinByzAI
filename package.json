@@ -1,0 +1,24 @@
+{
+  "name": "finbyzai",
+  "version": "1.0.0",
+  "description": "FinByz AI application and Workflow Builder frontend",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "dependencies": {},
+  "devDependencies": {},
+  "scripts": {
+    "postinstall": "yarn --cwd workflow install",
+    "dev": "yarn dev:workflow",
+    "dev:workflow": "yarn --cwd workflow dev",
+    "typecheck": "yarn --cwd workflow typecheck",
+    "test": "yarn --cwd workflow test",
+    "build:workflow": "yarn --cwd workflow build",
+    "build": "yarn build:workflow"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}

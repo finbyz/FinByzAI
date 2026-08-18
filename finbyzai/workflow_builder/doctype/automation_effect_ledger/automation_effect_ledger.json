@@ -1,0 +1,85 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-08-05 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "effect_key",
+  "request_hash",
+  "status",
+  "run",
+  "node_id",
+  "result_json",
+  "completed_at"
+ ],
+ "fields": [
+  {
+   "fieldname": "effect_key",
+   "fieldtype": "Data",
+   "label": "Effect Key",
+   "reqd": 1
+  },
+  {
+   "fieldname": "request_hash",
+   "fieldtype": "Data",
+   "label": "Request Hash",
+   "reqd": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "reqd": 1,
+   "options": "STARTED\nCOMPLETED\nFAILED\nUNKNOWN_COMMIT"
+  },
+  {
+   "fieldname": "run",
+   "fieldtype": "Link",
+   "label": "Run",
+   "reqd": 1,
+   "options": "Automation Run"
+  },
+  {
+   "fieldname": "node_id",
+   "fieldtype": "Data",
+   "label": "Node ID",
+   "reqd": 1
+  },
+  {
+   "fieldname": "result_json",
+   "fieldtype": "JSON",
+   "label": "Result"
+  },
+  {
+   "fieldname": "completed_at",
+   "fieldtype": "Datetime",
+   "label": "Completed At"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-05 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Workflow Builder",
+ "name": "Automation Effect Ledger",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "Automation Operator",
+   "read": 1
+  },
+  {
+   "role": "Automation Publisher",
+   "read": 1
+  },
+  {
+   "role": "System Manager",
+   "read": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}
