@@ -1,0 +1,24 @@
+{
+ "actions": [], "allow_rename": 0, "autoname": "format:AINC-{#####}",
+ "creation": "2026-08-06 00:00:00.000000", "doctype": "DocType", "engine": "InnoDB",
+ "field_order": ["fingerprint", "status", "severity", "workflow", "run", "node_id", "error_code", "occurrence_count", "first_seen_at", "last_seen_at", "last_message", "resolution", "resolved_by", "resolved_at"],
+ "fields": [
+  {"fieldname":"fingerprint","fieldtype":"Data","label":"Fingerprint","reqd":1},
+  {"fieldname":"status","fieldtype":"Select","label":"Status","options":"OPEN\nRESOLVED","reqd":1},
+  {"fieldname":"severity","fieldtype":"Select","label":"Severity","options":"WARNING\nERROR\nCRITICAL","reqd":1},
+  {"fieldname":"workflow","fieldtype":"Link","label":"Workflow","options":"Automation Workflow"},
+  {"fieldname":"run","fieldtype":"Link","label":"Latest Run","options":"Automation Run"},
+  {"fieldname":"node_id","fieldtype":"Data","label":"Node ID"},
+  {"fieldname":"error_code","fieldtype":"Data","label":"Error Code","reqd":1},
+  {"fieldname":"occurrence_count","fieldtype":"Int","label":"Occurrences","default":"1","reqd":1},
+  {"fieldname":"first_seen_at","fieldtype":"Datetime","label":"First Seen","reqd":1},
+  {"fieldname":"last_seen_at","fieldtype":"Datetime","label":"Last Seen","reqd":1},
+  {"fieldname":"last_message","fieldtype":"Small Text","label":"Last Message"},
+  {"fieldname":"resolution","fieldtype":"Small Text","label":"Resolution"},
+  {"fieldname":"resolved_by","fieldtype":"Link","label":"Resolved By","options":"User"},
+  {"fieldname":"resolved_at","fieldtype":"Datetime","label":"Resolved At"}
+ ],
+ "index_web_pages_for_search":0, "modified":"2026-08-06 00:00:00.000000", "modified_by":"Administrator", "module":"Workflow Builder", "name":"Automation Incident", "owner":"Administrator",
+ "permissions":[{"role":"Automation Operator","read":1},{"role":"Automation Publisher","read":1},{"role":"System Manager","read":1}],
+ "sort_field":"last_seen_at", "sort_order":"DESC", "states":[], "track_changes":0
+}

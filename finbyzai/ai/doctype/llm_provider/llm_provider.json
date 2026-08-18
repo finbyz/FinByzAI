@@ -9,7 +9,7 @@
   "disabled",
   "provider",
   "api_key",
-  "base_url"
+  "api_base"
  ],
  "fields": [
   {
@@ -34,10 +34,10 @@
    "label": "Disabled"
   },
   {
-   "description": "Specify a custom base URL when connecting to a self-hosted or compatible API endpoint.\n\nFor example: https://chat.finbyz.com/api/v1. No value is required for standard providers.",
-   "fieldname": "base_url",
+   "description": "Only needed for custom OpenAI-compatible endpoints (e.g. a self-hosted gateway). Leave blank for built-in providers like OpenAI, Anthropic, Google, DeepSeek, Perplexity.",
+   "fieldname": "api_base",
    "fieldtype": "Data",
-   "label": "Custom Endpoint (Base URL)"
+   "label": "API Base URL"
   }
  ],
  "grid_page_length": 50,

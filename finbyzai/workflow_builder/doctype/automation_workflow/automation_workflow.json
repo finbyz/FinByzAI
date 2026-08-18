@@ -1,0 +1,117 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-08-05 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "title",
+  "description",
+  "primary_doctype",
+  "status",
+  "active_version",
+  "execution_user",
+  "creation_key",
+  "state_version",
+  "latest_version"
+ ],
+ "fields": [
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Title",
+   "reqd": 1
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  },
+  {
+   "fieldname": "primary_doctype",
+   "fieldtype": "Link",
+   "label": "Primary DocType",
+   "reqd": 1,
+   "set_only_once": 1,
+   "options": "DocType"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "reqd": 1,
+   "options": "DRAFT\nACTIVE\nPAUSED\nDISABLED"
+  },
+  {
+   "fieldname": "active_version",
+   "fieldtype": "Link",
+   "label": "Active Version",
+   "options": "Automation Workflow Version"
+  },
+  {
+   "fieldname": "execution_user",
+   "fieldtype": "Link",
+   "label": "Execution User",
+   "reqd": 1,
+   "options": "User"
+  },
+  {
+   "fieldname": "creation_key",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Creation Key",
+   "no_copy": 1,
+   "read_only": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "state_version",
+   "fieldtype": "Int",
+   "label": "State Version",
+   "default": "0"
+  },
+  {
+   "fieldname": "latest_version",
+   "fieldtype": "Int",
+   "label": "Latest Version",
+   "default": "0"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-05 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Workflow Builder",
+ "name": "Automation Workflow",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "Automation Builder",
+   "read": 1,
+   "write": 1,
+   "create": 1
+  },
+  {
+   "role": "Automation Publisher",
+   "read": 1,
+   "write": 1,
+   "create": 1
+  },
+  {
+   "role": "Automation Operator",
+   "read": 1
+  },
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1,
+ "autoname": "format:AWF-{#####}"
+}

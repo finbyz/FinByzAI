@@ -1,2 +1,5 @@
 [pre_model_sync]
+finbyzai.patches.v16_0.install_workflow_builder_schema
+
 [post_model_sync]
+finbyzai.patches.v16_0.remove_workflow_pilot_mode

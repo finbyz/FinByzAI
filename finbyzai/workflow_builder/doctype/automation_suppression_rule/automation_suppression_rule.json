@@ -1,0 +1,17 @@
+{
+ "actions":[], "allow_rename":0, "autoname":"format:ASR-{#####}", "creation":"2026-08-06 00:00:00.000000", "doctype":"DocType", "engine":"InnoDB",
+ "field_order":["workflow","title","enabled","priority","reason","condition_json","valid_from","valid_until"],
+ "fields":[
+  {"fieldname":"workflow","fieldtype":"Link","label":"Workflow","options":"Automation Workflow","reqd":1},
+  {"fieldname":"title","fieldtype":"Data","label":"Title","reqd":1},
+  {"fieldname":"enabled","fieldtype":"Check","label":"Enabled","default":"1"},
+  {"fieldname":"priority","fieldtype":"Int","label":"Priority","default":"100"},
+  {"fieldname":"reason","fieldtype":"Small Text","label":"Reason"},
+  {"fieldname":"condition_json","fieldtype":"JSON","label":"Condition","reqd":1},
+  {"fieldname":"valid_from","fieldtype":"Datetime","label":"Valid From"},
+  {"fieldname":"valid_until","fieldtype":"Datetime","label":"Valid Until"}
+ ],
+ "index_web_pages_for_search":0, "modified":"2026-08-06 00:00:00.000000", "modified_by":"Administrator", "module":"Workflow Builder", "name":"Automation Suppression Rule", "owner":"Administrator",
+ "permissions":[{"role":"Automation Builder","read":1},{"role":"Automation Publisher","read":1,"write":1,"create":1},{"role":"System Manager","read":1,"write":1,"create":1}],
+ "sort_field":"priority", "sort_order":"ASC", "states":[], "track_changes":1
+}

@@ -29,7 +29,7 @@ class LLM(Document):
 		if self.supports_image_generation:
 			if self.provider == "Google":
 				os.environ['GEMINI_API_KEY'] = api_key or ""
-			
+
 			return ImageGeneration(
        			self.name,
           		api_key=api_key
@@ -37,6 +37,7 @@ class LLM(Document):
 		return ChatLiteLLM(
 			api_key = api_key,
 			model = self.name,
+			api_base = provider.api_base or None,
 		)
 
 
@@ -45,7 +46,8 @@ class LLM(Document):
 		api_key = _clean_api_key(provider.get_password("api_key"))
 		return embedding(
 			model=self.name,
-			api_key = api_key
+			api_key = api_key,
+			api_base = provider.api_base or None,
 		)
 
 class ImageLiteLLM:

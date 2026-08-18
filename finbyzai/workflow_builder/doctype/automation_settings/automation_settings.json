@@ -1,0 +1,147 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-08-05 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "rollout_section",
+  "enabled",
+  "external_actions_enabled",
+  "blocked_doctypes",
+  "throughput_section",
+  "outbox_batch_size",
+  "token_batch_size",
+  "timer_batch_size",
+  "max_recursion_depth",
+  "monitoring_section",
+  "health_failure_window_hours",
+  "incident_alert_user",
+  "incident_alert_threshold",
+  "alert_timer_lag_minutes",
+  "alert_queue_age_minutes"
+ ],
+ "fields": [
+  {
+   "fieldname": "rollout_section",
+   "fieldtype": "Section Break",
+   "label": "Rollout and Safety Controls",
+   "description": "Start fail-closed: enable the engine only after workers are healthy, and enable external actions only after provider verification."
+  },
+  {
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled",
+   "default": "0",
+   "description": "Global workflow execution switch. When disabled, authoring and simulation remain available but no event, timer, schedule, backfill, or token is executed."
+  },
+  {
+   "fieldname": "external_actions_enabled",
+   "fieldtype": "Check",
+   "label": "External Actions Enabled",
+   "default": "0",
+   "description": "Independent kill switch for email, SMS, and webhook effects. Keep disabled until each provider is configured and verified through a controlled UAT workflow."
+  },
+  {
+   "fieldname": "blocked_doctypes",
+   "fieldtype": "Small Text",
+   "label": "Blocked DocTypes",
+   "description": "Additional exact DocType names that workflows must never read, enroll, or modify, one per line. Built-in framework and automation-internal DocTypes are always blocked."
+  },
+  {
+   "fieldname": "throughput_section",
+   "fieldtype": "Section Break",
+   "label": "Throughput and Execution Limits",
+   "description": "Bounded dispatcher batch sizes protect workers and the database. Increase gradually after observing UAT queue latency and database load."
+  },
+  {
+   "fieldname": "outbox_batch_size",
+   "fieldtype": "Int",
+   "label": "Outbox Batch Size",
+   "default": "100",
+   "description": "Maximum durable outbox events claimed by one dispatcher pass. Larger values reduce backlog faster but hold more database locks."
+  },
+  {
+   "fieldname": "token_batch_size",
+   "fieldtype": "Int",
+   "label": "Token Batch Size",
+   "default": "100",
+   "description": "Maximum ready workflow tokens queued by one dispatcher pass. Keep aligned with available background-worker capacity."
+  },
+  {
+   "fieldname": "timer_batch_size",
+   "fieldtype": "Int",
+   "label": "Timer Batch Size",
+   "default": "100",
+   "description": "Maximum due timers released by one scheduler pass. Increase only when timer lag remains high with healthy workers."
+  },
+  {
+   "fieldname": "max_recursion_depth",
+   "fieldtype": "Int",
+   "label": "Maximum Recursion Depth",
+   "default": "10",
+   "description": "Maximum nested automation/subflow depth for one causation chain. Further recursion is stopped to prevent workflow loops."
+  },
+  {
+   "fieldname": "monitoring_section",
+   "fieldtype": "Section Break",
+   "label": "Health, Incidents, and Alerts",
+   "description": "Runtime preflight becomes unhealthy for recent failed runs, stale or orphaned active runs, open incidents, open dead letters, queue failures, or excessive queue age."
+  },
+  {
+   "default": "24",
+   "fieldname": "health_failure_window_hours",
+   "fieldtype": "Int",
+   "label": "Failed Run Health Window (Hours)",
+   "description": "A failed run keeps runtime health red for this rolling number of hours. Open incidents and dead letters are evaluated separately. Range enforced by runtime: 1 to 720 hours."
+  },
+  {
+   "fieldname": "incident_alert_user",
+   "fieldtype": "Link",
+   "label": "Incident Alert User",
+   "options": "User",
+   "description": "Optional enabled system user notified when a grouped incident reaches the occurrence threshold. Leave empty to record incidents without direct user notifications."
+  },
+  {
+   "default": "3",
+   "fieldname": "incident_alert_threshold",
+   "fieldtype": "Int",
+   "label": "Incident Alert Threshold",
+   "description": "Notify the Incident Alert User when the same incident fingerprint reaches this occurrence count. Use at least 1; the default is 3."
+  },
+  {
+   "fieldname": "alert_timer_lag_minutes",
+   "fieldtype": "Int",
+   "label": "Alert Timer Lag Threshold (Minutes)",
+   "default": "15",
+   "description": "Create an operational incident when an active timer is overdue by at least this many minutes."
+  },
+  {
+   "fieldname": "alert_queue_age_minutes",
+   "fieldtype": "Int",
+   "label": "Alert Queue Age Threshold (Minutes)",
+   "default": "15",
+   "description": "Mark runtime unhealthy and alert when a ready token, active run, or pending/retrying outbox event is older than this many minutes."
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-05 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Workflow Builder",
+ "name": "Automation Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1,
+ "issingle": 1
+}
