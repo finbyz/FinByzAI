@@ -11,6 +11,7 @@ LLM_PROVIDERS = [
     {"provider": "Google", "disabled": 0},
     {"provider": "OpenAI", "disabled": 0},
     {"provider": "Perplexity", "disabled": 0},
+    {"provider": "FinbyzChat", "disabled": 0, "api_base": "https://chat.finbyz.com/api/v1"},
 ]
 
 LLMS = [
@@ -67,6 +68,18 @@ LLMS = [
     {"name": "perplexity/sonar", "provider": "Perplexity", "title": "Perplexity Sonar", "size": "Very Small", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
     {"name": "perplexity/r1-1776", "provider": "Perplexity", "title": "Perplexity r1-1776", "size": "Very Small", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
     {"name": "perplexity/sonar-reasoning-pro", "provider": "Perplexity", "title": "Perplexity Sonar Reasoning Pro", "size": "Very Small", "is_reasoning": 1, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+
+    # ── FinbyzChat (custom OpenAI-compatible gateway at chat.finbyz.com) ──
+    {"name": "openai/deepseek-chat", "provider": "FinbyzChat", "title": "Deepseek Chat", "size": "Large", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openai/openrouter-deepseek-chat", "provider": "FinbyzChat", "title": "OpenRouter Deepseek Chat", "size": "Large", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openai/deepseek-reasoner", "provider": "FinbyzChat", "title": "Deepseek Reasoner", "size": "Large", "is_reasoning": 1, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openai/deepseek-v4-pro", "provider": "FinbyzChat", "title": "Deepseek V4 Pro", "size": "Large", "is_reasoning": 1, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openai/minimax-m3", "provider": "FinbyzChat", "title": "MiniMax M3", "size": "Large", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openai/kimi-k2.6", "provider": "FinbyzChat", "title": "Kimi K2.6", "size": "Large", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openai/kimi-k2.7", "provider": "FinbyzChat", "title": "Kimi K2.7 Code", "size": "Large", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openai/glm-5.2", "provider": "FinbyzChat", "title": "GLM 5.2", "size": "Large", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openai/claude-3.5-sonnet", "provider": "FinbyzChat", "title": "Claude 3.5 Sonnet (via FinbyzChat)", "size": "Medium", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openai/text-embedding-3-small", "provider": "FinbyzChat", "title": "Text Embedding 3 Small (via FinbyzChat)", "size": "Small", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 1, "enabled": 1},
 ]
 
 BUILTIN_AI_TOOLS = [
@@ -103,10 +116,13 @@ BUILTIN_AI_TOOLS = [
 
 
 def after_migrate():
-    """Create default providers, models, and built-in tool definitions."""
+    """Synchronize AI defaults and Workflow Builder runtime invariants."""
     _sync_llm_providers()
     _sync_llms()
     _sync_builtin_ai_tools()
+    from finbyzai.workflow_builder.setup import after_migrate as setup_workflow_builder
+
+    setup_workflow_builder()
 
 
 def _sync_llm_providers():
@@ -118,6 +134,7 @@ def _sync_llm_providers():
             "doctype": "LLM Provider",
             "provider": provider_data["provider"],
             "disabled": provider_data["disabled"],
+            "api_base": provider_data.get("api_base"),
         })
         doc.insert(ignore_permissions=True)
 

@@ -1,0 +1,49 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:APE-{#####}",
+ "creation": "2026-08-06 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "run",
+  "workflow",
+  "workflow_version",
+  "outbox_event",
+  "event_id",
+  "record_doctype",
+  "record_name",
+  "changed_fields_json",
+  "outcome",
+  "reason_code",
+  "evaluated_at"
+ ],
+ "fields": [
+  {"fieldname":"run","fieldtype":"Link","label":"Run","options":"Automation Run","reqd":1,"set_only_once":1},
+  {"fieldname":"workflow","fieldtype":"Link","label":"Workflow","options":"Automation Workflow","reqd":1,"set_only_once":1},
+  {"fieldname":"workflow_version","fieldtype":"Link","label":"Workflow Version","options":"Automation Workflow Version","reqd":1,"set_only_once":1},
+  {"fieldname":"outbox_event","fieldtype":"Link","label":"Outbox Event","options":"Automation Outbox Event","reqd":1,"set_only_once":1},
+  {"fieldname":"event_id","fieldtype":"Data","label":"Event ID","reqd":1,"set_only_once":1},
+  {"fieldname":"record_doctype","fieldtype":"Link","label":"Record DocType","options":"DocType","reqd":1,"set_only_once":1},
+  {"fieldname":"record_name","fieldtype":"Dynamic Link","label":"Record Name","options":"record_doctype","reqd":1,"set_only_once":1},
+  {"fieldname":"changed_fields_json","fieldtype":"JSON","label":"Changed Fields","set_only_once":1},
+  {"fieldname":"outcome","fieldtype":"Select","label":"Outcome","options":"NO_CHANGE\nGOAL_MET\nELIGIBILITY_LOST","reqd":1,"set_only_once":1},
+  {"fieldname":"reason_code","fieldtype":"Data","label":"Reason Code","reqd":1,"set_only_once":1},
+  {"fieldname":"evaluated_at","fieldtype":"Datetime","label":"Evaluated At","reqd":1,"set_only_once":1}
+ ],
+ "index_web_pages_for_search": 0,
+ "modified": "2026-08-06 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Workflow Builder",
+ "name": "Automation Policy Evaluation",
+ "owner": "Administrator",
+ "permissions": [
+  {"role":"Automation Operator","read":1},
+  {"role":"Automation Publisher","read":1},
+  {"role":"System Manager","read":1}
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}

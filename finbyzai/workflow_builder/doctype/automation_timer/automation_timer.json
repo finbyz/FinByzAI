@@ -1,0 +1,95 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-08-05 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "run",
+  "token",
+  "node_id",
+  "timer_type",
+  "event_topic",
+  "due_at",
+  "status",
+  "released_at"
+ ],
+ "fields": [
+  {
+   "fieldname": "run",
+   "fieldtype": "Link",
+   "label": "Run",
+   "reqd": 1,
+   "options": "Automation Run"
+  },
+  {
+   "fieldname": "token",
+   "fieldtype": "Link",
+   "label": "Token",
+   "reqd": 1,
+   "options": "Automation Run Token"
+  },
+  {
+   "fieldname": "node_id",
+   "fieldtype": "Data",
+   "label": "Node ID",
+   "reqd": 1
+  },
+  {
+   "fieldname": "timer_type",
+   "fieldtype": "Select",
+   "label": "Timer Type",
+   "reqd": 1,
+   "options": "DELAY\nTIMEOUT\nRETRY"
+  },
+  {
+   "fieldname": "due_at",
+   "fieldtype": "Datetime",
+   "label": "Due At",
+   "reqd": 1
+  },
+  {
+   "fieldname": "event_topic",
+   "fieldtype": "Data",
+   "label": "Event Topic",
+   "search_index": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "reqd": 1,
+   "options": "ACTIVE\nRELEASED\nCANCELLED"
+  },
+  {
+   "fieldname": "released_at",
+   "fieldtype": "Datetime",
+   "label": "Released At"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-05 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Workflow Builder",
+ "name": "Automation Timer",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "Automation Operator",
+   "read": 1
+  },
+  {
+   "role": "Automation Publisher",
+   "read": 1
+  },
+  {
+   "role": "System Manager",
+   "read": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}

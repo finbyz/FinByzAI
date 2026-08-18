@@ -1,0 +1,93 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-08-05 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "workflow",
+  "workflow_version",
+  "trigger_node_id",
+  "primary_doctype",
+  "event_type",
+  "dependency_fields_json",
+  "config_json",
+  "active"
+ ],
+ "fields": [
+  {
+   "fieldname": "workflow",
+   "fieldtype": "Link",
+   "label": "Workflow",
+   "reqd": 1,
+   "options": "Automation Workflow"
+  },
+  {
+   "fieldname": "workflow_version",
+   "fieldtype": "Link",
+   "label": "Workflow Version",
+   "reqd": 1,
+   "options": "Automation Workflow Version"
+  },
+  {
+   "fieldname": "trigger_node_id",
+   "fieldtype": "Data",
+   "label": "Trigger Node ID",
+   "reqd": 1
+  },
+  {
+   "fieldname": "primary_doctype",
+   "fieldtype": "Link",
+   "label": "Primary DocType",
+   "reqd": 1,
+   "options": "DocType"
+  },
+  {
+   "fieldname": "event_type",
+   "fieldtype": "Select",
+   "label": "Event Type",
+   "reqd": 1,
+   "options": "MANUAL\nAFTER_INSERT\nON_UPDATE\nSCHEDULED"
+  },
+  {
+   "fieldname": "dependency_fields_json",
+   "fieldtype": "JSON",
+   "label": "Dependency Fields"
+  },
+  {
+   "fieldname": "config_json",
+   "fieldtype": "JSON",
+   "label": "Configuration"
+  },
+  {
+   "fieldname": "active",
+   "fieldtype": "Check",
+   "label": "Active"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-05 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Workflow Builder",
+ "name": "Automation Trigger Subscription",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "Automation Operator",
+   "read": 1
+  },
+  {
+   "role": "Automation Publisher",
+   "read": 1
+  },
+  {
+   "role": "System Manager",
+   "read": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

@@ -65,7 +65,7 @@ app_license = "gpl-3.0"
 # ------------
 
 # before_install = "finbyzai.install.before_install"
-# after_install = "finbyzai.install.after_install"
+after_install = "finbyzai.workflow_builder.setup.after_install"
 
 after_migrate = "finbyzai.install.after_migrate"
 
@@ -122,6 +122,20 @@ has_permission = {
     ),
 }
 
+# Workflow history intentionally keeps the original DocType/name after a source
+# record is deleted. These audit and runtime rows must not become artificial
+# blockers for normal Frappe deletion (including action.delete_record). Frappe
+# will continue to reject deletion when any non-automation business document is
+# linked to the source record.
+ignore_links_on_delete = [
+	"Automation Consent Record",
+	"Automation Enrollment Decision",
+	"Automation Enrollment Ledger",
+	"Automation Outbox Event",
+	"Automation Policy Evaluation",
+	"Automation Run",
+]
+
 # DocType Class
 # ---------------
 # Override standard doctype classes
@@ -131,6 +145,10 @@ has_permission = {
 # }
 
 doc_events = {
+	"*": {
+		"after_insert": "finbyzai.workflow_builder.events.capture_after_insert",
+		"on_update": "finbyzai.workflow_builder.events.capture_on_update",
+	},
 	"Web Page": {
 		"on_update": "finbyzai.ai.doctype.knowledge_base.knowledge_base.update_ai_links_on_route_change"
 	},
@@ -149,6 +167,13 @@ doc_events = {
 # ---------------
 
 scheduler_events = {
+	"all": [
+		"finbyzai.workflow_builder.events.dispatch_pending_outbox",
+		"finbyzai.workflow_builder.engine.release_due_timers",
+		"finbyzai.workflow_builder.engine.dispatch_ready_tokens",
+		"finbyzai.workflow_builder.bulk.dispatch_ready_backfills",
+		"finbyzai.workflow_builder.bulk.dispatch_due_schedules",
+	],
 	"hourly": [
 		"finbyzai.ai.doctype.knowledge_base.knowledge_base.process_queued_knowledge_bases"
 	],
@@ -230,4 +255,8 @@ fixtures = [
             ["module", "=", "FinByz AI"]
         ]
     }
+]
+
+website_route_rules = [
+	{"from_route": "/workflow/<path:app_path>", "to_route": "workflow"},
 ]

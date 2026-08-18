@@ -8,7 +8,8 @@
  "field_order": [
   "disabled",
   "provider",
-  "api_key"
+  "api_key",
+  "api_base"
  ],
  "fields": [
   {
@@ -31,6 +32,12 @@
    "fieldname": "disabled",
    "fieldtype": "Check",
    "label": "Disabled"
+  },
+  {
+   "description": "Only needed for custom OpenAI-compatible endpoints (e.g. a self-hosted gateway). Leave blank for built-in providers like OpenAI, Anthropic, Google, DeepSeek, Perplexity.",
+   "fieldname": "api_base",
+   "fieldtype": "Data",
+   "label": "API Base URL"
   }
  ],
  "grid_page_length": 50,

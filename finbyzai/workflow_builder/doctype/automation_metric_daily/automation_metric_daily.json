@@ -1,0 +1,21 @@
+{
+ "actions":[], "allow_rename":0, "autoname":"format:AMD-{#####}", "creation":"2026-08-06 00:00:00.000000", "doctype":"DocType", "engine":"InnoDB",
+ "field_order":["metric_date","workflow","workflow_version","enrollments","suppressed","duplicates","completed_runs","failed_runs","cancelled_runs","node_failures","retries","total_duration_seconds"],
+ "fields":[
+  {"fieldname":"metric_date","fieldtype":"Date","label":"Metric Date","reqd":1},
+  {"fieldname":"workflow","fieldtype":"Link","label":"Workflow","options":"Automation Workflow","reqd":1},
+  {"fieldname":"workflow_version","fieldtype":"Link","label":"Workflow Version","options":"Automation Workflow Version"},
+  {"fieldname":"enrollments","fieldtype":"Int","label":"Enrollments","default":"0"},
+  {"fieldname":"suppressed","fieldtype":"Int","label":"Suppressed","default":"0"},
+  {"fieldname":"duplicates","fieldtype":"Int","label":"Duplicates","default":"0"},
+  {"fieldname":"completed_runs","fieldtype":"Int","label":"Completed Runs","default":"0"},
+  {"fieldname":"failed_runs","fieldtype":"Int","label":"Failed Runs","default":"0"},
+  {"fieldname":"cancelled_runs","fieldtype":"Int","label":"Cancelled Runs","default":"0"},
+  {"fieldname":"node_failures","fieldtype":"Int","label":"Node Failures","default":"0"},
+  {"fieldname":"retries","fieldtype":"Int","label":"Retries","default":"0"},
+  {"fieldname":"total_duration_seconds","fieldtype":"Float","label":"Total Duration (Seconds)","default":"0"}
+ ],
+ "index_web_pages_for_search":0, "modified":"2026-08-06 00:00:00.000000", "modified_by":"Administrator", "module":"Workflow Builder", "name":"Automation Metric Daily", "owner":"Administrator",
+ "permissions":[{"role":"Automation Operator","read":1},{"role":"Automation Publisher","read":1},{"role":"System Manager","read":1}],
+ "sort_field":"metric_date", "sort_order":"DESC", "states":[], "track_changes":0
+}

@@ -1,0 +1,30 @@
+{
+ "actions": [], "allow_rename": 0, "autoname": "format:ABF-{#####}", "creation": "2026-08-05 00:00:00.000000", "doctype": "DocType", "engine": "InnoDB",
+ "field_order": ["workflow", "workflow_version", "source", "schedule", "status", "snapshot_at", "filters_json", "cursor_name", "batch_size", "records_per_minute", "max_records", "estimated_count", "processed_count", "enrolled_count", "failed_count", "dry_run", "next_batch_at", "started_at", "last_heartbeat_at", "completed_at", "error_message"],
+ "fields": [
+  {"fieldname": "workflow", "fieldtype": "Link", "label": "Workflow", "options": "Automation Workflow", "reqd": 1},
+  {"fieldname": "workflow_version", "fieldtype": "Link", "label": "Workflow Version", "options": "Automation Workflow Version", "reqd": 1, "set_only_once": 1},
+  {"default": "BACKFILL", "fieldname": "source", "fieldtype": "Select", "label": "Source", "options": "BACKFILL\nSCHEDULE", "reqd": 1, "set_only_once": 1},
+  {"fieldname": "schedule", "fieldtype": "Link", "label": "Schedule", "options": "Automation Schedule", "set_only_once": 1},
+  {"fieldname": "status", "fieldtype": "Select", "label": "Status", "options": "QUEUED\nRUNNING\nPAUSED\nCOMPLETED\nFAILED\nCANCELLED", "reqd": 1},
+  {"fieldname": "snapshot_at", "fieldtype": "Datetime", "label": "Snapshot At", "reqd": 1, "set_only_once": 1},
+  {"fieldname": "filters_json", "fieldtype": "JSON", "label": "Filters"},
+  {"fieldname": "cursor_name", "fieldtype": "Data", "label": "Cursor Name"},
+  {"default": "100", "fieldname": "batch_size", "fieldtype": "Int", "label": "Batch Size"},
+  {"default": "500", "fieldname": "records_per_minute", "fieldtype": "Int", "label": "Records Per Minute"},
+  {"default": "0", "fieldname": "max_records", "fieldtype": "Int", "label": "Maximum Records"},
+  {"default": "0", "fieldname": "estimated_count", "fieldtype": "Int", "label": "Estimated Count"},
+  {"default": "0", "fieldname": "processed_count", "fieldtype": "Int", "label": "Processed Count"},
+  {"default": "0", "fieldname": "enrolled_count", "fieldtype": "Int", "label": "Enrolled Count"},
+  {"default": "0", "fieldname": "failed_count", "fieldtype": "Int", "label": "Failed Count"},
+  {"default": "0", "fieldname": "dry_run", "fieldtype": "Check", "label": "Dry Run"},
+  {"fieldname": "next_batch_at", "fieldtype": "Datetime", "label": "Next Batch At"},
+  {"fieldname": "started_at", "fieldtype": "Datetime", "label": "Started At"},
+  {"fieldname": "last_heartbeat_at", "fieldtype": "Datetime", "label": "Last Heartbeat At"},
+  {"fieldname": "completed_at", "fieldtype": "Datetime", "label": "Completed At"},
+  {"fieldname": "error_message", "fieldtype": "Small Text", "label": "Error Message"}
+ ],
+ "index_web_pages_for_search": 0, "links": [], "modified": "2026-08-05 00:00:00.000000", "modified_by": "Administrator", "module": "Workflow Builder", "name": "Automation Backfill Job", "owner": "Administrator",
+ "permissions": [{"read": 1, "role": "Automation Operator"}, {"read": 1, "role": "Automation Publisher"}, {"read": 1, "role": "System Manager"}],
+ "sort_field": "modified", "sort_order": "DESC", "states": [], "track_changes": 0
+}

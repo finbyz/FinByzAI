@@ -1,0 +1,83 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-08-05 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "workflow",
+  "draft_revision",
+  "graph_json",
+  "settings_json",
+  "graph_hash",
+  "validation_json"
+ ],
+ "fields": [
+  {
+   "fieldname": "workflow",
+   "fieldtype": "Link",
+   "label": "Workflow",
+   "reqd": 1,
+   "options": "Automation Workflow"
+  },
+  {
+   "fieldname": "draft_revision",
+   "fieldtype": "Int",
+   "label": "Draft Revision",
+   "reqd": 1
+  },
+  {
+   "fieldname": "graph_json",
+   "fieldtype": "JSON",
+   "label": "Graph JSON",
+   "reqd": 1
+  },
+  {
+   "fieldname": "settings_json",
+   "fieldtype": "JSON",
+   "label": "Settings JSON"
+  },
+  {
+   "fieldname": "graph_hash",
+   "fieldtype": "Data",
+   "label": "Graph Hash"
+  },
+  {
+   "fieldname": "validation_json",
+   "fieldtype": "JSON",
+   "label": "Validation JSON"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-05 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Workflow Builder",
+ "name": "Automation Workflow Draft",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "Automation Builder",
+   "read": 1,
+   "write": 1,
+   "create": 1
+  },
+  {
+   "role": "Automation Publisher",
+   "read": 1,
+   "write": 1,
+   "create": 1
+  },
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

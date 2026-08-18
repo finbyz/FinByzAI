@@ -1,0 +1,65 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2026-08-10 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "cursor_key",
+  "workflow_version",
+  "node_id",
+  "next_index",
+  "member_hash"
+ ],
+ "fields": [
+  {
+   "fieldname": "cursor_key",
+   "fieldtype": "Data",
+   "label": "Cursor Key",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "workflow_version",
+   "fieldtype": "Link",
+   "label": "Workflow Version",
+   "options": "Automation Workflow Version",
+   "reqd": 1
+  },
+  {
+   "fieldname": "node_id",
+   "fieldtype": "Data",
+   "label": "Node ID",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "next_index",
+   "fieldtype": "Int",
+   "label": "Next Index"
+  },
+  {
+   "fieldname": "member_hash",
+   "fieldtype": "Data",
+   "label": "Member Hash"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-10 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Workflow Builder",
+ "name": "Automation Round Robin Cursor",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "role": "System Manager"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}
