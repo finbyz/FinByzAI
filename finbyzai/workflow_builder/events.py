@@ -68,6 +68,8 @@ def capture_after_insert(doc, method=None) -> None:
 
 
 def capture_on_update(doc, method=None) -> None:
+	if frappe.flags.in_insert:
+		return
 	_capture(doc, "ON_UPDATE")
 
 
