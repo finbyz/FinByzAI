@@ -7,7 +7,7 @@ from frappe.utils import cint
 def setting(fieldname: str, default=None):
 	if not frappe.db.exists("DocType", "Automation Settings"):
 		return default
-	value = frappe.db.get_single_value("Automation Settings", fieldname, cache=False)
+	value = frappe.db.get_single_value("Automation Settings", fieldname, cache=True)
 	return default if value is None else value
 
 
