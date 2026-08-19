@@ -20,6 +20,7 @@ def _require_access() -> None:
 def get_context():
 	_require_access()
 	csrf_token = frappe.sessions.get_csrf_token()
+	frappe.db.commit()
 	boot = get_boot()
 	boot.csrf_token = csrf_token
 	context = frappe._dict(boot=boot, boot_json=frappe.as_json(boot))
