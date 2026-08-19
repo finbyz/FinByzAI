@@ -8,7 +8,8 @@
  "field_order": [
   "disabled",
   "provider",
-  "api_key"
+  "api_key",
+  "base_url"
  ],
  "fields": [
   {
@@ -31,12 +32,18 @@
    "fieldname": "disabled",
    "fieldtype": "Check",
    "label": "Disabled"
+  },
+  {
+   "description": "Specify a custom base URL when connecting to a self-hosted or compatible API endpoint.\n\nFor example: https://chat.finbyz.com/api/v1. No value is required for standard providers.",
+   "fieldname": "base_url",
+   "fieldtype": "Data",
+   "label": "Custom Endpoint (Base URL)"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-09-25 14:33:10.456940",
+ "modified": "2026-08-05 19:36:35.748758",
  "modified_by": "Administrator",
  "module": "AI",
  "name": "LLM Provider",

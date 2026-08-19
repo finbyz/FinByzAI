@@ -19,26 +19,43 @@ class LLM(Document):
 	@property
 	def llm(self):
 		provider = frappe.get_doc("LLM Provider", self.provider)
+		base_url = self.base_url or provider.base_url
+
+		kwargs = {
+			"api_key": provider.get_password("api_key"),
+			"model": self.name,
+		}
+		if base_url:
+			kwargs["api_base"] = base_url
+			kwargs["custom_llm_provider"] = "openai"
+
 		if self.supports_image_generation:
 			if self.provider == "Google":
 				os.environ['GEMINI_API_KEY'] = provider.get_password("api_key")
-			
-			return ImageGeneration(
-       			self.name,
-          		api_key=provider.get_password("api_key")
-        	)
-		return ChatLiteLLM(
-			api_key = provider.get_password("api_key"),
-			model = self.name,
-		)
+
+			image_kwargs = {
+				"api_key": provider.get_password("api_key"),
+			}
+			if base_url:
+				image_kwargs["api_base"] = base_url
+
+			return ImageGeneration(self.name, **image_kwargs)
+		return ChatLiteLLM(**kwargs)
 
 
 	def get_embeding_function(self):
 		provider = frappe.get_doc("LLM Provider", self.provider)
-		return embedding(
-			model=self.name,
-			api_key = provider.get_password("api_key")
-		)
+		base_url = self.base_url or provider.base_url
+
+		kwargs = {
+			"model": self.name,
+			"api_key": provider.get_password("api_key")
+		}
+		if base_url:
+			kwargs["api_base"] = base_url
+			kwargs["custom_llm_provider"] = "openai"
+
+		return embedding(**kwargs)
 
 class ImageLiteLLM:
 	"""
