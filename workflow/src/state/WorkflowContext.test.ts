@@ -5,6 +5,7 @@ import {
   workflowEditorReducer,
   workflowHistoryReducer,
   hasExecutionChanges,
+	applyNodeConfig,
   saveBeforeCheck,
   type DocumentState,
 } from './WorkflowContext'
@@ -185,6 +186,14 @@ describe('separate editor and history reducers', () => {
     expect(initial.graph?.nodes).toHaveLength(1)
   })
 
+  it('tracks a guided insertion target and clears it after selection or cancellation', () => {
+    const base = { validationOpen: false, simulationOpen: false, publishOpen: false, runsOpen: false, policiesOpen: false, versionsOpen: false, mode: 'edit' as const }
+    const inserting = workflowEditorReducer(base, { type: 'BEGIN_INSERT', placement: { edgeId: 'edge-1', position: { x: 100, y: 200 }, label: 'Between steps' } })
+    expect(inserting.insertion).toMatchObject({ edgeId: 'edge-1', label: 'Between steps' })
+    expect(workflowEditorReducer(inserting, { type: 'SELECT', nodeId: 'node-2' }).insertion).toBeUndefined()
+    expect(workflowEditorReducer(inserting, { type: 'CANCEL_INSERT' }).insertion).toBeUndefined()
+  })
+
   it('bounds history and coalesces repeated inspector commands', () => {
     let state = { past: [], future: [] } as ReturnType<typeof workflowHistoryReducer>
     state = workflowHistoryReducer(state, { type: 'RECORD', graph: graph(), key: 'node:config', at: 1000 })
@@ -224,4 +233,36 @@ describe('execution-change detection', () => {
     expect(hasExecutionChanges(moved, saved, initial.settings, initial.savedSettings)).toBe(true)
     expect(hasExecutionChanges(saved, saved, { ...initial.settings, read_mode: 'ENROLLMENT_SNAPSHOT' }, initial.savedSettings)).toBe(true)
   })
+})
+
+describe('event-wait edge reconciliation', () => {
+	const waitGraph = (branched: boolean, timeout = false): WorkflowGraph => ({
+		schema_version: 1,
+		primary_doctype: 'Lead',
+		start_node_id: 'trigger',
+		nodes: [
+			{ id: 'trigger', type: 'trigger.manual', type_version: 1, position: { x: 0, y: 0 }, config: {} },
+			{ id: 'wait', type: 'delay.until_event', type_version: 2, position: { x: 0, y: 100 }, config: { branch_on_timeout: branched ? 1 : 0, timeout_mode: 'duration' } },
+			{ id: 'next', type: 'end.complete', type_version: 1, position: { x: 0, y: 200 }, config: {} },
+			{ id: 'late', type: 'end.complete', type_version: 1, position: { x: 200, y: 200 }, config: {} },
+		],
+		edges: [
+			{ id: 'in', source: 'trigger', source_handle: 'default', target: 'wait' },
+			{ id: 'out', source: 'wait', source_handle: branched ? 'event' : 'default', target: 'next' },
+			...(timeout ? [{ id: 'timeout', source: 'wait', source_handle: 'timeout', target: 'late' }] : []),
+		],
+	})
+
+	it('remaps the normal path when timeout branching is enabled or disabled', () => {
+		const enabled = applyNodeConfig(waitGraph(false), 'wait', { branch_on_timeout: 1, timeout_mode: 'duration' })
+		expect(enabled.edges.find((edge) => edge.id === 'out')?.source_handle).toBe('event')
+		const disabled = applyNodeConfig(enabled, 'wait', { branch_on_timeout: 0, timeout_mode: 'duration' })
+		expect(disabled.edges.find((edge) => edge.id === 'out')?.source_handle).toBe('default')
+	})
+
+	it('refuses to hide or invalidate a connected timeout path', () => {
+		const current = waitGraph(true, true)
+		expect(applyNodeConfig(current, 'wait', { branch_on_timeout: 0, timeout_mode: 'duration' })).toBe(current)
+		expect(applyNodeConfig(current, 'wait', { branch_on_timeout: 0, timeout_mode: 'indefinite' })).toBe(current)
+	})
 })

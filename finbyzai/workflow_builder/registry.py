@@ -22,12 +22,14 @@ DOCTYPE_PERMISSION_TYPES = {"read", "write", "create", "delete"}
 # beside the node catalog so both graph validation and the frontend consume the
 # same definition.
 NODE_OUTPUT_PATHS = {
-	"condition.if_else": ["matched"],
+	"condition.if_else": ["matched", "selected_handle", "branch_name"],
+	"condition.random_split": ["selected_handle", "branch_name", "bucket"],
 	"condition.switch": ["value", "matched_handle"],
-	"condition.deduplicate": ["duplicate_name", "is_duplicate"],
+	"condition.deduplicate": ["duplicate_name", "is_duplicate", "matched_fields"],
 	"delay.fixed": ["due_at", "released"],
+	"delay.drip": ["due_at", "released", "batch_size", "position"],
 	"delay.until_date": ["due_at", "released"],
-	"delay.until_event": ["event_payload", "timed_out", "released", "matched_handle"],
+	"delay.until_event": ["event_payload", "timed_out", "released", "matched_handle", "event_source_id", "event_source_doctype", "event_source_type", "wait_indefinitely"],
 	"delay.business_hours": ["released", "due_at", "timezone"],
 	"transform.value": ["value"],
 	"transform.associated_record": ["value", "linked_name"],
@@ -38,32 +40,381 @@ NODE_OUTPUT_PATHS = {
 	"action.create_record": ["doctype", "name"],
 	"action.manage_association": ["doctype", "name", "operation", "target_name"],
 	"action.round_robin": ["doctype", "name", "assigned_to", "group", "assignment_version"],
-	"action.create_todo": ["allocated_to"],
+	"action.create_todo": ["doctype", "name", "allocated_to"],
 	"action.add_comment": ["comment"],
 	"action.notify_user": ["for_user"],
-	"action.send_email": ["email_queue", "recipient"],
+	"action.send_email": ["email_queue", "recipient", "sender", "reply_to", "email_template", "content_hash"],
 	"action.send_sms": ["recipient", "status", "status_code", "consent_check"],
 	"action.webhook": ["status_code", "response_hash"],
+	"action.instagram_message": ["recipient_id", "status_code", "response_hash"],
+	"action.asana": ["gid", "name", "permalink_url", "operation"],
 	"action.call_subflow": ["run_id", "status"],
+	"action.copy_record": ["doctype", "name"],
+	"action.merge_contact": ["canonical_contact", "merged_contact", "matched_fields"],
+	"action.unassign_record": ["closed_assignments"],
+	"action.create_note": ["note"],
+	"action.verify_email": ["email", "valid", "reason"],
+	"action.mark_communications_read": ["updated"],
+	"action.remove_from_workflow": ["cancelled_runs", "target_workflow", "terminate_path"],
+	"action.complete_goal": ["goal", "terminate_path"],
+	"action.go_to": ["target_node_id"],
 }
+
+
+BUSINESS_EVENT_CATALOG = [
+	{
+		"topic": "crm.contact.list.joined",
+		"label": "Contact joined a list",
+		"category": "Contact",
+		"description": "A contact became a member of a configured list or segment.",
+		"filter_fields": [
+			{"fieldname": "list_name", "label": "List", "fieldtype": "Link", "options": "Email Group"},
+		],
+	},
+	{
+		"topic": "crm.form.submitted",
+		"label": "Form submitted",
+		"category": "Contact",
+		"description": "A supported form was submitted and resolved to a contact.",
+		"filter_fields": [
+			{"fieldname": "form_name", "label": "Form", "fieldtype": "Link", "options": "Web Form"},
+		],
+	},
+	{
+		"topic": "crm.call.inbound",
+		"label": "Inbound Aircall matched to CRM record",
+		"category": "Contact",
+		"description": "A completed inbound Aircall call was matched to an enrolled CRM record.",
+		"filter_fields": [
+			{"fieldname": "phone_number", "label": "Called number", "fieldtype": "Data"},
+			{"fieldname": "outcome", "label": "Call outcome", "fieldtype": "Data"},
+			{"fieldname": "call_log", "label": "Call Log", "fieldtype": "Link", "options": "Call Log"},
+		],
+	},
+	{
+		"topic": "communication.responded",
+		"label": "Customer replied",
+		"category": "Communication",
+		"description": "An inbound Communication was linked to the enrolled record.",
+		"filter_fields": [
+			{"fieldname": "communication_medium", "label": "Channel", "fieldtype": "Data"},
+			{"fieldname": "sender", "label": "Sender", "fieldtype": "Data"},
+		],
+	},
+	{
+		"topic": "record.updated",
+		"label": "Record updated",
+		"category": "Record activity",
+		"description": "The enrolled record or a record created by an earlier workflow action was updated while waiting.",
+		"filter_fields": [
+			{"fieldname": "changed_fields", "label": "Changed fields", "fieldtype": "Table MultiSelect"},
+			{"fieldname": "status", "label": "Current status", "fieldtype": "Data"},
+			{"fieldname": "docstatus", "label": "Document status", "fieldtype": "Int"},
+		],
+	},
+	{
+		"topic": "workflow.todo.completed",
+		"label": "Task completed",
+		"category": "Earlier action activity",
+		"description": "A ToDo created by an earlier Create ToDo action was closed while this workflow was waiting.",
+		"filter_fields": [
+			{"fieldname": "todo", "label": "ToDo", "fieldtype": "Link", "options": "ToDo"},
+			{"fieldname": "allocated_to", "label": "Assigned user", "fieldtype": "Link", "options": "User"},
+			{"fieldname": "status", "label": "Status", "fieldtype": "Data"},
+		],
+	},
+	{
+		"topic": "crm.lead.qualified",
+		"label": "Lead qualified",
+		"category": "Contact",
+		"description": "A Lead's qualification status changed to Qualified.",
+		"filter_fields": [
+			{"fieldname": "qualification_status", "label": "Qualification status", "fieldtype": "Data"},
+			{"fieldname": "score", "label": "Qualification score", "fieldtype": "Float"},
+		],
+	},
+	{
+		"topic": "email.hard_bounced",
+		"label": "Email hard bounced",
+		"category": "Email",
+		"description": "An email provider reported a permanent delivery failure.",
+		"filter_fields": [
+			{"fieldname": "email_queue", "label": "Workflow email message", "fieldtype": "Data"},
+			{"fieldname": "email_id", "label": "Specific email", "fieldtype": "Data"},
+			{"fieldname": "email_type", "label": "Email type", "fieldtype": "Data"},
+		],
+	},
+	{
+		"topic": "email.soft_bounced",
+		"label": "Email soft bounced",
+		"category": "Email",
+		"description": "An email provider reported a temporary delivery failure.",
+		"filter_fields": [
+			{"fieldname": "email_queue", "label": "Workflow email message", "fieldtype": "Data"},
+			{"fieldname": "email_id", "label": "Specific email", "fieldtype": "Data"},
+			{"fieldname": "email_type", "label": "Email type", "fieldtype": "Data"},
+		],
+	},
+	{
+		"topic": "email.clicked",
+		"label": "Email link clicked",
+		"category": "Email",
+		"description": "A tracked link in an email was clicked.",
+		"filter_fields": [
+			{"fieldname": "email_queue", "label": "Workflow email message", "fieldtype": "Data"},
+			{"fieldname": "email_id", "label": "Specific email", "fieldtype": "Data"},
+			{"fieldname": "email_type", "label": "Email type", "fieldtype": "Data"},
+			{"fieldname": "link_url", "label": "Clicked URL", "fieldtype": "Data"},
+		],
+	},
+	{
+		"topic": "email.opened",
+		"label": "Email opened",
+		"category": "Email",
+		"description": "A tracked email-open event was received.",
+		"filter_fields": [
+			{"fieldname": "email_queue", "label": "Workflow email message", "fieldtype": "Data"},
+			{"fieldname": "email_id", "label": "Specific email", "fieldtype": "Data"},
+			{"fieldname": "email_type", "label": "Email type", "fieldtype": "Data"},
+		],
+	},
+	{
+		"topic": "email.complained",
+		"label": "Email complaint received",
+		"category": "Email",
+		"description": "A recipient reported an email as spam or abuse.",
+		"filter_fields": [
+			{"fieldname": "email_queue", "label": "Workflow email message", "fieldtype": "Data"},
+			{"fieldname": "email_id", "label": "Specific email", "fieldtype": "Data"},
+			{"fieldname": "email_type", "label": "Email type", "fieldtype": "Data"},
+		],
+	},
+	{
+		"topic": "email.unsubscribed",
+		"label": "Email unsubscribed",
+		"category": "Email",
+		"description": "A contact unsubscribed from an email purpose or type.",
+		"filter_fields": [
+			{"fieldname": "email_queue", "label": "Workflow email message", "fieldtype": "Data"},
+			{"fieldname": "email_id", "label": "Specific email", "fieldtype": "Data"},
+			{"fieldname": "email_type", "label": "Email type", "fieldtype": "Data"},
+		],
+	},
+	{
+		"topic": "commerce.store.login",
+		"label": "Customer signed in to portal",
+		"category": "Commerce",
+		"description": "A website user linked to a Customer created a new authenticated portal session.",
+		"filter_fields": [
+			{"fieldname": "portal", "label": "Portal", "fieldtype": "Data"},
+		],
+	},
+	{
+		"topic": "commerce.order.created",
+		"label": "Order created",
+		"category": "Commerce",
+		"description": "ERPNext created a Sales Order for the enrolled Customer.",
+		"filter_fields": [
+			{"fieldname": "source", "label": "Order source", "fieldtype": "Data"},
+			{"fieldname": "order_type", "label": "Order type", "fieldtype": "Data"},
+			{"fieldname": "sales_order", "label": "Sales Order", "fieldtype": "Link", "options": "Sales Order"},
+		],
+	},
+	{
+		"topic": "commerce.order.abandoned",
+		"label": "Order abandoned",
+		"category": "Commerce",
+		"description": "A connected store marked a contact's order or cart as abandoned.",
+		"filter_fields": [
+			{"fieldname": "store_id", "label": "Store", "fieldtype": "Data"},
+			{"fieldname": "cart_id", "label": "Cart", "fieldtype": "Data"},
+		],
+	},
+]
+
+
+# A workflow always enrolls one Frappe DocType. This is the same boundary that
+# HubSpot calls the workflow object type: an event is only useful when its
+# producer can resolve the occurrence back to that enrolled record. Keep this
+# context separate from the stable topic definitions above so existing saved
+# workflows and integrations continue to use the same topic keys.
+BUSINESS_EVENT_CONTEXT = {
+	"crm.contact.list.joined": {
+		"trigger_doctypes": {"Contact", "Lead"},
+		"wait_doctypes": {"Contact", "Lead"},
+		"source_modes": ["enrolled_record"],
+		"producer_status": "native",
+		"source_app": "Frappe Email Group",
+		"setup_note": "Email Group Member additions and re-subscriptions are matched by email_id to Contact or Lead records.",
+	},
+	"crm.form.submitted": {
+		"trigger_traits": {"record"},
+		"wait_traits": {"record"},
+		"source_modes": ["enrolled_record"],
+		"producer_status": "native",
+		"source_app": "Frappe Web Form",
+		"setup_note": "Frappe Web Form submissions emit the event for the exact target record after its authoritative save.",
+	},
+	"crm.call.inbound": {
+		"trigger_doctypes": {"Contact", "Lead", "Opportunity", "Customer"},
+		"wait_doctypes": {"Contact", "Lead", "Opportunity", "Customer"},
+		"source_modes": ["enrolled_record"],
+		"producer_status": "native",
+		"source_app": "Aircall Integration",
+		"setup_note": "Completed inbound Aircall Call Logs use stored Lead, Opportunity, and Customer links plus Aircall's normalized phone matching for Contact.",
+	},
+	"communication.responded": {
+		"trigger_traits": {"record"},
+		"wait_traits": {"record"},
+		"source_modes": ["enrolled_record"],
+		"producer_status": "native",
+		"source_app": "Frappe Communication",
+		"setup_note": "Received email, chat, phone, SMS, and other Communication records emit this event for their exact reference document.",
+	},
+	"record.updated": {
+		"trigger_doctypes": set(),
+		"wait_traits": {"record"},
+		"source_modes": ["enrolled_record", "action_output"],
+		"source_node_types": ["action.create_record", "action.copy_record"],
+		"producer_status": "native",
+		"source_app": "Frappe document lifecycle",
+		"setup_note": "A committed update releases only waits indexed to that exact enrolled record or earlier created/copied record.",
+	},
+	"workflow.todo.completed": {
+		"trigger_doctypes": set(),
+		"wait_traits": {"record"},
+		"source_modes": ["action_output"],
+		"source_node_types": ["action.create_todo"],
+		"producer_status": "native",
+		"source_app": "Frappe ToDo",
+		"setup_note": "A ToDo created by the selected earlier workflow action releases the wait when its status changes to Closed.",
+	},
+	"crm.lead.qualified": {
+		"trigger_doctypes": {"Lead"},
+		"wait_doctypes": {"Lead"},
+		"source_modes": ["enrolled_record"],
+		"producer_status": "native",
+		"source_app": "ERPNext Lead",
+		"setup_note": "Emitted when Qualification status changes from another value to Qualified.",
+		"trigger_alternative": "For enrollment, prefer “When filter criteria is met” with Qualification status = Qualified; it is native and needs no event integration.",
+	},
+	"email.hard_bounced": {
+		"trigger_traits": {"email_recipient"},
+		"wait_traits": {"record"},
+		"source_modes": ["enrolled_record", "action_output"],
+		"source_node_types": ["action.send_email"],
+		"producer_status": "native",
+		"source_app": "Frappe Communication",
+		"setup_note": "Emitted when an email provider updates a linked Communication delivery status to Bounced.",
+	},
+	"email.soft_bounced": {
+		"trigger_traits": {"email_recipient"},
+		"wait_traits": {"record"},
+		"source_modes": ["enrolled_record", "action_output"],
+		"source_node_types": ["action.send_email"],
+		"producer_status": "native",
+		"source_app": "Frappe Communication",
+		"setup_note": "Emitted when an email provider updates a linked Communication delivery status to Soft-Bounced.",
+	},
+	"email.clicked": {
+		"trigger_traits": {"email_recipient"},
+		"wait_traits": {"record"},
+		"source_modes": ["enrolled_record", "action_output"],
+		"source_node_types": ["action.send_email"],
+		"producer_status": "native",
+		"source_app": "Frappe Communication",
+		"setup_note": "Emitted when an email provider updates a linked Communication delivery status to Clicked.",
+	},
+	"email.opened": {
+		"trigger_traits": {"email_recipient"},
+		"wait_traits": {"record"},
+		"source_modes": ["enrolled_record", "action_output"],
+		"source_node_types": ["action.send_email"],
+		"producer_status": "native",
+		"source_app": "Frappe Communication",
+		"setup_note": "Emitted when an email provider updates a linked Communication delivery status to Opened.",
+	},
+	"email.complained": {
+		"trigger_traits": {"email_recipient"},
+		"wait_traits": {"record"},
+		"source_modes": ["enrolled_record", "action_output"],
+		"source_node_types": ["action.send_email"],
+		"producer_status": "native",
+		"source_app": "Frappe Communication",
+		"setup_note": "Emitted when an email provider updates a linked Communication delivery status to Marked As Spam.",
+	},
+	"email.unsubscribed": {
+		"trigger_traits": {"email_recipient"},
+		"wait_traits": {"record"},
+		"source_modes": ["enrolled_record", "action_output"],
+		"source_node_types": ["action.send_email"],
+		"producer_status": "native",
+		"source_app": "Frappe Email Unsubscribe / Communication",
+		"setup_note": "Emitted from an Email Unsubscribe record or a linked Communication delivery status of Recipient Unsubscribed.",
+	},
+	"commerce.store.login": {
+		"trigger_doctypes": {"Customer"},
+		"wait_doctypes": {"Customer"},
+		"source_modes": ["enrolled_record"],
+		"producer_status": "native",
+		"source_app": "Customer Portal",
+		"setup_note": "A new Customer Portal website session is mapped through Portal User or the linked Contact.",
+	},
+	"commerce.order.created": {
+		"trigger_doctypes": {"Customer"},
+		"wait_doctypes": {"Customer"},
+		"source_modes": ["enrolled_record"],
+		"producer_status": "native",
+		"source_app": "ERPNext Sales Order",
+		"setup_note": "A new ERPNext Sales Order is emitted for its Customer; orders converted from a Shopping Cart are identified as Customer Portal orders.",
+		"trigger_alternative": "For a Sales Order workflow, use the native “Record created” trigger instead of this contact/customer event.",
+	},
+	"commerce.order.abandoned": {
+		"trigger_doctypes": {"Customer", "Contact", "Lead"},
+		"wait_doctypes": {"Customer", "Contact", "Lead"},
+		"source_modes": ["enrolled_record"],
+		"producer_status": "native",
+		"source_app": "ERPNext Shopping Cart",
+		"setup_note": "Draft Shopping Cart Quotations unchanged for 24 hours and not converted to a Sales Order emit an idempotent abandonment event.",
+	},
+}
+
+
+WORKFLOW_OBJECT_TRAITS = {
+	"Contact": {"contact", "person"},
+	"Lead": {"lead", "person"},
+	"Customer": {"customer", "organization"},
+	"Opportunity": {"opportunity", "deal"},
+	"Sales Order": {"sales_order", "commerce_record"},
+	"Quotation": {"quotation", "commerce_record"},
+	"User": {"user", "person"},
+}
+
+EMAIL_FIELDNAMES = {"email", "email_id", "contact_email", "email_address"}
+PHONE_FIELDNAMES = {"phone", "phone_no", "mobile", "mobile_no", "contact_mobile"}
 
 
 NODE_CATALOG = [
 	{"type": "trigger.manual", "label": "Manual enrollment", "category": "Triggers", "description": "Enroll selected records from the operator UI.", "default_config": {}},
 	{"type": "trigger.document_insert", "label": "Record created", "category": "Triggers", "description": "Enroll after a new document is committed.", "default_config": {"condition": None}},
-	{"type": "trigger.document_change", "label": "Record changed", "category": "Triggers", "description": "Enroll after a relevant document field changes.", "default_config": {"condition": None}},
+	{"type": "trigger.document_change", "label": "Record changed", "category": "Triggers", "description": "Enroll after any change or only when selected permitted fields change.", "default_config": {"watch_fields": [], "condition": None}},
+	{"type": "trigger.filter_criteria", "label": "When filter criteria is met", "category": "Triggers", "description": "Enroll when a new or updated record meets the configured AND/OR field criteria.", "default_config": {"condition": None}},
+	{"type": "trigger.event", "type_version": 2, "label": "When an event occurs", "category": "Triggers", "description": "Enroll when any selected contact, form, call, email, or commerce event occurs.", "default_config": {"events": [{"id": "event-1", "event_topic": "", "event_filter": None}], "condition": None}},
 	{"type": "trigger.schedule", "label": "Scheduled", "category": "Triggers", "description": "Enroll records through a durable schedule configured after publishing.", "default_config": {}},
-	{"type": "condition.if_else", "label": "If / else", "category": "Logic", "description": "Choose a true or false path using typed conditions.", "default_config": {"condition": None}},
-	{"type": "condition.switch", "label": "Value branch", "category": "Logic", "description": "Branch into multiple paths based on a single field's value.", "default_config": {"field": "", "cases": []}},
-	{"type": "condition.deduplicate", "label": "Deduplicate", "category": "Logic", "description": "Branch if an existing record has the same value.", "default_config": {"match_field": ""}},
+	{"type": "trigger.any", "label": "Any of multiple triggers", "category": "Triggers", "description": "Enroll when any configured created, changed, criteria, or business-event trigger matches.", "default_config": {"triggers": [{"id": "trigger-1", "type": "trigger.document_insert", "config": {"condition": None}}, {"id": "trigger-2", "type": "trigger.filter_criteria", "config": {"condition": None}}]}},
+	{"type": "condition.if_else", "type_version": 2, "label": "If / else paths", "category": "Logic", "description": "Choose which named path each record follows; everyone unmatched uses None.", "default_config": {"branches": [{"handle": "branch-1", "name": "Path 1", "condition": None}]}},
+	{"type": "condition.random_split", "label": "Random percentage split", "category": "Logic", "description": "Distribute records predictably across named percentage paths for controlled experiments.", "default_config": {"branches": [{"handle": "split-a", "name": "Group A", "percentage": 50}, {"handle": "split-b", "name": "Group B", "percentage": 50}]}},
+	{"type": "condition.switch", "label": "Value branch (legacy)", "category": "Logic", "description": "Legacy exact-value branch retained for existing workflows.", "default_config": {"field": "", "cases": []}, "authoring_hidden": 1},
+	{"type": "condition.deduplicate", "type_version": 2, "label": "Deduplicate", "category": "Logic", "description": "Branch when another record matches one or more selected fields.", "default_config": {"match_fields": [], "match_mode": "all"}},
 	{"type": "delay.fixed", "label": "Fixed delay", "category": "Logic", "description": "Wait durably without sleeping a worker.", "default_config": {"seconds": 3600}},
-	{"type": "delay.until_date", "label": "Wait until date", "category": "Logic", "description": "Resume when a record date or datetime field is reached.", "default_config": {"field": ""}},
-	{"type": "delay.until_event", "label": "Wait for event", "category": "Logic", "description": "Wait until an event occurs or a timeout is reached.", "default_config": {"event_topic": "", "timeout_seconds": 86400}},
+	{"type": "delay.drip", "label": "Drip in batches", "category": "Logic", "description": "Release records in durable batches separated by a readable interval.", "default_config": {"batch_size": 100, "interval_seconds": 3600}},
+	{"type": "delay.until_date", "label": "Wait until date", "category": "Logic", "description": "Resume at a specific date and time or a date stored on the record.", "default_config": {"mode": "literal", "datetime": "", "field": ""}},
+	{"type": "delay.until_event", "type_version": 2, "label": "Wait until event", "category": "Logic", "description": "Wait for a new event on this workflow record or an earlier action output, with an optional maximum wait and timeout path.", "default_config": {"data_source": "enrolled_record", "event_topic": "", "event_filter": None, "event_source": None, "event_source_doctype": None, "timeout_mode": "duration", "timeout_seconds": 86400, "branch_on_timeout": 0}},
 	{"type": "delay.business_hours", "label": "Business hours", "category": "Logic", "description": "Wait until the next allowed execution window.", "default_config": {"calendar": "", "timezone": "UTC", "start_time": "09:00", "end_time": "17:00", "weekdays": [0, 1, 2, 3, 4]}},
-	{"type": "transform.value", "label": "Transform value", "category": "Logic", "description": "Create a reusable value without changing the record.", "default_config": {"operation": "coalesce", "values": []}},
+	{"type": "transform.value", "type_version": 2, "label": "Transform value", "category": "Logic", "description": "Create a reusable text, number, phone, currency, random, or calculated value without changing the record.", "default_config": {"operation": "coalesce", "values": []}},
 	{"type": "transform.associated_record", "label": "Associated record", "category": "Data", "description": "Fetch a property from a linked record.", "default_config": {"reference_field": "", "fetch_field": ""}},
 	{"type": "transform.child_records", "label": "Child records", "category": "Data", "description": "Fetch properties from child table records.", "default_config": {"child_table_field": "", "fetch_field": ""}},
-	{"type": "action.call_subflow", "label": "Call subflow", "category": "Logic", "description": "Execute another workflow as a subflow.", "default_config": {"subflow_id": "", "wait_for_completion": 1}},
+	{"type": "action.call_subflow", "label": "Run another workflow", "category": "Logic", "description": "Execute another compatible published workflow, optionally waiting for it to finish.", "default_config": {"subflow_id": "", "wait_for_completion": 1}},
 	{"type": "action.update_record", "label": "Update record", "category": "Actions", "description": "Update writable fields on the enrolled record.", "default_config": {"assignments": []}},
 	{"type": "action.numeric_adjust", "label": "Numeric adjust", "category": "Actions", "description": "Increase or decrease a numeric property.", "default_config": {"field": "", "operation": "add", "amount": 1}},
 	{"type": "action.manage_association", "label": "Manage association", "category": "Actions", "description": "Idempotently link or unlink associated records.", "default_config": {"target_doctype": "", "target_name": "", "link_field": "", "operation": "link"}},
@@ -72,21 +423,40 @@ NODE_CATALOG = [
 	{"type": "action.create_record", "label": "Create record", "category": "Actions", "description": "Create another permitted Frappe document.", "default_config": {"target_doctype": "", "assignments": []}},
 	{"type": "action.create_todo", "label": "Create ToDo", "category": "Actions", "description": "Assign a ToDo linked to the enrolled record.", "default_config": {"allocated_to": "", "description": "", "priority": "Medium"}},
 	{"type": "action.add_comment", "label": "Add comment", "category": "Actions", "description": "Add a timeline comment to the enrolled record.", "default_config": {"content": ""}},
-	{"type": "action.notify_user", "label": "Notify user", "category": "Actions", "description": "Create an in-app notification.", "default_config": {"for_user": "", "subject": "", "message": ""}},
-	{"type": "action.send_email", "label": "Send email", "category": "External", "description": "Queue a consent-aware email through Frappe Email Queue.", "default_config": {"recipient": {"kind": "literal", "value": ""}, "subject": {"kind": "literal", "value": ""}, "message": {"kind": "literal", "value": ""}, "purpose": "workflow", "require_consent": 1}},
+	{"type": "action.create_note", "label": "Create note", "category": "Actions", "description": "Create a Desk Note containing a link back to the enrolled record.", "default_config": {"title": "", "content": ""}},
+	{"type": "action.copy_record", "label": "Copy record", "category": "Actions", "description": "Create a permission-checked copy of the enrolled record.", "default_config": {}},
+	{"type": "action.merge_contact", "label": "Merge contact", "category": "Actions", "description": "Merge the enrolled Contact into an existing canonical Contact matched by selected identity fields.", "default_config": {"match_fields": ["email_id"], "match_mode": "all"}},
+	{"type": "action.unassign_record", "label": "Remove assigned users", "category": "Actions", "description": "Close every open assignment linked to the enrolled record.", "default_config": {}},
+	{"type": "action.verify_email", "label": "Verify email format", "category": "Actions", "description": "Validate a resolved email address without sending a message.", "default_config": {"email": {"kind": "record_field", "field": "email_id"}}},
+	{"type": "action.mark_communications_read", "label": "Mark conversations read", "category": "Actions", "description": "Mark received Communications linked to the enrolled record as seen.", "default_config": {}},
+	{"type": "action.remove_from_workflow", "label": "Remove from workflow", "category": "Logic", "description": "Cancel this record's active runs in the selected workflow and end this path when targeting the current workflow.", "default_config": {"target_workflow": "current"}},
+	{"type": "action.complete_goal", "label": "Complete goal", "category": "Logic", "description": "Record an explicit goal marker and complete this path immediately.", "default_config": {"goal": "Goal reached"}},
+	{"type": "action.go_to", "label": "Go to step", "category": "Logic", "description": "Continue at an existing downstream step without duplicating it.", "default_config": {"target_node_id": ""}},
+	{"type": "action.notify_user", "label": "Notify users", "category": "Actions", "description": "Create in-app notifications for a specific user, current assignees, or all enabled system users.", "default_config": {"audience": "specific", "for_user": "", "subject": "", "message": ""}},
+	{"type": "action.send_email", "type_version": 2, "label": "Send email", "category": "External", "description": "Send a reusable standard or visual-builder Email Template with preview, test-send, personalization, and sender controls.", "default_config": {"content_mode": "template", "email_template": "", "recipient": {"kind": "literal", "value": ""}, "subject_override": {"kind": "literal", "value": ""}, "sender_name": "", "sender_email": "", "reply_to": ""}},
 	{"type": "action.send_sms", "label": "Send SMS", "category": "External", "description": "Send a text message via Frappe SMS Settings.", "default_config": {"recipient": {"kind": "literal", "value": ""}, "message": {"kind": "literal", "value": ""}, "purpose": "workflow", "require_consent": 1}},
 	{"type": "action.webhook", "label": "Send webhook", "category": "External", "description": "POST signed JSON to an allowlisted HTTPS endpoint.", "default_config": {"integration_secret": "", "url": "", "payload": {}, "purpose": "workflow", "require_consent": 0}},
-	{"type": "end.complete", "label": "Complete", "category": "Logic", "description": "Complete the workflow run.", "default_config": {}},
+	{"type": "action.instagram_message", "label": "Send Instagram message", "category": "External", "description": "Send a consent-aware Instagram Direct message through a controlled Meta endpoint.", "default_config": {"integration_secret": "", "url": "https://graph.facebook.com/v23.0/me/messages", "recipient_id": {"kind": "literal", "value": ""}, "message": {"kind": "literal", "value": ""}, "purpose": "workflow", "require_consent": 1}},
+	{"type": "action.asana", "label": "Asana task / project", "category": "External", "description": "Create or update Asana tasks, subtasks, and projects through the installed Asana integration.", "default_config": {"operation": "create_task", "target_gid": {"kind": "literal", "value": ""}, "payload": {"name": {"kind": "literal", "value": ""}}}},
+	{"type": "end.complete", "label": "Complete (legacy)", "category": "Logic", "description": "Legacy explicit completion marker retained for existing workflows.", "default_config": {}, "authoring_hidden": 1},
 ]
 
 
 NODE_AUTHORING_SCHEMAS = {
-	"condition.if_else": {"required": [{"path": "condition", "label": "Condition"}]},
+	"condition.if_else": {"required": []},
+	"condition.random_split": {"required": [{"path": "branches", "label": "Percentage paths"}]},
+	"trigger.event": {"required": []},
+	"trigger.any": {"required": [{"path": "triggers", "label": "Enrollment triggers"}]},
 	"condition.switch": {"required": [{"path": "field", "label": "Branch field"}, {"path": "cases", "label": "Cases"}]},
-	"condition.deduplicate": {"required": [{"path": "match_field", "label": "Match field"}]},
+	# Version-aware validation in schema.py keeps legacy v1 match_field nodes
+	# compatible while v2 uses compound match_fields.
+	"condition.deduplicate": {"required": []},
 	"delay.fixed": {"required": [{"path": "seconds", "label": "Duration"}]},
-	"delay.until_date": {"required": [{"path": "field", "label": "Date field"}]},
-	"delay.until_event": {"required": [{"path": "event_topic", "label": "Event topic"}, {"path": "timeout_seconds", "label": "Timeout"}]},
+	"delay.drip": {"required": [{"path": "batch_size", "label": "Batch size"}, {"path": "interval_seconds", "label": "Batch interval"}]},
+	"delay.until_date": {"required": []},
+	# timeout_seconds is conditionally required only when timeout_mode=duration;
+	# schema.py owns that version-aware rule.
+	"delay.until_event": {"required": [{"path": "event_topic", "label": "Event topic"}]},
 	"delay.business_hours": {"required": [{"path": "timezone", "label": "Timezone"}]},
 	"transform.value": {"required": [{"path": "values", "label": "Inputs"}]},
 	"transform.associated_record": {"required": [{"path": "reference_field", "label": "Link field"}, {"path": "fetch_field", "label": "Fetched field"}]},
@@ -99,10 +469,18 @@ NODE_AUTHORING_SCHEMAS = {
 	"action.create_record": {"required": [{"path": "target_doctype", "label": "Target DocType"}, {"path": "assignments", "label": "Field values"}]},
 	"action.create_todo": {"required": [{"path": "allocated_to", "label": "Assignee"}, {"path": "description", "label": "Task description"}]},
 	"action.add_comment": {"required": [{"path": "content", "label": "Comment"}]},
+	"action.create_note": {"required": [{"path": "title", "label": "Title"}, {"path": "content", "label": "Content"}]},
+	"action.merge_contact": {"required": [{"path": "match_fields", "label": "Match fields"}]},
+	"action.verify_email": {"required": [{"path": "email", "label": "Email"}]},
+	"action.remove_from_workflow": {"required": [{"path": "target_workflow", "label": "Workflow"}]},
+	"action.complete_goal": {"required": [{"path": "goal", "label": "Goal name"}]},
+	"action.go_to": {"required": [{"path": "target_node_id", "label": "Destination step"}]},
 	"action.notify_user": {"required": [{"path": "for_user", "label": "Recipient"}, {"path": "subject", "label": "Subject"}, {"path": "message", "label": "Message"}]},
-	"action.send_email": {"required": [{"path": "recipient", "label": "Recipient"}, {"path": "subject", "label": "Subject"}, {"path": "message", "label": "Message"}, {"path": "purpose", "label": "Consent purpose"}]},
+	"action.send_email": {"required": [{"path": "recipient", "label": "Recipient"}]},
 	"action.send_sms": {"required": [{"path": "recipient", "label": "Recipient"}, {"path": "message", "label": "Message"}, {"path": "purpose", "label": "Consent purpose"}]},
 	"action.webhook": {"required": [{"path": "integration_secret", "label": "Integration secret"}, {"path": "url", "label": "HTTPS endpoint"}, {"path": "payload", "label": "JSON payload"}]},
+	"action.instagram_message": {"required": [{"path": "integration_secret", "label": "Integration secret"}, {"path": "url", "label": "Meta HTTPS endpoint"}, {"path": "recipient_id", "label": "Instagram recipient"}, {"path": "message", "label": "Message"}]},
+	"action.asana": {"required": [{"path": "operation", "label": "Operation"}, {"path": "payload", "label": "Asana fields"}]},
 }
 
 
@@ -576,6 +954,135 @@ def node_catalog() -> list[dict]:
 		node.setdefault("output_paths", [])
 	catalog.extend(plugin_nodes)
 	return catalog
+
+
+def workflow_object_profile(primary_doctype: str | None) -> dict:
+	"""Describe the enrolled object without assuming every record is a Contact."""
+	doctype = str(primary_doctype or "").strip()
+	traits = {"record"}
+	traits.update(WORKFLOW_OBJECT_TRAITS.get(doctype, set()))
+	fieldnames: set[str] = set()
+	if doctype:
+		try:
+			fieldnames = {str(df.fieldname) for df in frappe.get_meta(doctype).fields if df.fieldname}
+		except frappe.DoesNotExistError:
+			fieldnames = set()
+	if fieldnames.intersection(EMAIL_FIELDNAMES):
+		traits.add("email_recipient")
+	if fieldnames.intersection(PHONE_FIELDNAMES):
+		traits.add("callable")
+	return {
+		"primary_doctype": doctype,
+		# DocType names are the authoring contract. Translating "Lead" on this
+		# site produces "Lead/Contact", which blurs the object boundary again.
+		"label": doctype if doctype else _("record"),
+		"traits": sorted(traits),
+		"native_event_guidance": {
+			"created": _("Use Record created; it listens to new {0} records directly.").format(doctype or _("records")),
+			"changed": _("Use Record changed for a change event, or filter criteria for a business state such as qualified."),
+		},
+	}
+
+
+def _business_event_available(definition: dict, traits: set[str], doctype: str, usage: str) -> bool:
+	context = BUSINESS_EVENT_CONTEXT.get(definition["topic"], {})
+	doctypes = context.get(f"{usage}_doctypes")
+	if doctypes is not None:
+		return doctype in doctypes
+	required_traits = context.get(f"{usage}_traits", {"record"})
+	return bool(traits.intersection(required_traits))
+
+
+def business_event_catalog(primary_doctype: str | None = None, usage: str = "all") -> list[dict]:
+	"""Return object-aware business topics for enrollment or event waits.
+
+	Calling without a DocType preserves the historical complete catalogue for
+	API clients. The builder supplies both the immutable primary DocType and the
+	usage so it cannot offer contact-only events in an unrelated workflow.
+	"""
+	usage = str(usage or "all").strip().lower()
+	if usage not in {"all", "trigger", "wait"}:
+		raise ValueError("Event catalogue usage must be all, trigger, or wait")
+	profile = workflow_object_profile(primary_doctype)
+	doctype = profile["primary_doctype"]
+	traits = set(profile["traits"])
+	rows = []
+	for raw_definition in BUSINESS_EVENT_CATALOG:
+		definition = json.loads(json.dumps(raw_definition))
+		context = BUSINESS_EVENT_CONTEXT.get(definition["topic"], {})
+		available_for = [
+			candidate
+			for candidate in ("trigger", "wait")
+			if not doctype or _business_event_available(definition, traits, doctype, candidate)
+		]
+		if usage != "all" and usage not in available_for:
+			continue
+		if doctype and definition["topic"].startswith("crm."):
+			definition["category"] = _("CRM events")
+		if doctype and definition["topic"] == "crm.contact.list.joined":
+			definition["label"] = _("Joined a list")
+		elif doctype and definition["topic"] == "crm.call.inbound":
+			definition["label"] = _("Inbound call received")
+		elif doctype and definition["topic"] == "crm.lead.qualified":
+			definition["label"] = _("Qualification changed to Qualified")
+		elif doctype and definition["topic"] == "commerce.store.login":
+			definition["label"] = _("Signed in to customer portal")
+		elif doctype and definition["topic"] == "commerce.order.created":
+			definition["label"] = _("Placed an order")
+		elif doctype and definition["topic"] == "commerce.order.abandoned":
+			definition["label"] = _("Abandoned a cart")
+		definition.update(
+			{
+				"available_for": available_for,
+				"source_modes": list(context.get("source_modes") or ["enrolled_record"]),
+				"source_node_types": list(context.get("source_node_types") or []),
+				"producer_status": context.get("producer_status", "integration_required"),
+				"source_app": context.get("source_app"),
+				"setup_note": context.get("setup_note"),
+				"trigger_alternative": context.get("trigger_alternative"),
+				"record_resolution": _("The event must identify the enrolled {0} record.").format(
+					profile["label"]
+				),
+			}
+		)
+		rows.append(definition)
+	return rows
+
+
+def business_event_available(topic: str, primary_doctype: str | None, usage: str) -> bool:
+	"""Return whether a known topic belongs to this workflow-object context.
+
+	Unknown custom/legacy topics remain valid because their adapter owns the
+	contract; this check only constrains topics defined by the core catalogue.
+	"""
+	definition = get_business_event_definition(topic)
+	if not definition or not primary_doctype:
+		return True
+	profile = workflow_object_profile(primary_doctype)
+	return _business_event_available(
+		definition,
+		set(profile["traits"]),
+		profile["primary_doctype"],
+		str(usage or "").strip().lower(),
+	)
+
+
+def get_business_event_definition(topic: str) -> dict | None:
+	topic = str(topic or "").strip()
+	for definition in BUSINESS_EVENT_CATALOG:
+		if definition["topic"] == topic:
+			return json.loads(json.dumps(definition))
+	return None
+
+
+def get_business_event_context(topic: str) -> dict:
+	"""Return authoring/runtime source capabilities for a stable business event."""
+	context = BUSINESS_EVENT_CONTEXT.get(str(topic or "").strip()) or {}
+	return {
+		**context,
+		"source_modes": list(context.get("source_modes") or ["enrolled_record"]),
+		"source_node_types": list(context.get("source_node_types") or []),
+	}
 
 
 def get_node_definition(node_type: str) -> dict | None:

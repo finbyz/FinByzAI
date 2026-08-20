@@ -5,10 +5,12 @@ import time
 from datetime import timedelta
 
 import frappe
+from frappe import _
 from frappe.utils import add_to_date, cint, now_datetime, time_diff_in_seconds
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
+from . import engine
 from .configuration import automation_enabled, int_setting
 from .constants import (
 	AUTOMATION_PREFIX,
@@ -22,12 +24,117 @@ from .engine import active_policy_dependency_fields, enroll, reevaluate_active_r
 from .errors import AutomationError, AutomationTransientError
 from .observability import record_enrollment_decision, record_incident
 from .registry import configured_blocked_doctypes
-from .schema import condition_fields, evaluate_expression
+from .schema import (
+	condition_fields,
+	evaluate_expression,
+	event_filter_matches,
+	event_trigger_entries,
+)
 
 
 DISPATCH_JOB_ID = "automation-outbox-dispatch"
 DISPATCH_METHOD = "finbyzai.workflow_builder.events.dispatch_pending_outbox"
 _LOGGER_NAME = "automation_runtime"
+
+
+def signal_business_event(
+	event_topic: str,
+	payload: dict | None = None,
+	*,
+	record_doctype: str | None = None,
+	record_name: str | None = None,
+	source_doctype: str | None = None,
+	source_name: str | None = None,
+	idempotency_key: str | None = None,
+	check_record_permission: bool = False,
+) -> dict:
+	"""Release event waits and enroll event-triggered workflows.
+
+	This is the trusted service boundary used by installed app adapters. Public
+	API callers authorize first and request a record permission check.
+	"""
+	topic = str(event_topic or "").strip()
+	if not topic:
+		raise AutomationError(_("An event topic is required."))
+	if payload is not None and not isinstance(payload, dict):
+		raise AutomationError(_("Event payload must be a JSON object."))
+	payload_value = payload or {}
+	# Provider adapters already include the authoritative Email Queue ID. Treat
+	# that message as an earlier-action source as well as retaining the enrolled
+	# record identity used by event-triggered workflows.
+	if not source_name:
+		source_name = str(
+			payload_value.get("email_queue")
+			or payload_value.get("email_id")
+			or payload_value.get("message_id")
+			or ""
+		).strip() or None
+	if source_name and not source_doctype and payload_value.get("email_queue"):
+		source_doctype = "Email Queue"
+	record = None
+	if record_doctype and record_name:
+		record = frappe.get_doc(record_doctype, record_name)
+		if check_record_permission:
+			record.check_permission("read")
+	if check_record_permission and source_doctype and source_name:
+		source_record = frappe.get_doc(source_doctype, source_name)
+		source_record.check_permission("read")
+	released = engine.release_event_waiters(
+		topic,
+		payload_value,
+		record_doctype=record_doctype,
+		record_name=record_name,
+		source_doctype=source_doctype,
+		source_name=source_name,
+	)
+	if topic == "communication.responded" and record_doctype and record_name:
+		engine.apply_response_policy(record_doctype, record_name, payload_value)
+	enrolled = []
+	if record_doctype and record_name:
+		occurrence = str(idempotency_key or payload_value.get("event_id") or frappe.generate_hash(length=32))[:140]
+		subscriptions = frappe.get_list(
+			"Automation Trigger Subscription",
+			filters={"primary_doctype": record_doctype, "event_type": "EVENT", "active": 1},
+			fields=["workflow", "workflow_version", "config_json"],
+			ignore_permissions=True,
+			limit=0,
+		)
+		for subscription in subscriptions:
+			config = _json_object(subscription.config_json)
+			entries = event_trigger_entries(config, 2 if isinstance(config.get("events"), list) else 1)
+			matched_entry = next(
+				(
+					entry
+					for entry in entries
+					if str(entry.get("event_topic") or "").strip() == topic
+					and event_filter_matches(entry.get("event_filter"), payload_value)
+				),
+				None,
+			)
+			if not matched_entry or not evaluate_expression(config.get("condition"), record):
+				continue
+			workflow_state = frappe.db.get_value(
+				"Automation Workflow",
+				subscription.workflow,
+				["status", "active_version"],
+				as_dict=True,
+			)
+			if (
+				not workflow_state
+				or workflow_state.status != "ACTIVE"
+				or workflow_state.active_version != subscription.workflow_version
+			):
+				continue
+			run_id = engine.enroll(
+				subscription.workflow,
+				record_doctype,
+				record_name,
+				source=f"EVENT:{topic}"[:140],
+				occurrence_key=f"{topic}:{occurrence}"[:140],
+			)
+			if run_id:
+				enrolled.append({"workflow": subscription.workflow, "run_id": run_id})
+	return {"event_topic": topic, "released": released, "enrolled": enrolled}
 
 
 def _changed_fields(doc, event_type: str) -> list[str]:
@@ -65,12 +172,101 @@ def _safe_changed_values(
 
 def capture_after_insert(doc, method=None) -> None:
 	_capture(doc, "AFTER_INSERT")
+	from .integrations import capture_web_form_submission
+
+	capture_web_form_submission(doc, method)
 
 
 def capture_on_update(doc, method=None) -> None:
 	if frappe.flags.in_insert:
 		return
 	_capture(doc, "ON_UPDATE")
+
+
+def _native_wait_sources(topic: str, doctype: str, name: str) -> tuple[bool, bool]:
+	"""Return whether an exact enrolled-record or action-output wait exists."""
+	base = {
+		"status": "ACTIVE",
+		"timer_type": ["in", ["TIMEOUT", "EVENT_WAIT"]],
+		"event_topic": topic,
+	}
+	enrolled = bool(
+		frappe.db.exists(
+			"Automation Timer",
+			{**base, "source_type": "ENROLLED_RECORD", "record_doctype": doctype, "record_name": name},
+			cache=False,
+		)
+	)
+	action_output = bool(
+		frappe.db.exists(
+			"Automation Timer",
+			{
+				**base,
+				"source_type": "ACTION_RECORD",
+				"source_doctype": doctype,
+				"source_name": name,
+			},
+			cache=False,
+		)
+	)
+	return enrolled, action_output
+
+
+def _native_wait_occurrences(doc, event_type: str, changed_fields: list[str]) -> list[dict]:
+	"""Build durable exact-source occurrences needed by currently active waits."""
+	if event_type != "ON_UPDATE" or not changed_fields or not frappe.db.table_exists("Automation Timer"):
+		return []
+	occurrences = []
+	record_sources = _native_wait_sources("record.updated", doc.doctype, doc.name)
+	if any(record_sources):
+		occurrences.append(
+			{
+				"topic": "record.updated",
+				"enrolled": record_sources[0],
+				"action_output": record_sources[1],
+				"payload": {
+					"event_id": f"record:{doc.doctype}:{doc.name}:updated:{doc.get('modified')}",
+					"source_doctype": doc.doctype,
+					"source_name": doc.name,
+					"occurred_at": str(doc.get("modified") or now_datetime()),
+					"changed_fields": changed_fields,
+					"status": doc.get("status"),
+					"docstatus": cint(doc.get("docstatus")),
+				},
+			},
+		)
+
+	if doc.doctype == "ToDo" and doc.get("status") == "Closed":
+		previous = doc.get_doc_before_save()
+		if not previous or previous.get("status") != "Closed":
+			todo_sources = _native_wait_sources("workflow.todo.completed", doc.doctype, doc.name)
+			if todo_sources[1]:
+				occurrences.append(
+					{
+						"topic": "workflow.todo.completed",
+						"enrolled": False,
+						"action_output": True,
+						"payload": {
+							"event_id": f"todo:{doc.name}:closed:{doc.get('modified')}",
+							"todo": doc.name,
+							"occurred_at": str(doc.get("modified") or now_datetime()),
+							"allocated_to": doc.get("allocated_to"),
+							"status": "Closed",
+						},
+					},
+				)
+	return occurrences
+
+
+def _merge_native_wait_events(existing: list, current: list) -> list[dict]:
+	merged = {}
+	for occurrence in [*existing, *current]:
+		if not isinstance(occurrence, dict):
+			continue
+		payload = occurrence.get("payload") if isinstance(occurrence.get("payload"), dict) else {}
+		key = f"{occurrence.get('topic')}:{payload.get('event_id')}"
+		merged[key] = occurrence
+	return list(merged.values())[-50:]
 
 
 def _capture(doc, event_type: str) -> None:
@@ -85,24 +281,25 @@ def _capture(doc, event_type: str) -> None:
 		return
 	if doc.meta.istable or doc.meta.issingle or getattr(doc.meta, "is_virtual", False):
 		return
+	changed_fields = _changed_fields(doc, event_type)
+	if event_type == "ON_UPDATE" and not changed_fields:
+		return
+	native_wait_events = _native_wait_occurrences(doc, event_type, changed_fields)
 	subscriptions = _matching_subscriptions(doc.doctype, event_type)
 	policy_dependencies = (
 		active_policy_dependency_fields(doc.doctype, doc.name) if event_type == "ON_UPDATE" else set()
 	)
-	if not subscriptions and not policy_dependencies:
+	if not subscriptions and not policy_dependencies and not native_wait_events:
 		return
 	context = getattr(frappe.flags, "automation_context", {}) or {}
 	recursion_depth = cint(context.get("recursion_depth"))
 	if recursion_depth >= int_setting("max_recursion_depth", MAX_RECURSION_DEPTH):
 		return
-	changed_fields = _changed_fields(doc, event_type)
-	if event_type == "ON_UPDATE" and not changed_fields:
-		return
 	if event_type == "ON_UPDATE":
 		changed = set(changed_fields)
 		subscription_relevant = bool(subscriptions) and _subscriptions_need_update(subscriptions, changed)
 		policy_relevant = bool(policy_dependencies.intersection(changed))
-		if not subscription_relevant and not policy_relevant:
+		if not subscription_relevant and not policy_relevant and not native_wait_events:
 			return
 	changed_values = _safe_changed_values(
 		doc, event_type, subscriptions, changed_fields, policy_dependencies=policy_dependencies
@@ -117,7 +314,7 @@ def _capture(doc, event_type: str) -> None:
 				"event_type": "ON_UPDATE",
 				"status": "PENDING",
 			},
-			["name", "changed_fields_json", "changed_values_json"],
+			["name", "changed_fields_json", "changed_values_json", "decision_json"],
 			as_dict=True,
 			for_update=True,
 		)
@@ -132,12 +329,15 @@ def _capture(doc, event_type: str) -> None:
 				else:
 					existing_values[field] = val_dict
 
+			existing_native = _json_object(existing.decision_json).get("native_wait_events") or []
+			combined_native = _merge_native_wait_events(existing_native, native_wait_events)
 			frappe.db.set_value(
 				"Automation Outbox Event",
 				existing.name,
 				{
 					"changed_fields_json": json.dumps(sorted(existing_fields)),
-					"changed_values_json": json.dumps(existing_values, default=str)
+					"changed_values_json": json.dumps(existing_values, default=str),
+					"decision_json": json.dumps({"native_wait_events": combined_native}, default=str),
 				},
 				update_modified=False
 			)
@@ -154,6 +354,7 @@ def _capture(doc, event_type: str) -> None:
 			"object_name": doc.name,
 			"changed_fields_json": json.dumps(changed_fields),
 			"changed_values_json": json.dumps(changed_values, default=str),
+			"decision_json": json.dumps({"native_wait_events": native_wait_events}, default=str),
 			"status": "PENDING",
 			"attempts": 0,
 			"available_at": now_datetime(),
@@ -166,13 +367,22 @@ def _capture(doc, event_type: str) -> None:
 
 
 def _matching_subscriptions(doctype: str, event_type: str) -> list[dict]:
-	return frappe.get_list(
+	event_types = [event_type, "ON_UPDATE"] if event_type == "AFTER_INSERT" else [event_type]
+	rows = frappe.get_list(
 		"Automation Trigger Subscription",
-		filters={"primary_doctype": doctype, "event_type": event_type, "active": 1},
-		fields=["name", "workflow", "workflow_version", "config_json", "dependency_fields_json"],
+		filters={"primary_doctype": doctype, "event_type": ["in", event_types], "active": 1},
+		fields=["name", "workflow", "workflow_version", "event_type", "config_json", "dependency_fields_json"],
 		ignore_permissions=True,
 		limit=0,
 	)
+	if event_type != "AFTER_INSERT":
+		return rows
+	return [
+		row
+		for row in rows
+		if row.event_type == "AFTER_INSERT"
+		or _json_object(row.config_json).get("_trigger_type") == "trigger.filter_criteria"
+	]
 
 
 def _json_list(value: str | None) -> list:
@@ -259,6 +469,26 @@ def _process_event(event) -> int:
 	changed = set(_json_list(event.changed_fields_json))
 	subscriptions = _matching_subscriptions(event.object_doctype, event.event_type)
 	enrolled = 0
+	native_occurrences = _json_object(event.decision_json).get("native_wait_events") or []
+	native_decisions = []
+	for occurrence in native_occurrences:
+		if not isinstance(occurrence, dict):
+			continue
+		topic = str(occurrence.get("topic") or "").strip()
+		payload = occurrence.get("payload") if isinstance(occurrence.get("payload"), dict) else {}
+		if not topic:
+			continue
+		released = engine.release_event_waiters(
+			topic,
+			payload,
+			record_doctype=event.object_doctype if occurrence.get("enrolled") else None,
+			record_name=event.object_name if occurrence.get("enrolled") else None,
+			source_doctype=event.object_doctype if occurrence.get("action_output") else None,
+			source_name=event.object_name if occurrence.get("action_output") else None,
+		)
+		native_decisions.append(
+			{"kind": "WAIT_EVENT", "event_topic": topic, "event_id": payload.get("event_id"), "released": released}
+		)
 	policy_results = reevaluate_active_run_policies(
 		outbox_event=event.name,
 		event_id=event.event_id,
@@ -266,7 +496,7 @@ def _process_event(event) -> int:
 		record_name=event.object_name,
 		changed_fields=changed,
 	)
-	decisions = [{"kind": "RUN_POLICY", **row} for row in policy_results]
+	decisions = [*native_decisions, *({"kind": "RUN_POLICY", **row} for row in policy_results)]
 	for subscription in subscriptions:
 		workflow_state = frappe.db.get_value(
 			"Automation Workflow",
@@ -306,6 +536,16 @@ def _process_event(event) -> int:
 			)
 			continue
 		config = _json_object(subscription.config_json)
+		watch_fields = {str(field) for field in config.get("watch_fields") or [] if field}
+		if event.event_type == "ON_UPDATE" and watch_fields and not watch_fields.intersection(changed):
+			decisions.append({"workflow": subscription.workflow, "decision": "SKIPPED", "reason": "WATCHED_FIELDS_UNCHANGED"})
+			record_enrollment_decision(
+				workflow=subscription.workflow, workflow_version=subscription.workflow_version,
+				record_doctype=event.object_doctype, record_name=event.object_name, source=event.event_type,
+				occurrence_key=event.event_id, decision="REJECTED", reason_code="WATCHED_FIELDS_UNCHANGED",
+				evidence={"changed_fields": sorted(changed), "watch_fields": sorted(watch_fields)}, trace_id=event.trace_id,
+			)
+			continue
 		if not evaluate_expression(config.get("condition"), record):
 			decisions.append({"workflow": subscription.workflow, "decision": "SKIPPED", "reason": "CONDITION_FALSE"})
 			record_enrollment_decision(

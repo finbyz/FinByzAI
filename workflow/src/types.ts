@@ -1,6 +1,7 @@
 export type NodeType =
   | 'trigger.schedule'
   | 'condition.switch'
+	| 'condition.random_split'
   | 'condition.deduplicate'
   | 'delay.until_event'
   | 'delay.business_hours'
@@ -14,8 +15,12 @@ export type NodeType =
   | 'trigger.manual'
   | 'trigger.document_insert'
   | 'trigger.document_change'
+	| 'trigger.filter_criteria'
+  | 'trigger.event'
+	| 'trigger.any'
   | 'condition.if_else'
   | 'delay.fixed'
+	| 'delay.drip'
   | 'delay.until_date'
   | 'transform.value'
   | 'action.update_record'
@@ -25,7 +30,18 @@ export type NodeType =
   | 'action.notify_user'
   | 'action.send_email'
   | 'action.send_sms'
+	| 'action.instagram_message'
+	| 'action.asana'
   | 'action.webhook'
+	| 'action.copy_record'
+	| 'action.merge_contact'
+	| 'action.unassign_record'
+	| 'action.create_note'
+	| 'action.verify_email'
+	| 'action.mark_communications_read'
+	| 'action.remove_from_workflow'
+	| 'action.complete_goal'
+	| 'action.go_to'
   | 'end.complete'
 
 export type Position = { x: number; y: number }
@@ -51,6 +67,21 @@ export interface WorkflowSettings {
   unenroll_when_ineligible?: boolean
   goal_condition?: ConditionExpression | null
   eligibility_condition?: ConditionExpression | null
+	execution_window?: {
+		enabled: boolean
+		timezone: string
+		start_time: string
+		end_time: string
+		weekdays: number[]
+		calendar?: string
+	}
+	communication?: {
+		default_sender_name?: string
+		default_sender_email?: string
+		default_sms_sender?: string
+		stop_on_response?: boolean
+		mark_responses_read?: boolean
+	}
 }
 
 export type WorkflowValueSpec =
@@ -99,6 +130,7 @@ export interface ValidationIssue {
 export interface WorkflowSummary {
   name: string
   title: string
+	folder?: string
   primary_doctype: string
   status: string
   active_version?: string
@@ -130,8 +162,35 @@ export interface NodeCatalogItem {
   type_version?: 1 | 2
   legacy_runtime_enabled?: boolean
   legacy_disabled_reason?: string
+  authoring_hidden?: boolean | number
   authoring_schema?: { required: Array<{ path: string; label: string }> }
   output_paths: string[]
+}
+
+export interface BusinessEventType {
+  topic: string
+  label: string
+  category: string
+  description: string
+	filter_fields?: Array<Pick<FieldCatalogItem, 'fieldname' | 'label' | 'fieldtype' | 'options'>>
+	available_for?: Array<'trigger' | 'wait'>
+	source_modes?: Array<'enrolled_record' | 'action_output'>
+	source_node_types?: NodeType[]
+	producer_status?: 'native' | 'integration_required'
+	source_app?: string
+	setup_note?: string
+	trigger_alternative?: string
+	record_resolution?: string
+}
+
+export interface WorkflowObjectProfile {
+	primary_doctype: string
+	label: string
+	traits: string[]
+	native_event_guidance: {
+		created: string
+		changed: string
+	}
 }
 
 export interface FieldCapabilities {

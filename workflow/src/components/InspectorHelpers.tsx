@@ -28,19 +28,35 @@ export const nodeLabels: Record<NodeType, string> = {
   'trigger.manual': 'Manual enrollment',
   'trigger.document_insert': 'Record created',
   'trigger.document_change': 'Record changed',
-  'condition.if_else': 'If / else branch',
-  'delay.fixed': 'Wait for a duration',
+	'trigger.filter_criteria': 'When filter criteria is met',
+	'trigger.event': 'When an event occurs',
+	'trigger.any': 'Any of multiple triggers',
+	'condition.if_else': 'If / else paths',
+	'condition.random_split': 'Random percentage split',
+	'delay.fixed': 'Wait for a duration',
+	'delay.drip': 'Drip in batches',
   'delay.until_date': 'Wait until a date',
   'transform.value': 'Transform a value',
   'action.update_record': 'Update this record',
   'action.create_record': 'Create a record',
   'action.create_todo': 'Create a ToDo',
   'action.add_comment': 'Add a comment',
+	'action.create_note': 'Create a note',
+	'action.copy_record': 'Copy record',
+	'action.merge_contact': 'Merge contact',
+	'action.unassign_record': 'Remove assigned users',
+	'action.verify_email': 'Verify email format',
+	'action.mark_communications_read': 'Mark conversations read',
+	'action.remove_from_workflow': 'Remove from workflow',
+	'action.complete_goal': 'Complete goal',
+	'action.go_to': 'Go to step',
   'action.notify_user': 'Notify a user',
   'action.send_email': 'Send an email',
   'action.send_sms': 'Send SMS via Frappe',
   'action.webhook': 'Send a webhook',
-  'action.call_subflow': 'Call subflow',
+	'action.instagram_message': 'Send Instagram message',
+	'action.asana': 'Asana task / project',
+	'action.call_subflow': 'Run another workflow',
   'action.numeric_adjust': 'Numeric adjust',
   'action.manage_association': 'Manage association',
   'action.round_robin': 'Round robin assign',
@@ -48,7 +64,7 @@ export const nodeLabels: Record<NodeType, string> = {
   'trigger.schedule': 'Scheduled trigger',
   'condition.switch': 'Value branch',
   'condition.deduplicate': 'Deduplicate',
-  'delay.until_event': 'Wait for event',
+	'delay.until_event': 'Wait until event',
   'delay.business_hours': 'Business hours',
   'transform.associated_record': 'Associated record',
   'transform.child_records': 'Child records',
@@ -59,7 +75,12 @@ export const nodeIcons: Record<NodeType, typeof Play> = {
   'trigger.manual': Play,
   'trigger.document_insert': UserRoundPlus,
   'trigger.document_change': DatabaseZap,
+	'trigger.filter_criteria': DatabaseZap,
+	'trigger.event': BellRing,
+	'trigger.any': GitBranch,
   'condition.if_else': GitBranch,
+	'condition.random_split': GitBranch,
+	'delay.drip': Clock3,
   'delay.fixed': Clock3,
   'delay.until_date': Clock3,
   'transform.value': Sparkles,
@@ -67,10 +88,21 @@ export const nodeIcons: Record<NodeType, typeof Play> = {
   'action.create_record': UserRoundPlus,
   'action.create_todo': ListTodo,
   'action.add_comment': MessageSquareText,
+	'action.create_note': MessageSquareText,
+	'action.copy_record': UserRoundPlus,
+	'action.merge_contact': UserRoundPlus,
+	'action.unassign_record': UserRoundPlus,
+	'action.verify_email': CheckCircle2,
+	'action.mark_communications_read': MessageSquareText,
+	'action.remove_from_workflow': Trash2,
+	'action.complete_goal': CheckCircle2,
+	'action.go_to': GitBranch,
   'action.notify_user': BellRing,
   'action.send_email': BellRing,
   'action.send_sms': MessageSquareText,
   'action.webhook': DatabaseZap,
+	'action.instagram_message': MessageSquareText,
+	'action.asana': ListTodo,
   'action.call_subflow': Sparkles,
   'action.numeric_adjust': DatabaseZap,
   'action.manage_association': UserRoundPlus,
@@ -182,9 +214,9 @@ export function ConditionExpressionEditor({ expression, fields, primaryDoctype, 
     const operators = operatorsFor(selectedField)
     const patch = (values: Partial<ConditionPredicate>) => onChange({ ...expression, ...values })
     return (
-      <div className="rounded-lg border border-[var(--border-color)] bg-white/40 dark:bg-transparent p-3">
-        <div className="grid gap-2.5">
-          <div className="flex items-center justify-between"><span className="text-light text-[9px] font-bold uppercase tracking-wider">Rule</span>{onRemove && <button type="button" className="icon-button !size-7 hover:!text-red-600" onClick={onRemove} aria-label="Remove condition"><Trash2 size={13} /></button>}</div>
+      <div className="min-w-0 rounded-lg border border-[var(--border-color)] bg-white/40 p-3 dark:bg-transparent">
+        <div className="grid min-w-0 gap-2.5">
+		  <div className="flex items-center justify-between"><span className="text-light text-[9px] font-bold uppercase tracking-wider">Condition</span>{onRemove && <button type="button" className="icon-button !size-7 hover:!text-red-600" onClick={onRemove} aria-label="Remove condition"><Trash2 size={13} /></button>}</div>
           <FieldPicker fields={fields} value={expression.field} onChange={(fieldname) => { const nextField = fields.find((field) => field.fieldname === fieldname); patch({ field: fieldname, operator: nextField?.fieldtype === 'Table MultiSelect' ? 'contains_any' : 'eq', value: nextField?.fieldtype === 'Table MultiSelect' ? [] : null }) }} />
           <select aria-label={`${selectedField?.label || 'Field'} condition operator`} className={inputClass} value={expression.operator} onChange={(event) => patch({ operator: event.target.value, value: ['in', 'not_in', 'contains_any', 'contains_all', 'contains_none'].includes(event.target.value) ? [] : null })}>
             {operators.map(([value, label]) => <option value={value} key={value}>{label}</option>)}
@@ -202,16 +234,16 @@ export function ConditionExpressionEditor({ expression, fields, primaryDoctype, 
     onChange({ ...expression, children: children.length ? children : [emptyPredicate()] })
   }
   return (
-    <div className={`rounded-xl border p-3 ${depth ? 'border-magic-100 bg-magic-50/40 dark:border-magic-500/20 dark:bg-magic-500/5' : 'border-[var(--border-color)] bg-[var(--subtle-fg)]'}`}>
-      <div className="mb-2.5 flex items-center gap-2">
-        <select className="frappe-control !min-h-8 w-auto px-2 text-[10px] font-bold" value={expression.kind} onChange={(event) => changeKind(event.target.value as ConditionGroup['kind'])} aria-label="Condition group type"><option value="all">Match all (AND)</option><option value="any">Match any (OR)</option><option value="not">Match none (NOT)</option></select>
-        <span className="text-light text-[9px]">{expression.children.length} {expression.children.length === 1 ? 'condition' : 'conditions'}</span>
+    <div className={`min-w-0 rounded-xl border p-3 ${depth ? 'border-magic-100 bg-magic-50/40 dark:border-magic-500/20 dark:bg-magic-500/5' : 'border-[var(--border-color)] bg-[var(--subtle-fg)]'}`}>
+      <div className="mb-2.5 flex min-w-0 flex-wrap items-center gap-2">
+		<select className="frappe-control !min-h-8 min-w-0 flex-1 px-2 text-[10px] font-bold" value={expression.kind} onChange={(event) => changeKind(event.target.value as ConditionGroup['kind'])} aria-label="How should these conditions be combined?"><option value="all">All conditions must match (AND)</option><option value="any">Any condition can match (OR)</option><option value="not">None may match (NOT)</option></select>
+        <span className="text-light shrink-0 text-[9px]">{expression.children.length} {expression.children.length === 1 ? 'condition' : 'conditions'}</span>
         {onRemove && <button type="button" className="icon-button !ml-auto !size-7 hover:!text-red-600" onClick={onRemove} aria-label="Remove condition group"><Trash2 size={13} /></button>}
       </div>
       <div className="space-y-2">
         {expression.children.map((child, index) => <ConditionExpressionEditor key={`${depth}-${index}`} expression={child} fields={fields} primaryDoctype={primaryDoctype} depth={depth + 1} onChange={(next) => replaceChild(index, next)} onRemove={expression.kind === 'not' ? undefined : () => removeChild(index)} />)}
       </div>
-      {expression.kind !== 'not' && <div className="mt-2.5 flex gap-1.5"><button type="button" className="btn-core btn-secondary !min-h-8 !px-2.5 !text-[10px]" onClick={() => onChange({ ...expression, children: [...expression.children, emptyPredicate()] })}><Plus size={12} />Rule</button><button type="button" className="btn-core btn-ghost !min-h-8 !px-2.5 !text-[10px]" disabled={depth >= 4} title={depth >= 4 ? 'Maximum editor nesting reached' : undefined} onClick={() => onChange({ ...expression, children: [...expression.children, { kind: 'all', children: [emptyPredicate()] }] })}><GitBranch size={12} />Group</button></div>}
+	  {expression.kind !== 'not' && <div className="mt-2.5 flex min-w-0 flex-wrap gap-1.5"><button type="button" className="btn-core btn-secondary min-w-0 flex-1 !min-h-8 !px-2.5 !text-[10px]" onClick={() => onChange({ ...expression, children: [...expression.children, emptyPredicate()] })}><Plus className="shrink-0" size={12} />Add condition</button><button type="button" className="btn-core btn-ghost min-w-0 flex-1 !min-h-8 !px-2.5 !text-[10px]" disabled={depth >= 4} title={depth >= 4 ? 'Maximum editor nesting reached' : 'Advanced: add a nested condition group'} onClick={() => onChange({ ...expression, children: [...expression.children, { kind: 'all', children: [emptyPredicate()] }] })}><GitBranch className="shrink-0" size={12} />Advanced group</button></div>}
     </div>
   )
 }
@@ -220,11 +252,11 @@ export function PolicyConditionEditor({ value, fields, primaryDoctype, onChange 
   return <ConditionExpressionEditor expression={value || emptyPredicate()} fields={fields} primaryDoctype={primaryDoctype} depth={0} onChange={onChange} />
 }
 
-export function ConditionEditor({ config, fields, update, primaryDoctype }: { config: NodeConfig; fields: FieldCatalogItem[]; update(config: NodeConfig, key: string): void; primaryDoctype?: string }) {
+export function ConditionEditor({ config, fields, update, primaryDoctype, title = 'Enrollment criteria', description = 'Choose who enters. Use AND when every condition must match, or OR when any one condition is enough.' }: { config: NodeConfig; fields: FieldCatalogItem[]; update(config: NodeConfig, key: string): void; primaryDoctype?: string; title?: string; description?: string }) {
   const condition = parseCondition(config.condition)
   const setCondition = (expression: ConditionExpression) => update({ ...config, condition: expression }, 'condition:tree')
   return (
-    <InspectorSection title="Enrollment criteria" description="Build nested AND, OR, and NOT groups. Every rule is evaluated with the selected field type.">
+	<InspectorSection title={title} description={description}>
       <ConditionExpressionEditor expression={condition} fields={fields} primaryDoctype={primaryDoctype} depth={0} onChange={setCondition} />
       {condition.kind === 'predicate' && <button type="button" className="btn-core btn-secondary w-full !text-[10px]" onClick={() => setCondition({ kind: 'all', children: [condition, emptyPredicate()] })}><Plus size={12} />Add another rule</button>}
     </InspectorSection>

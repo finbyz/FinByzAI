@@ -13,6 +13,7 @@ WORKFLOW_DOCTYPES = (
 	"automation_backfill_job",
 	"automation_consent_record",
 	"automation_dead_letter",
+	"automation_drip_cursor",
 	"automation_effect_ledger",
 	"automation_enrollment_decision",
 	"automation_enrollment_ledger",

@@ -14,7 +14,10 @@ from finbyzai.workflow_builder.external import (
 	_post_pinned,
 	_safe_webhook_url,
 	_send_sms_via_frappe_gateway,
+	execute_asana,
 	execute_external,
+	queue_email,
+	send_instagram_message,
 	send_frappe_sms,
 	transport_readiness,
 )
@@ -23,6 +26,83 @@ from finbyzai.workflow_builder.schema import canonical_json
 
 
 class TestAutomationExternalSafety(IntegrationTestCase):
+	def test_email_action_uses_rendered_template_and_returns_traceable_outputs(self):
+		run = SimpleNamespace(record_doctype="Lead", record_name="LEAD-1")
+		config = {
+			"content_mode": "template",
+			"email_template": "Lead welcome",
+			"recipient": {"kind": "literal", "value": "person@example.com"},
+			"sender_name": "Megasol",
+			"sender_email": "hello@example.com",
+			"reply_to": "reply@example.com",
+		}
+		content = {
+			"subject": "Hello Ada",
+			"message": "<html><body>Welcome Ada</body></html>",
+			"raw_html": True,
+			"email_template": "Lead welcome",
+			"content_hash": "content-123",
+		}
+		queue = SimpleNamespace(name="EMAIL-QUEUE-1")
+		with (
+			patch("finbyzai.workflow_builder.external.external_actions_enabled", return_value=True),
+			patch("finbyzai.workflow_builder.external._require_consent") as require_consent,
+			patch("finbyzai.workflow_builder.external.resolve_email_content", return_value=content),
+			patch.object(frappe.db, "exists", return_value=True),
+			patch.object(frappe, "sendmail", return_value=queue) as sendmail,
+		):
+			result = queue_email(run, config, record={"lead_name": "Ada"}, outputs={})
+
+		require_consent.assert_not_called()
+		sendmail.assert_called_once_with(
+			recipients=["person@example.com"],
+			sender="Megasol <hello@example.com>",
+			reply_to="reply@example.com",
+			subject="Hello Ada",
+			content="<html><body>Welcome Ada</body></html>",
+			delayed=True,
+			reference_doctype="Lead",
+			reference_name="LEAD-1",
+			add_unsubscribe_link=1,
+			raw_html=True,
+			add_css=False,
+		)
+		self.assertEqual(
+			result,
+			{
+				"email_queue": "EMAIL-QUEUE-1",
+				"recipient": "person@example.com",
+				"sender": "Megasol <hello@example.com>",
+				"reply_to": "reply@example.com",
+				"email_template": "Lead welcome",
+				"content_hash": "content-123",
+			},
+		)
+
+	def test_email_action_rechecks_outgoing_sender_at_execution_time(self):
+		run = SimpleNamespace(record_doctype="Lead", record_name="LEAD-1")
+		config = {
+			"content_mode": "inline",
+			"recipient": {"kind": "literal", "value": "person@example.com"},
+			"sender_email": "disabled@example.com",
+		}
+		content = {
+			"subject": "Hello",
+			"message": "Body",
+			"raw_html": False,
+			"email_template": None,
+			"content_hash": None,
+		}
+		with (
+			patch("finbyzai.workflow_builder.external.external_actions_enabled", return_value=True),
+			patch("finbyzai.workflow_builder.external.resolve_email_content", return_value=content),
+			patch.object(frappe.db, "exists", return_value=False),
+			patch.object(frappe, "sendmail") as sendmail,
+			self.assertRaisesRegex(AutomationError, "enabled outgoing Email Account"),
+		):
+			queue_email(run, config, record={}, outputs={})
+		sendmail.assert_not_called()
+
 	def test_webhook_rate_limit_uses_one_atomic_redis_operation(self):
 		with patch.object(frappe.cache, "eval", return_value=3) as evaluate:
 			_consume_rate_limit("Provider A", 3)
@@ -58,7 +138,53 @@ class TestAutomationExternalSafety(IntegrationTestCase):
 
 	def test_consent_doctype_supports_every_external_channel(self):
 		options = set((frappe.get_meta("Automation Consent Record").get_field("channel").options or "").splitlines())
-		self.assertEqual(options, {"EMAIL", "SMS", "WEBHOOK"})
+		self.assertEqual(options, {"EMAIL", "SMS", "WEBHOOK", "INSTAGRAM"})
+
+	def test_instagram_action_builds_meta_payload_and_uses_instagram_consent(self):
+		run = SimpleNamespace(record_doctype="Lead", record_name="LEAD-1")
+		config = {
+			"integration_secret": "Meta",
+			"url": "https://graph.facebook.com/v23.0/me/messages",
+			"recipient_id": {"kind": "record_field", "field": "instagram_id"},
+			"message": {"kind": "literal", "value": "Hello from the workflow"},
+			"purpose": "support",
+			"require_consent": 1,
+		}
+		with patch("finbyzai.workflow_builder.external.send_webhook", return_value={"status_code": 200}) as webhook:
+			result = send_instagram_message(
+				run,
+				config,
+				record={"instagram_id": "17841400000000000"},
+				outputs={},
+				effect_key="instagram-effect",
+			)
+
+		forwarded = webhook.call_args.args[1]
+		self.assertEqual(forwarded["_consent_channel"], "INSTAGRAM")
+		self.assertEqual(forwarded["consent_recipient"], "17841400000000000")
+		self.assertEqual(
+			forwarded["payload"],
+			{"recipient": {"id": "17841400000000000"}, "message": {"text": "Hello from the workflow"}},
+		)
+		self.assertEqual(result["recipient_id"], "17841400000000000")
+
+	def test_asana_action_uses_installed_integration_and_returns_stable_output(self):
+		settings = SimpleNamespace(enabled=1, workspace_gid="workspace-1")
+		payload = {"name": "Follow up", "notes": "Created from FinbyzAI"}
+		response = {"gid": "task-1", "name": "Follow up", "permalink_url": "https://app.asana.com/0/task-1"}
+		with (
+			patch.object(frappe, "get_installed_apps", return_value=["asana_integration"]),
+			patch.object(frappe, "get_cached_doc", return_value=settings),
+			patch("asana_integration.client.create_task", return_value=response) as create_task,
+		):
+			result = execute_asana(
+				{"operation": "create_task", "payload": payload},
+				record={},
+				outputs={},
+			)
+
+		create_task.assert_called_once_with({**payload, "workspace": "workspace-1"})
+		self.assertEqual(result, {**response, "operation": "create_task"})
 
 	def test_webhook_response_is_bounded_and_connection_is_released(self):
 		response = Mock(status=200)

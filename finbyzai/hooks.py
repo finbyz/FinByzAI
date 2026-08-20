@@ -8,6 +8,8 @@ app_description = "AI-Powered Agents, Tools, and Knowledge Base Platform"
 app_email = "info@finbyz.tech"
 app_license = "gpl-3.0"
 
+on_session_creation = "finbyzai.workflow_builder.integrations.capture_customer_portal_login"
+
 # Includes in <head>
 # ------------------
 
@@ -149,6 +151,27 @@ doc_events = {
 		"after_insert": "finbyzai.workflow_builder.events.capture_after_insert",
 		"on_update": "finbyzai.workflow_builder.events.capture_on_update",
 	},
+	"Call Log": {
+		"after_insert": "finbyzai.workflow_builder.integrations.capture_aircall_inbound_call",
+		"on_update": "finbyzai.workflow_builder.integrations.capture_aircall_inbound_call",
+	},
+	"Email Group Member": {
+		"after_insert": "finbyzai.workflow_builder.integrations.capture_email_group_membership",
+		"on_update": "finbyzai.workflow_builder.integrations.capture_email_group_membership",
+	},
+	"Communication": {
+		"after_insert": "finbyzai.workflow_builder.integrations.capture_communication_event",
+		"on_update": "finbyzai.workflow_builder.integrations.capture_communication_event",
+	},
+	"Email Unsubscribe": {
+		"after_insert": "finbyzai.workflow_builder.integrations.capture_email_unsubscribe",
+	},
+	"Lead": {
+		"on_update": "finbyzai.workflow_builder.integrations.capture_lead_qualified",
+	},
+	"Sales Order": {
+		"after_insert": "finbyzai.workflow_builder.integrations.capture_sales_order_created",
+	},
 	"Web Page": {
 		"on_update": "finbyzai.ai.doctype.knowledge_base.knowledge_base.update_ai_links_on_route_change"
 	},
@@ -175,7 +198,11 @@ scheduler_events = {
 		"finbyzai.workflow_builder.bulk.dispatch_due_schedules",
 	],
 	"hourly": [
-		"finbyzai.ai.doctype.knowledge_base.knowledge_base.process_queued_knowledge_bases"
+		"finbyzai.ai.doctype.knowledge_base.knowledge_base.process_queued_knowledge_bases",
+		"finbyzai.workflow_builder.integrations.capture_abandoned_shopping_carts",
+	],
+	"daily": [
+		"finbyzai.workflow_builder.maintenance.purge_expired_execution_history"
 	],
 }
 

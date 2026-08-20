@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -10,8 +11,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import frappe
 from frappe import _
-from frappe.desk.form.assign_to import _add as add_assignment
-from frappe.utils import add_to_date, cint, get_system_timezone, now_datetime
+from frappe.desk.form.assign_to import _add as add_assignment, close_all_assignments
+from frappe.utils import add_to_date, cint, get_system_timezone, now_datetime, validate_email_address
 
 from .configuration import automation_enabled, int_setting, workflow_runtime_allowed
 from .constants import (
@@ -21,6 +22,7 @@ from .constants import (
 	MAX_SNAPSHOT_COLLECTION_ROWS,
 	RETRY_DELAYS_SECONDS,
 	RUN_TERMINAL_STATUSES,
+	TOKEN_TERMINAL_STATUSES,
 )
 from .errors import AutomationCancelledError, AutomationError, AutomationTransientError
 from .notifications import enqueue_notification_for_user
@@ -29,6 +31,9 @@ from .registry import assert_field_access, is_eligible_doctype
 from .schema import (
 	canonical_json,
 	condition_fields,
+	event_filter_matches,
+	event_wait_data_source,
+	event_wait_timeout_mode,
 	evaluate_expression,
 	parse_object,
 	resolve_value,
@@ -113,6 +118,120 @@ def _node_map(graph: dict) -> dict[str, dict]:
 	return {node["id"]: node for node in graph.get("nodes") or []}
 
 
+def _deduplicate_fields(node: dict) -> tuple[list[str], str]:
+	config = node.get("config") or {}
+	if cint(node.get("type_version") or 1) >= 2:
+		return [str(field) for field in config.get("match_fields") or [] if str(field or "").strip()], str(config.get("match_mode") or "all")
+	field = str(config.get("match_field") or "").strip()
+	return ([field] if field else []), "all"
+
+
+def _duplicate_filter(node: dict, record, values=None) -> tuple[dict, list[str]]:
+	fields, mode = _deduplicate_fields(node)
+	values = values or record
+	predicates = [{field: values.get(field)} for field in fields if values.get(field) not in (None, "")]
+	if not predicates or (mode == "all" and len(predicates) != len(fields)):
+		return {}, []
+	filters: dict[str, Any] = {"name": ("!=", record.name)}
+	if mode == "all":
+		for predicate in predicates:
+			filters.update(predicate)
+	else:
+		filters["or_filters"] = predicates
+	return filters, [next(iter(predicate)) for predicate in predicates]
+
+
+def _find_duplicate(node: dict, record, values=None):
+	filters, matched_fields = _duplicate_filter(node, record, values)
+	if not filters:
+		return None, []
+	or_filters = filters.pop("or_filters", None)
+	if not or_filters:
+		return frappe.db.exists(record.doctype, filters), matched_fields
+	rows = frappe.get_all(record.doctype, filters=filters, or_filters=or_filters, pluck="name", limit=1)
+	return (rows[0] if rows else None), matched_fields
+
+
+def _number(value: Any) -> float:
+	if isinstance(value, bool):
+		raise AutomationError(_("Boolean values cannot be converted to numbers."))
+	if isinstance(value, (int, float)):
+		return float(value)
+	text = str(value or "").strip().replace("\u00a0", "").replace(" ", "")
+	if not text:
+		raise AutomationError(_("A numeric transform input is empty."))
+	# Accept common 1,234.56 and 1.234,56 forms without depending on server locale.
+	if "," in text and "." in text:
+		decimal = "," if text.rfind(",") > text.rfind(".") else "."
+		thousands = "." if decimal == "," else ","
+		text = text.replace(thousands, "").replace(decimal, ".")
+	elif "," in text:
+		parts = text.split(",")
+		text = ".".join(parts) if len(parts[-1]) != 3 else "".join(parts)
+	text = re.sub(r"[^0-9+\-.]", "", text)
+	try:
+		return float(text)
+	except ValueError as exc:
+		raise AutomationError(_("Value {0} is not a number.").format(value)) from exc
+
+
+def _transform_output(config: dict, values: list[Any], *, seed: str) -> Any:
+	operation = str(config.get("operation") or "")
+	if operation == "coalesce":
+		return next((item for item in values if item not in (None, "")), None)
+	if operation == "concat":
+		return str(config.get("separator") or "").join("" if item is None else str(item) for item in values)
+	if operation == "upper":
+		return str(values[0] if values else "").upper()
+	if operation == "lower":
+		return str(values[0] if values else "").lower()
+	if operation == "parse_number":
+		return _number(values[0])
+	if operation == "format_number":
+		decimals = min(max(cint(config.get("decimals", 2)), 0), 12)
+		formatted = f"{_number(values[0]):,.{decimals}f}"
+		if not cint(config.get("use_grouping", 1)):
+			formatted = formatted.replace(",", "")
+		return formatted
+	if operation == "format_phone":
+		digits = re.sub(r"\D", "", str(values[0] if values else ""))
+		if not 3 <= len(digits) <= 15:
+			raise AutomationError(_("Phone transform requires between 3 and 15 digits."))
+		country_code = re.sub(r"\D", "", str(config.get("country_code") or ""))
+		if country_code and not str(values[0]).strip().startswith("+") and not digits.startswith(country_code):
+			digits = country_code + digits.lstrip("0")
+		return f"+{digits}"
+	if operation == "format_currency":
+		decimals = min(max(cint(config.get("decimals", 2)), 0), 12)
+		currency = str(config.get("currency") or "").strip()
+		return f"{currency} {_number(values[0]):,.{decimals}f}".strip()
+	if operation == "random_number":
+		minimum = float(config.get("minimum", 0))
+		maximum = float(config.get("maximum", 100))
+		fraction = int.from_bytes(hashlib.sha256(seed.encode()).digest()[:8], "big") / 2**64
+		value = minimum + fraction * (maximum - minimum)
+		return int(value) if cint(config.get("integer", 1)) else value
+	if operation == "math":
+		numbers = [_number(value) for value in values]
+		if not numbers:
+			raise AutomationError(_("Math transform needs at least one input."))
+		result = numbers[0]
+		for number in numbers[1:]:
+			math_operation = str(config.get("math_operation") or "add")
+			if math_operation == "add": result += number
+			elif math_operation == "subtract": result -= number
+			elif math_operation == "multiply": result *= number
+			elif math_operation == "divide":
+				if number == 0: raise AutomationError(_("Math transform cannot divide by zero."))
+				result /= number
+			elif math_operation == "modulo":
+				if number == 0: raise AutomationError(_("Math transform cannot divide by zero."))
+				result %= number
+			elif math_operation == "power": result **= number
+		return result
+	raise AutomationError(_("Unsupported transform operation."))
+
+
 def _record_key(doctype: str, name: str) -> str:
 	return f"{doctype}:{name}"
 
@@ -125,13 +244,14 @@ def _record_fields(graph: dict, settings: dict) -> set[str]:
 		config = node.get("config") or {}
 		field_by_type = {
 			"condition.switch": "field",
-			"condition.deduplicate": "match_field",
 			"delay.until_date": "field",
 			"transform.associated_record": "reference_field",
 			"transform.child_records": "child_table_field",
 		}.get(node.get("type"))
 		if field_by_type and config.get(field_by_type):
 			fields.add(str(config[field_by_type]))
+		if node.get("type") == "condition.deduplicate":
+			fields.update(_deduplicate_fields(node)[0])
 	stack: list[Any] = [node.get("config") or {} for node in graph.get("nodes") or []]
 	while stack:
 		value = stack.pop()
@@ -647,6 +767,52 @@ def _next_round_robin_member(run, node: dict, users: list[str]) -> str:
 	return users[index]
 
 
+def _reserve_drip_slot(run, node: dict, config: dict) -> dict:
+	"""Reserve one durable, transaction-locked batch slot for this node."""
+	cursor_key = hashlib.sha256(f"{run.workflow_version}\0{node['id']}\0drip".encode()).hexdigest()
+	cursor_table = frappe.qb.DocType("Automation Drip Cursor")
+	now = now_datetime()
+	(
+		frappe.qb.into(cursor_table)
+		.columns(
+			cursor_table.name,
+			cursor_table.creation,
+			cursor_table.modified,
+			cursor_table.modified_by,
+			cursor_table.owner,
+			cursor_table.docstatus,
+			cursor_table.idx,
+			cursor_table.cursor_key,
+			cursor_table.workflow_version,
+			cursor_table.node_id,
+			cursor_table.window_start,
+			cursor_table.issued,
+		)
+		.insert(
+			frappe.generate_hash(length=10), now, now, frappe.session.user, frappe.session.user,
+			0, 0, cursor_key, run.workflow_version, node["id"], now, 0,
+		)
+		.on_duplicate_key_update(cursor_table.cursor_key, cursor_key)
+	).run()
+	cursor_name = frappe.db.get_value("Automation Drip Cursor", {"cursor_key": cursor_key}, "name", for_update=True)
+	cursor = frappe.get_doc("Automation Drip Cursor", cursor_name)
+	window_start = frappe.utils.get_datetime(cursor.window_start)
+	batch_size = cint(config.get("batch_size"))
+	interval = cint(config.get("interval_seconds"))
+	if window_start <= now and (now - window_start).total_seconds() >= interval:
+		window_start = now
+		cursor.issued = 0
+	if cint(cursor.issued) >= batch_size:
+		window_start = max(window_start, now)
+		window_start = add_to_date(window_start, seconds=interval)
+		cursor.issued = 0
+	cursor.window_start = window_start
+	cursor.issued = cint(cursor.issued) + 1
+	position = cint(cursor.issued)
+	cursor.save(ignore_permissions=True)
+	return {"due_at": str(window_start), "batch_size": batch_size, "position": position, "released": window_start <= now}
+
+
 def _enabled_user_names(identifiers: list[str]) -> list[str]:
 	users: list[str] = []
 	seen: set[str] = set()
@@ -818,7 +984,7 @@ def _execute_action(run, token, node, record, value_record, outputs: dict[str, A
 		result = {"doctype": record.doctype, "name": record.name, "assigned_to": assigned_user, "group": group, "assignment_version": cint(node.get("type_version") or 1)}
 	elif node_type == "action.create_todo":
 		record.check_permission("read")
-		add_assignment(
+		assignments = add_assignment(
 			{
 				"assign_to": json.dumps([config.get("allocated_to")]),
 				"doctype": record.doctype,
@@ -829,29 +995,131 @@ def _execute_action(run, token, node, record, value_record, outputs: dict[str, A
 			},
 			ignore_permissions=False,
 		)
-		result = {"allocated_to": config.get("allocated_to")}
+		created_todo = next(
+			(
+				row
+				for row in (assignments or [])
+				if row.get("owner") == config.get("allocated_to") and row.get("name")
+			),
+			None,
+		)
+		if not created_todo:
+			raise AutomationError(_("Frappe did not return the created ToDo."))
+		result = {
+			"doctype": "ToDo",
+			"name": created_todo.name,
+			"allocated_to": config.get("allocated_to"),
+		}
 	elif node_type == "action.add_comment":
 		record.check_permission("write")
 		comment = record.add_comment("Comment", text=str(config.get("content") or ""))
 		result = {"comment": comment.name if comment else None}
+	elif node_type == "action.create_note":
+		record.check_permission("read")
+		note = frappe.get_doc(
+			{
+				"doctype": "Note",
+				"title": str(config.get("title") or "")[:140],
+				"content": f"{str(config.get('content') or '')}<p><a href=\"/app/{frappe.scrub(record.doctype).replace('_', '-')}/{record.name}\">{record.doctype} {record.name}</a></p>",
+			}
+		).insert()
+		result = {"note": note.name}
+	elif node_type == "action.copy_record":
+		record.check_permission("read")
+		if not frappe.has_permission(record.doctype, ptype="create"):
+			raise frappe.PermissionError
+		copied = frappe.copy_doc(record)
+		copied.flags.ignore_links = False
+		copied.insert()
+		result = {"doctype": copied.doctype, "name": copied.name}
+	elif node_type == "action.merge_contact":
+		if record.doctype != "Contact":
+			raise AutomationError(_("Merge contact can only run in a Contact workflow."))
+		record.check_permission("write")
+		fields = [str(field) for field in config.get("match_fields") or []]
+		predicates = [{field: value_record.get(field)} for field in fields if value_record.get(field) not in (None, "")]
+		if not predicates or (config.get("match_mode", "all") == "all" and len(predicates) != len(fields)):
+			raise AutomationError(_("The enrolled Contact has no complete merge identity."))
+		filters = {"name": ("!=", record.name)}
+		or_filters = None
+		if config.get("match_mode", "all") == "all":
+			for predicate in predicates:
+				filters.update(predicate)
+		else:
+			or_filters = predicates
+		matches = frappe.get_all("Contact", filters=filters, or_filters=or_filters, pluck="name", order_by="creation asc", limit=2)
+		if not matches:
+			raise AutomationError(_("No canonical Contact matches the configured identity fields."))
+		if len(matches) > 1:
+			raise AutomationError(_("More than one canonical Contact matches; resolve ambiguity before merging."))
+		canonical = matches[0]
+		frappe.get_doc("Contact", canonical).check_permission("write")
+		frappe.rename_doc("Contact", record.name, canonical, merge=True)
+		result = {"canonical_contact": canonical, "merged_contact": record.name, "matched_fields": [next(iter(item)) for item in predicates], "deleted": True}
+	elif node_type == "action.unassign_record":
+		record.check_permission("write")
+		open_count = frappe.db.count("ToDo", {"reference_type": record.doctype, "reference_name": record.name, "status": "Open"})
+		close_all_assignments(record.doctype, record.name)
+		result = {"closed_assignments": open_count}
+	elif node_type == "action.verify_email":
+		record.check_permission("read")
+		email = str(resolve_value(config.get("email"), record=value_record, outputs=outputs) or "").strip()
+		valid = bool(validate_email_address(email, throw=False))
+		result = {"email": email, "valid": valid, "reason": None if valid else "INVALID_FORMAT"}
+	elif node_type == "action.mark_communications_read":
+		record.check_permission("write")
+		updated = frappe.db.count("Communication", {"reference_doctype": record.doctype, "reference_name": record.name, "sent_or_received": "Received", "seen": 0})
+		frappe.db.set_value("Communication", {"reference_doctype": record.doctype, "reference_name": record.name, "sent_or_received": "Received", "seen": 0}, {"seen": 1, "unread_notification_sent": 1}, update_modified=False)
+		result = {"updated": updated}
+	elif node_type == "action.remove_from_workflow":
+		record.check_permission("read")
+		target = str(config.get("target_workflow") or "current")
+		target_workflow = run.workflow if target == "current" else target
+		if not frappe.db.exists("Automation Workflow", {"name": target_workflow, "primary_doctype": record.doctype}):
+			raise AutomationError(_("Target workflow does not exist for this record type."))
+		other_runs = frappe.get_all(
+			"Automation Run",
+			filters={"workflow": target_workflow, "record_doctype": record.doctype, "record_name": record.name, "status": ["not in", list(RUN_TERMINAL_STATUSES)], "name": ("!=", run.name)},
+			pluck="name",
+			limit=500,
+		)
+		for other_run in other_runs:
+			frappe.db.set_value("Automation Timer", {"run": other_run, "status": "ACTIVE"}, "status", "CANCELLED", update_modified=False)
+			frappe.db.set_value("Automation Run Token", {"run": other_run, "status": ["not in", list(TOKEN_TERMINAL_STATUSES) + ["RUNNING"]]}, "status", "CANCELLED", update_modified=False)
+			frappe.db.set_value("Automation Run", other_run, {"status": "CANCELLED", "completed_at": now_datetime(), "error_code": "REMOVED_BY_WORKFLOW"}, update_modified=False)
+		result = {"cancelled_runs": len(other_runs), "target_workflow": target_workflow, "terminate_path": target_workflow == run.workflow}
+	elif node_type == "action.complete_goal":
+		record.check_permission("read")
+		result = {"goal": str(config.get("goal") or "Goal reached")[:140], "terminate_path": True}
+	elif node_type == "action.go_to":
+		record.check_permission("read")
+		result = {"target_node_id": str(config.get("target_node_id") or "")}
 	elif node_type == "action.notify_user":
 		record.check_permission("read")
-		recipient = config.get("for_user")
-		if not enqueue_notification_for_user(
-			recipient,
-			{
+		audience = str(config.get("audience") or "specific")
+		if audience == "assigned":
+			recipients = frappe.get_all("ToDo", filters={"reference_type": record.doctype, "reference_name": record.name, "status": "Open"}, pluck="allocated_to", limit=500)
+		elif audience == "all":
+			recipients = frappe.get_all("User", filters={"enabled": 1, "user_type": "System User"}, pluck="name", limit=500)
+		else:
+			recipients = [config.get("for_user")]
+		recipients = _enabled_user_names(recipients)
+		if not recipients:
+			raise AutomationError(_("The notification audience contains no enabled users."))
+		sent = []
+		for recipient in recipients:
+			if enqueue_notification_for_user(recipient, {
 				"type": "Alert",
 				"subject": str(config.get("subject") or _("Workflow notification")),
 				"email_content": str(config.get("message") or ""),
 				"document_type": record.doctype,
 				"document_name": record.name,
 				"from_user": frappe.session.user,
-			},
-		):
-			raise AutomationError(
-				_("Notification recipient is disabled, missing, or has no email address.")
-			)
-		result = {"for_user": recipient}
+			}):
+				sent.append(recipient)
+		if not sent:
+			raise AutomationError(_("Notification recipients are disabled, missing, or have no email address."))
+		result = {"for_user": sent[0] if len(sent) == 1 else None, "recipients": sent, "recipient_count": len(sent)}
 	else:
 		raise AutomationError(_("Unsupported action node."))
 	ledger.status = "COMPLETED"
@@ -925,14 +1193,82 @@ def _business_hours_state(config: dict, server_now: datetime | None = None) -> d
 	return {"released": False, "due_at": str(due_at), "timezone": tz_name}
 
 
+def _hold_for_execution_window(run, token, node: dict, graph: dict, settings: dict) -> bool:
+	"""Durably postpone action nodes outside the workflow-wide execution window."""
+	window = settings.get("execution_window")
+	if not node.get("type", "").startswith("action.") or not isinstance(window, dict) or not window.get("enabled"):
+		return False
+	current = json.loads(token.output_json or "{}")
+	if current.get("execution_window") and current.get("released"):
+		return False
+	state = _business_hours_state(window)
+	if state["released"]:
+		return False
+	frappe.get_doc(
+		{
+			"doctype": "Automation Timer",
+			"run": run.name,
+			"token": token.name,
+			"node_id": node["id"],
+			"timer_type": "DELAY",
+			"due_at": state["due_at"],
+			"status": "ACTIVE",
+		}
+	).insert(ignore_permissions=True)
+	_finish_or_continue(
+		run,
+		token,
+		graph,
+		{"status": "WAIT_TIMER", "output": {**state, "execution_window": True}},
+	)
+	return True
+
+
 def _execute_node(run, token, node, record, value_record, outputs: dict[str, Any]) -> dict:
 	node_type = node["type"]
 	config = node.get("config") or {}
 	if node_type.startswith("trigger.") or node_type == "end.complete":
 		return {"status": "COMPLETE", "output": {}}
 	if node_type == "condition.if_else":
+		if cint(node.get("type_version") or 1) >= 2:
+			matched_handle = "none"
+			branch_name = "None"
+			for branch in config.get("branches") or []:
+				if not isinstance(branch, dict) or not evaluate_expression(branch.get("condition"), value_record):
+					continue
+				matched_handle = str(branch.get("handle") or "")
+				branch_name = str(branch.get("name") or matched_handle)
+				break
+			matched = matched_handle != "none"
+			return {
+				"status": "COMPLETE",
+				"output": {"matched": matched, "selected_handle": matched_handle, "branch_name": branch_name},
+				"handle": matched_handle,
+			}
 		matched = evaluate_expression(config.get("condition"), value_record)
-		return {"status": "COMPLETE", "output": {"matched": matched}, "handle": "true" if matched else "false"}
+		handle = "true" if matched else "false"
+		return {
+			"status": "COMPLETE",
+			"output": {"matched": matched, "selected_handle": handle, "branch_name": "Yes" if matched else "No"},
+			"handle": handle,
+		}
+	if node_type == "condition.random_split":
+		branches = [branch for branch in config.get("branches") or [] if isinstance(branch, dict)]
+		seed = f"{run.name}\0{node['id']}\0{getattr(token, 'occurrence', 0)}".encode()
+		bucket = int.from_bytes(hashlib.sha256(seed).digest()[:8], "big") / 2**64 * 100
+		cumulative = 0.0
+		selected = branches[-1] if branches else {}
+		for branch in branches:
+			cumulative += float(branch.get("percentage") or 0)
+			if bucket < cumulative:
+				selected = branch
+				break
+		handle = str(selected.get("handle") or "")
+		return {
+			"status": "COMPLETE",
+			"output": {"selected_handle": handle, "branch_name": str(selected.get("name") or handle), "bucket": round(bucket, 6)},
+			"handle": handle,
+		}
 	if node_type == "condition.switch":
 		field = str(config.get("field") or "")
 		raw_value = value_record.get(field)
@@ -944,15 +1280,11 @@ def _execute_node(run, token, node, record, value_record, outputs: dict[str, Any
 				break
 		return {"status": "COMPLETE", "output": {"value": value, "matched_handle": matched_handle}, "handle": matched_handle}
 	if node_type == "condition.deduplicate":
-		match_field = str(config.get("match_field") or "")
-		value = value_record.get(match_field)
-		if value is None or value == "":
-			return {"status": "COMPLETE", "output": {"duplicate_name": None, "is_duplicate": False}, "handle": "unique"}
-		exists = frappe.db.exists(record.doctype, {match_field: value, "name": ("!=", record.name)})
+		exists, matched_fields = _find_duplicate(node, record, value_record)
 		is_duplicate = bool(exists)
 		return {
 			"status": "COMPLETE",
-			"output": {"duplicate_name": exists if is_duplicate else None, "is_duplicate": is_duplicate},
+			"output": {"duplicate_name": exists if is_duplicate else None, "is_duplicate": is_duplicate, "matched_fields": matched_fields},
 			"handle": "duplicate" if is_duplicate else "unique",
 		}
 	if node_type == "delay.fixed":
@@ -972,38 +1304,89 @@ def _execute_node(run, token, node, record, value_record, outputs: dict[str, Any
 			}
 		).insert(ignore_permissions=True)
 		return {"status": "WAIT_TIMER", "output": {"due_at": str(due_at)}}
+	if node_type == "delay.drip":
+		current = json.loads(token.output_json or "{}")
+		if current.get("released"):
+			return {"status": "COMPLETE", "output": current}
+		state = _reserve_drip_slot(run, node, config)
+		if state["released"]:
+			return {"status": "COMPLETE", "output": state}
+		frappe.get_doc({"doctype": "Automation Timer", "run": run.name, "token": token.name, "node_id": node["id"], "timer_type": "DELAY", "due_at": state["due_at"], "status": "ACTIVE"}).insert(ignore_permissions=True)
+		return {"status": "WAIT_TIMER", "output": state}
 	if node_type == "delay.until_date":
 		current = json.loads(token.output_json or "{}")
 		if current.get("released"):
 			return {"status": "COMPLETE", "output": current}
-		fieldname = str(config.get("field") or "")
-		assert_field_access(record.doctype, fieldname, permission_type="read", user=frappe.session.user, capability="scalar_read")
-		due_value = value_record.get(fieldname)
-		if due_value in (None, ""):
-			raise AutomationError(_("Wait-until field {0} has no date value.").format(fieldname))
+		mode = str(config.get("mode") or ("literal" if config.get("datetime") else "field"))
+		if mode == "literal":
+			due_value = config.get("datetime")
+			source = {"mode": "literal"}
+		else:
+			fieldname = str(config.get("field") or "")
+			assert_field_access(record.doctype, fieldname, permission_type="read", user=frappe.session.user, capability="scalar_read")
+			due_value = value_record.get(fieldname)
+			source = {"mode": "field", "field": fieldname}
+			if due_value in (None, ""):
+				raise AutomationError(_("Wait-until field {0} has no date value.").format(fieldname))
 		due_at = frappe.utils.get_datetime(due_value)
 		if due_at <= now_datetime():
-			return {"status": "COMPLETE", "output": {"due_at": str(due_at), "released": True}}
+			return {"status": "COMPLETE", "output": {"due_at": str(due_at), "released": True, **source}}
 		frappe.get_doc({"doctype": "Automation Timer", "run": run.name, "token": token.name, "node_id": node["id"], "timer_type": "DELAY", "due_at": due_at, "status": "ACTIVE"}).insert(ignore_permissions=True)
-		return {"status": "WAIT_TIMER", "output": {"due_at": str(due_at)}}
+		return {"status": "WAIT_TIMER", "output": {"due_at": str(due_at), **source}}
 	if node_type == "delay.until_event":
 		current = json.loads(token.output_json or "{}")
 		if current.get("released"):
-			return {"status": "COMPLETE", "output": current, "handle": current.get("matched_handle", "timeout")}
-		due_at = add_to_date(now_datetime(), seconds=cint(config.get("timeout_seconds") or 86400))
+			matched_handle = current.get("matched_handle", "timeout")
+			handle = matched_handle if cint(node.get("type_version") or 1) < 2 or cint(config.get("branch_on_timeout")) else "default"
+			return {"status": "COMPLETE", "output": current, "handle": handle}
+		data_source = event_wait_data_source(config)
+		if data_source == "action_output":
+			event_source = config.get("event_source")
+			event_source_id = resolve_value(event_source, record=value_record, outputs=outputs)
+			event_source_doctype = resolve_value(
+				config.get("event_source_doctype"), record=value_record, outputs=outputs
+			) or ("Email Queue" if (event_source or {}).get("path") == "email_queue" else None)
+			if not event_source_id or not event_source_doctype:
+				raise AutomationError(_("The selected earlier action did not produce a usable event source."))
+			if not frappe.db.exists(str(event_source_doctype), str(event_source_id)):
+				raise AutomationError(_("The record produced by the selected earlier action no longer exists."))
+			event_source_type = "ACTION_EMAIL" if event_source_doctype == "Email Queue" else "ACTION_RECORD"
+		else:
+			event_source_id = run.record_name
+			event_source_doctype = run.record_doctype
+			event_source_type = "ENROLLED_RECORD"
+		timeout_mode = event_wait_timeout_mode(config)
+		wait_indefinitely = timeout_mode == "indefinite"
+		due_at = None if wait_indefinitely else add_to_date(
+			now_datetime(), seconds=cint(config.get("timeout_seconds") or 86400)
+		)
 		frappe.get_doc(
 			{
 				"doctype": "Automation Timer",
 				"run": run.name,
 				"token": token.name,
-					"node_id": node["id"],
-					"timer_type": "TIMEOUT",
-					"event_topic": str(config.get("event_topic") or "").strip(),
-					"due_at": due_at,
+				"node_id": node["id"],
+				"timer_type": "EVENT_WAIT" if wait_indefinitely else "TIMEOUT",
+				"event_topic": str(config.get("event_topic") or "").strip(),
+				"record_doctype": run.record_doctype,
+				"record_name": run.record_name,
+				"source_type": event_source_type,
+				"source_doctype": event_source_doctype,
+				"source_name": event_source_id,
+				"due_at": due_at,
 				"status": "ACTIVE",
 			}
 		).insert(ignore_permissions=True)
-		return {"status": "WAIT_TIMER", "output": {"due_at": str(due_at)}}
+		return {
+			"status": "WAIT_TIMER",
+			"output": {
+				"due_at": str(due_at) if due_at else None,
+				"event_source_id": event_source_id,
+				"event_source_doctype": event_source_doctype,
+				"event_source_type": event_source_type,
+				"wait_indefinitely": wait_indefinitely,
+			},
+		}
 	if node_type == "delay.business_hours":
 		current = json.loads(token.output_json or "{}")
 		if current.get("released"):
@@ -1015,17 +1398,7 @@ def _execute_node(run, token, node, record, value_record, outputs: dict[str, Any
 		return {"status": "WAIT_TIMER", "output": state}
 	if node_type == "transform.value":
 		values = [resolve_value(value, record=value_record, outputs=outputs) for value in (config.get("values") or [])]
-		operation = config.get("operation")
-		if operation == "coalesce":
-			value = next((item for item in values if item not in (None, "")), None)
-		elif operation == "concat":
-			value = str(config.get("separator") or "").join("" if item is None else str(item) for item in values)
-		elif operation == "upper":
-			value = str(values[0] if values else "").upper()
-		elif operation == "lower":
-			value = str(values[0] if values else "").lower()
-		else:
-			raise AutomationError(_("Unsupported transform operation."))
+		value = _transform_output(config, values, seed=f"{run.name}\0{node['id']}\0{getattr(token, 'occurrence', 0)}")
 		return {"status": "COMPLETE", "output": {"value": value}}
 	if node_type == "transform.associated_record":
 		reference_field = str(config.get("reference_field") or "")
@@ -1151,7 +1524,9 @@ def _finish_or_continue(run, token, graph: dict, result: dict) -> None:
 	token.save(ignore_permissions=True)
 	_append_event(run.name, "NODE_COMPLETED", node_id=token.node_id, payload=result.get("output"))
 	record_deleted = bool((result.get("output") or {}).get("deleted"))
-	next_nodes = [] if record_deleted else _next_nodes(graph, token.node_id, result.get("handle"))
+	terminate_path = bool((result.get("output") or {}).get("terminate_path"))
+	go_to_target = str((result.get("output") or {}).get("target_node_id") or "").strip()
+	next_nodes = [] if record_deleted or terminate_path else ([go_to_target] if go_to_target else _next_nodes(graph, token.node_id, result.get("handle")))
 	if not next_nodes:
 		run.status = "COMPLETED"
 		run.completed_at = now_datetime()
@@ -1688,6 +2063,20 @@ def execute_token(token_name: str) -> None:
 			message=f"Workflow runtime preflight failed: {exc}",
 		)
 		return
+	try:
+		settings = parse_object(version.settings_json or {}, "workflow settings")
+		if _hold_for_execution_window(run, token, node, graph, settings):
+			return
+	except frappe.db.InternalError:
+		raise
+	except Exception as exc:
+		_fail_unexecutable_token(
+			run,
+			token,
+			error_code=getattr(exc, "code", "EXECUTION_WINDOW_FAILED"),
+			message=f"Workflow action-window check failed: {exc}",
+		)
+		return
 	token.status = "RUNNING"
 	token.attempts = cint(token.attempts) + 1
 	token.lease_owner = getattr(frappe.local, "request_ip", None) or "worker"
@@ -1797,6 +2186,7 @@ def execute_external_effect(ledger_name: str, token_name: str) -> None:
 				record=value_record,
 				outputs=_completed_outputs(run.name),
 				effect_key=ledger.effect_key,
+				workflow_settings=parse_object(version.settings_json or {}, "workflow settings"),
 			)
 	except Exception as exc:
 		from .external import AutomationUnknownCommitError
@@ -1905,6 +2295,8 @@ def release_event_waiters(
 	*,
 	record_doctype: str | None = None,
 	record_name: str | None = None,
+	source_doctype: str | None = None,
+	source_name: str | None = None,
 	limit: int = 500,
 ) -> int:
 	"""Release durable event waits. Call this after the source transaction commits."""
@@ -1913,20 +2305,53 @@ def release_event_waiters(
 		raise AutomationError(_("Event topic is required."))
 	if payload is not None and not isinstance(payload, dict):
 		raise AutomationError(_("Event payload must be a JSON object."))
-	rows = frappe.db.get_values(
-		"Automation Timer",
-		filters={"status": "ACTIVE", "timer_type": "TIMEOUT", "event_topic": event_topic},
-		fieldname=["name"],
-		as_dict=True,
-		order_by="creation asc",
-		limit=min(max(cint(limit), 1), 500),
-		for_update=True,
-		skip_locked=True,
-	)
+	row_limit = min(max(cint(limit), 1), 500)
+	timer_names: list[str] = []
+
+	def add_candidates(filters: dict) -> None:
+		for name in frappe.get_all(
+			"Automation Timer",
+			filters={
+				"status": "ACTIVE",
+				"timer_type": ["in", ["TIMEOUT", "EVENT_WAIT"]],
+				"event_topic": event_topic,
+				**filters,
+			},
+			pluck="name",
+			order_by="creation asc",
+			limit=row_limit,
+		):
+			if name not in timer_names:
+				timer_names.append(name)
+
+	if record_doctype and record_name:
+		add_candidates(
+			{
+				"record_doctype": record_doctype,
+				"record_name": record_name,
+				"source_type": "ENROLLED_RECORD",
+			}
+		)
+	if source_doctype and source_name:
+		add_candidates(
+			{
+				"source_doctype": source_doctype,
+				"source_name": source_name,
+				"source_type": ["in", ["ACTION_EMAIL", "ACTION_RECORD"]],
+			}
+		)
+	if not (record_doctype and record_name) and not (source_doctype and source_name):
+		# Backward-compatible integration boundary: callers that can only provide
+		# an event payload still scan the indexed topic, never an unrelated global
+		# timer window. Source IDs in token state remain authoritative below.
+		add_candidates({})
+	# Active timers created before source indexing was introduced remain
+	# releasable until the migration backfill has visited them.
+	add_candidates({"record_doctype": ["is", "not set"]})
 	released = 0
-	for row in rows:
-		timer = frappe.get_doc("Automation Timer", row.name, for_update=True)
-		if timer.status != "ACTIVE" or timer.timer_type != "TIMEOUT":
+	for timer_name in timer_names:
+		timer = frappe.get_doc("Automation Timer", timer_name, for_update=True)
+		if timer.status != "ACTIVE" or timer.timer_type not in {"TIMEOUT", "EVENT_WAIT"}:
 			continue
 		run = frappe.get_doc("Automation Run", timer.run)
 		if record_doctype and run.record_doctype != record_doctype:
@@ -1941,9 +2366,31 @@ def release_event_waiters(
 			continue
 		if str((node.get("config") or {}).get("event_topic") or "").strip() != event_topic:
 			continue
+		if not event_filter_matches((node.get("config") or {}).get("event_filter"), payload):
+			continue
 		token = frappe.get_doc("Automation Run Token", timer.token, for_update=True)
 		if token.status != "WAITING":
 			continue
+		waiting_state = json.loads(token.output_json or "{}")
+		expected_source = waiting_state.get("event_source_id")
+		if expected_source and waiting_state.get("event_source_type") != "ENROLLED_RECORD":
+			payload_source = source_name or (payload or {}).get("email_queue") or (payload or {}).get("email_id") or (payload or {}).get("message_id")
+			if str(payload_source or "") != str(expected_source):
+				continue
+		outcome_time = now_datetime()
+		if (payload or {}).get("occurred_at"):
+			try:
+				occurred_at = frappe.utils.get_datetime((payload or {}).get("occurred_at"))
+				timer_created_at = frappe.utils.get_datetime(timer.creation)
+				if timer_created_at <= occurred_at <= outcome_time:
+					outcome_time = occurred_at
+			except (TypeError, ValueError):
+				pass
+		timed_out = bool(
+			timer.timer_type == "TIMEOUT"
+			and timer.due_at
+			and frappe.utils.get_datetime(timer.due_at) <= outcome_time
+		)
 		timer.status = "RELEASED"
 		timer.released_at = now_datetime()
 		timer.save(ignore_permissions=True)
@@ -1951,13 +2398,22 @@ def release_event_waiters(
 		token.available_at = now_datetime()
 		token.lease_owner = None
 		token.lease_until = None
-		token.output_json = json.dumps(
-			{"released": True, "event_payload": payload or {}, "timed_out": False, "matched_handle": "event"}
-		)
+		token.output_json = json.dumps({
+			**waiting_state,
+			"released": True,
+			"event_payload": None if timed_out else payload or {},
+			"timed_out": timed_out,
+			"matched_handle": "timeout" if timed_out else "event",
+		})
 		token.save(ignore_permissions=True)
 		run.status = "QUEUED"
 		run.save(ignore_permissions=True)
-		_append_event(run.name, "EVENT_WAIT_RELEASED", node_id=token.node_id, payload={"event_topic": event_topic})
+		_append_event(
+			run.name,
+			"TIMER_RELEASED" if timed_out else "EVENT_WAIT_RELEASED",
+			node_id=token.node_id,
+			payload={"event_topic": event_topic, "outcome": "timeout" if timed_out else "event"},
+		)
 		_queue_token(token.name)
 		released += 1
 	return released
@@ -2048,6 +2504,63 @@ def cancel_run_record(run_name: str) -> dict:
 	_append_event(run.name, "RUN_CANCELLED")
 	_resolve_subflow_if_any(run)
 	return {"run_id": run.name, "status": run.status}
+
+
+def apply_response_policy(record_doctype: str, record_name: str, payload: dict | None = None) -> int:
+	"""Unenroll active runs whose pinned communication policy stops on reply."""
+	rows = frappe.get_all(
+		"Automation Run",
+		filters={
+			"record_doctype": record_doctype,
+			"record_name": record_name,
+			"status": ["not in", list(RUN_TERMINAL_STATUSES)],
+		},
+		fields=["name", "workflow", "workflow_version"],
+		limit=500,
+	)
+	stopped = 0
+	mark_read = False
+	for row in rows:
+		version = frappe.get_doc("Automation Workflow Version", row.workflow_version)
+		communication = parse_object(version.settings_json or {}, "workflow settings").get("communication") or {}
+		mark_read = mark_read or bool(cint(communication.get("mark_responses_read")))
+		if not cint(communication.get("stop_on_response")):
+			continue
+		run = frappe.get_doc("Automation Run", row.name, for_update=True)
+		if run.status in RUN_TERMINAL_STATUSES:
+			continue
+		frappe.db.set_value(
+			"Automation Timer",
+			{"run": run.name, "status": "ACTIVE"},
+			"status",
+			"CANCELLED",
+			update_modified=False,
+		)
+		frappe.db.set_value(
+			"Automation Run Token",
+			{"run": run.name, "status": ["not in", list(TOKEN_TERMINAL_STATUSES) + ["RUNNING"]]},
+			"status",
+			"CANCELLED",
+			update_modified=False,
+		)
+		run.status = "CANCELLED"
+		run.completed_at = now_datetime()
+		run.error_code = "RESPONSE_RECEIVED"
+		run.error_message = _("Workflow stopped because the enrolled record responded.")
+		run.save(ignore_permissions=True)
+		_append_event(run.name, "RUN_STOPPED_ON_RESPONSE", payload=payload or {})
+		increment_metric(run.workflow, run.workflow_version, "cancelled_runs")
+		_resolve_subflow_if_any(run)
+		stopped += 1
+	communication_name = str((payload or {}).get("communication") or "")
+	if mark_read and communication_name and frappe.db.exists("Communication", communication_name):
+		frappe.db.set_value(
+			"Communication",
+			communication_name,
+			{"seen": 1, "unread_notification_sent": 1},
+			update_modified=False,
+		)
+	return stopped
 
 
 def retry_run_record(run_name: str) -> dict:
@@ -2238,9 +2751,33 @@ def simulate_graph(graph: dict, record, *, start_node_id: str | None = None, exe
 		}
 		handle = None
 		if node["type"] == "condition.if_else":
-			matched = evaluate_expression(config.get("condition"), record)
-			handle = "true" if matched else "false"
-			entry["output"] = {"matched": matched, "selected_handle": handle}
+			if cint(node.get("type_version") or 1) >= 2:
+				handle = "none"
+				branch_name = "None"
+				for branch in config.get("branches") or []:
+					if isinstance(branch, dict) and evaluate_expression(branch.get("condition"), record):
+						handle = str(branch.get("handle") or "")
+						branch_name = str(branch.get("name") or handle)
+						break
+				entry["output"] = {"matched": handle != "none", "selected_handle": handle, "branch_name": branch_name}
+			else:
+				matched = evaluate_expression(config.get("condition"), record)
+				handle = "true" if matched else "false"
+				entry["output"] = {"matched": matched, "selected_handle": handle, "branch_name": "Yes" if matched else "No"}
+		elif node["type"] == "condition.random_split":
+			branches = [branch for branch in config.get("branches") or [] if isinstance(branch, dict)]
+			# Simulations are intentionally stable for the same record and node.
+			seed = f"simulation\0{record.doctype}\0{record.name}\0{current}".encode()
+			bucket = int.from_bytes(hashlib.sha256(seed).digest()[:8], "big") / 2**64 * 100
+			cumulative = 0.0
+			selected = branches[-1] if branches else {}
+			for branch in branches:
+				cumulative += float(branch.get("percentage") or 0)
+				if bucket < cumulative:
+					selected = branch
+					break
+			handle = str(selected.get("handle") or "")
+			entry["output"] = {"selected_handle": handle, "branch_name": str(selected.get("name") or handle), "bucket": round(bucket, 6)}
 		elif node["type"] == "condition.switch":
 			field = str(config.get("field") or "")
 			raw_value = record.get(field)
@@ -2252,45 +2789,68 @@ def simulate_graph(graph: dict, record, *, start_node_id: str | None = None, exe
 					break
 			entry["output"] = {"value": value, "matched_handle": handle}
 		elif node["type"] == "condition.deduplicate":
-			match_field = str(config.get("match_field") or "")
-			value = record.get(match_field)
-			duplicate = frappe.db.exists(record.doctype, {match_field: value, "name": ("!=", record.name)}) if value is not None and value != "" else None
+			duplicate, matched_fields = _find_duplicate(node, record)
 			handle = "duplicate" if duplicate else "unique"
-			entry["output"] = {"duplicate_name": duplicate, "is_duplicate": bool(duplicate), "selected_handle": handle}
+			entry["output"] = {"duplicate_name": duplicate, "is_duplicate": bool(duplicate), "matched_fields": matched_fields, "selected_handle": handle}
 		elif node["type"] == "delay.fixed":
 			entry["status"] = "PREDICTED"
 			entry["confidence"] = "predicted"
 			entry["output"] = {"delay_seconds": cint(config.get("seconds")), "due_at": str(add_to_date(now_datetime(), seconds=cint(config.get("seconds")))), "released": False}
+		elif node["type"] == "delay.drip":
+			entry["status"] = "PREDICTED"
+			entry["confidence"] = "predicted"
+			entry["output"] = {"batch_size": cint(config.get("batch_size")), "interval_seconds": cint(config.get("interval_seconds")), "released": False}
 		elif node["type"] == "delay.until_date":
-			fieldname = str(config.get("field") or "")
-			due_value = record.get(fieldname)
-			if due_value in (None, ""):
-				entry["status"] = "FAILED"
-				entry["note"] = _("Wait-until field {0} has no date value.").format(fieldname)
-				outputs[current] = entry["output"]
-				path.append(entry)
-				return {"path": path, "mutated": False, "completed": False}
+			mode = str(config.get("mode") or ("literal" if config.get("datetime") else "field"))
+			if mode == "literal":
+				due_value = config.get("datetime")
+				source = {"mode": "literal"}
+			else:
+				fieldname = str(config.get("field") or "")
+				due_value = record.get(fieldname)
+				source = {"mode": "field", "field": fieldname}
+				if due_value in (None, ""):
+					entry["status"] = "FAILED"
+					entry["note"] = _("Wait-until field {0} has no date value.").format(fieldname)
+					outputs[current] = entry["output"]
+					path.append(entry)
+					return {"path": path, "mutated": False, "completed": False}
 			due_at = frappe.utils.get_datetime(due_value)
-			entry["output"] = {"field": fieldname, "due_at": str(due_at), "released": due_at <= now_datetime()}
+			entry["output"] = {**source, "due_at": str(due_at), "released": due_at <= now_datetime()}
 		elif node["type"] == "delay.until_event":
 			entry["status"] = "PREDICTED"
 			entry["confidence"] = "predicted"
-			entry["output"] = {"event_payload": {}, "timed_out": False, "released": False, "matched_handle": None}
+			event_source = config.get("event_source")
+			data_source = event_wait_data_source(config)
+			if data_source == "action_output":
+				source_id = resolve_value(event_source, record=record, outputs=outputs) if event_source else None
+				source_doctype = resolve_value(config.get("event_source_doctype"), record=record, outputs=outputs) if config.get("event_source_doctype") else None
+				if not source_doctype and isinstance(event_source, dict) and event_source.get("path") == "email_queue":
+					source_doctype = "Email Queue"
+				source_type = "ACTION_EMAIL" if source_doctype == "Email Queue" else "ACTION_RECORD"
+			else:
+				source_id = record.name
+				source_doctype = record.doctype
+				source_type = "ENROLLED_RECORD"
+			wait_indefinitely = event_wait_timeout_mode(config) == "indefinite"
+			entry["output"] = {
+				"event_payload": {},
+				"timed_out": False,
+				"released": False,
+				"matched_handle": None,
+				"event_source_id": source_id,
+				"event_source_doctype": source_doctype,
+				"event_source_type": source_type,
+				"wait_indefinitely": wait_indefinitely,
+				"due_at": None if wait_indefinitely else str(add_to_date(now_datetime(), seconds=cint(config.get("timeout_seconds") or 86400))),
+			}
 		elif node["type"] == "delay.business_hours":
 			entry["output"] = _business_hours_state(config)
 			entry["status"] = "OBSERVED" if entry["output"]["released"] else "PREDICTED"
 			entry["confidence"] = "observed" if entry["output"]["released"] else "predicted"
 		elif node["type"] == "transform.value":
 			values = [resolve_value(value, record=record, outputs=outputs) for value in (config.get("values") or [])]
-			operation = config.get("operation")
-			if operation == "coalesce":
-				value = next((item for item in values if item not in (None, "")), None)
-			elif operation == "concat":
-				value = str(config.get("separator") or "").join("" if item is None else str(item) for item in values)
-			elif operation == "upper":
-				value = str(values[0] if values else "").upper()
-			else:
-				value = str(values[0] if values else "").lower()
+			value = _transform_output(config, values, seed=f"simulation\0{record.doctype}\0{record.name}\0{current}")
 			entry["output"] = {"value": value}
 		elif node["type"] == "transform.associated_record":
 			reference_field = str(config.get("reference_field") or "")
@@ -2351,11 +2911,19 @@ def simulate_graph(graph: dict, record, *, start_node_id: str | None = None, exe
 		elif node["type"] == "action.create_todo":
 			entry["status"] = "PREDICTED"
 			entry["confidence"] = "predicted"
-			entry["output"] = {"allocated_to": config.get("allocated_to")}
+			entry["output"] = {"doctype": "ToDo", "name": "__simulated__", "allocated_to": config.get("allocated_to")}
 		elif node["type"] == "action.add_comment":
 			entry["status"] = "PREDICTED"
 			entry["confidence"] = "predicted"
 			entry["output"] = {"comment": "__simulated__"}
+		elif node["type"] in {"action.create_note", "action.copy_record", "action.merge_contact", "action.unassign_record", "action.verify_email", "action.mark_communications_read", "action.remove_from_workflow", "action.complete_goal", "action.go_to"}:
+			entry["status"] = "PREDICTED"
+			entry["confidence"] = "predicted"
+			entry["output"] = {
+				"would_execute": True,
+				**({"target_node_id": config.get("target_node_id")} if node["type"] == "action.go_to" else {}),
+				**({"terminate_path": True} if node["type"] in {"action.merge_contact", "action.complete_goal"} or (node["type"] == "action.remove_from_workflow" and config.get("target_workflow", "current") == "current") else {}),
+			}
 		elif node["type"] == "action.notify_user":
 			entry["status"] = "PREDICTED"
 			entry["confidence"] = "predicted"
@@ -2364,7 +2932,14 @@ def simulate_graph(graph: dict, record, *, start_node_id: str | None = None, exe
 			entry["status"] = "SKIPPED_EXTERNAL"
 			entry["confidence"] = "skipped"
 			entry["note"] = _("External delivery is never performed during simulation.")
-			entry["output"] = {"recipient": resolve_value(config.get("recipient"), record=record, outputs=outputs), "email_queue": "__simulated__"}
+			entry["output"] = {
+				"recipient": resolve_value(config.get("recipient"), record=record, outputs=outputs),
+				"email_queue": "__simulated__",
+				"sender": config.get("sender_email") or None,
+				"reply_to": config.get("reply_to") or None,
+				"email_template": config.get("email_template") or None,
+				"content_hash": "__simulated__" if config.get("email_template") else None,
+			}
 		elif node["type"] == "action.send_sms":
 			entry["status"] = "SKIPPED_EXTERNAL"
 			entry["confidence"] = "skipped"
@@ -2375,6 +2950,16 @@ def simulate_graph(graph: dict, record, *, start_node_id: str | None = None, exe
 			entry["confidence"] = "skipped"
 			entry["note"] = _("External delivery is never performed during simulation.")
 			entry["output"] = {"status_code": 200, "response_hash": "__simulated__"}
+		elif node["type"] == "action.instagram_message":
+			entry["status"] = "SKIPPED_EXTERNAL"
+			entry["confidence"] = "skipped"
+			entry["note"] = _("Instagram delivery is never performed during simulation.")
+			entry["output"] = {"recipient_id": resolve_value(config.get("recipient_id"), record=record, outputs=outputs), "status_code": 200, "response_hash": "__simulated__"}
+		elif node["type"] == "action.asana":
+			entry["status"] = "SKIPPED_EXTERNAL"
+			entry["confidence"] = "skipped"
+			entry["note"] = _("Asana mutations are never performed during simulation.")
+			entry["output"] = {"gid": "__simulated__", "operation": config.get("operation")}
 		elif node["type"] == "action.delete_record":
 			entry["status"] = "PREDICTED"
 			entry["confidence"] = "predicted"
@@ -2386,6 +2971,7 @@ def simulate_graph(graph: dict, record, *, start_node_id: str | None = None, exe
 				entry["output"] = {"simulated_plugin": True}
 		outputs[current] = entry["output"]
 		path.append(entry)
-		next_nodes = [] if node["type"] == "action.delete_record" else _next_nodes(graph, current, handle)
+		terminal_prediction = node["type"] in {"action.delete_record", "action.merge_contact", "action.complete_goal"} or (node["type"] == "action.remove_from_workflow" and config.get("target_workflow", "current") == "current")
+		next_nodes = [] if terminal_prediction else ([str(config.get("target_node_id"))] if node["type"] == "action.go_to" else _next_nodes(graph, current, handle))
 		current = next_nodes[0] if next_nodes else None
 	return {"path": path, "mutated": False, "completed": not current}
