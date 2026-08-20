@@ -22,10 +22,88 @@ from .constants import (
 	TRIGGER_NODE_TYPES,
 )
 from .errors import AutomationError
-from .registry import NODE_OUTPUT_PATHS
+from .registry import (
+	NODE_OUTPUT_PATHS,
+	business_event_available,
+	get_business_event_context,
+	get_business_event_definition,
+	get_node_definition,
+)
 
 ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,139}$")
 VALUE_KINDS = {"literal", "record_field", "node_output"}
+
+
+def criteria_branch_outputs(node: dict) -> list[dict]:
+	"""Return the ordered output contract for a version-2 criteria branch."""
+	if node.get("type") != "condition.if_else" or cint(node.get("type_version") or 1) < 2:
+		return []
+	config = node.get("config") or {}
+	branches = config.get("branches") if isinstance(config, dict) else []
+	return [branch for branch in (branches or []) if isinstance(branch, dict)]
+
+
+def percentage_branch_outputs(node: dict) -> list[dict]:
+	"""Return the ordered output contract for a random percentage split."""
+	if node.get("type") != "condition.random_split":
+		return []
+	config = node.get("config") or {}
+	branches = config.get("branches") if isinstance(config, dict) else []
+	return [branch for branch in (branches or []) if isinstance(branch, dict)]
+
+
+def event_trigger_entries(config: dict, type_version: int = 1) -> list[dict]:
+	"""Normalize legacy single-event and HubSpot-style OR event groups."""
+	if cint(type_version or 1) >= 2:
+		entries = config.get("events") if isinstance(config, dict) else []
+		return [entry for entry in (entries or []) if isinstance(entry, dict)]
+	return [
+		{
+			"id": "legacy-event",
+			"event_topic": config.get("event_topic"),
+			"event_filter": config.get("event_filter"),
+		}
+	] if isinstance(config, dict) else []
+
+
+def event_wait_data_source(config: dict | None) -> str:
+	"""Normalize old email-scoped waits into the HubSpot-style data-source contract."""
+	config = config if isinstance(config, dict) else {}
+	return str(config.get("data_source") or ("action_output" if config.get("event_source") else "enrolled_record"))
+
+
+def event_wait_timeout_mode(config: dict | None) -> str:
+	config = config if isinstance(config, dict) else {}
+	return str(config.get("timeout_mode") or "duration")
+
+
+def _validate_event_filter(expression: Any, topic: str, path: str) -> list[dict]:
+	issues = validate_expression(expression, path)
+	if not expression:
+		return issues
+	definition = get_business_event_definition(topic)
+	if not definition:
+		return issues
+	allowed_fields = {
+		str(field.get("fieldname") or "")
+		for field in definition.get("filter_fields") or []
+		if isinstance(field, dict) and field.get("fieldname")
+	}
+	for fieldname in sorted(condition_fields(expression) - allowed_fields):
+		issues.append(
+			_issue(
+				"UNKNOWN_EVENT_FILTER_FIELD",
+				f"{fieldname} is not available for the selected event",
+				path,
+			)
+		)
+	return issues
+
+
+def event_filter_matches(expression: Any, payload: dict | None) -> bool:
+	return evaluate_expression(expression, payload or {})
+
+
 def parse_object(value: Any, label: str = "payload") -> dict:
 	if isinstance(value, dict):
 		return value
@@ -77,6 +155,7 @@ def execution_graph_hash(graph_value: Any) -> str:
 
 
 def empty_graph(primary_doctype: str, trigger_type: str = "trigger.manual") -> dict:
+	definition = get_node_definition(trigger_type) or {}
 	return {
 		"schema_version": 1,
 		"primary_doctype": primary_doctype,
@@ -85,9 +164,9 @@ def empty_graph(primary_doctype: str, trigger_type: str = "trigger.manual") -> d
 			{
 				"id": "trigger-1",
 				"type": trigger_type,
-				"type_version": 1,
+				"type_version": cint(definition.get("type_version") or 1),
 				"position": {"x": 120, "y": 160},
-				"config": {},
+				"config": json.loads(json.dumps(definition.get("default_config") or {})),
 			}
 		],
 		"edges": [],
@@ -228,13 +307,19 @@ def _node_value_specs(node: dict, index: int):
 		for value_index, value in enumerate(config.get("values") or []):
 			yield value, f"{base}.values.{value_index}"
 	if node.get("type") == "action.send_email":
-		for key in ("recipient", "subject", "message"):
+		yield config.get("recipient"), f"{base}.recipient"
+		content_mode = str(config.get("content_mode") or ("template" if config.get("email_template") else "inline"))
+		for key in (("subject_override",) if content_mode == "template" and config.get("subject_override") else ("subject", "message") if content_mode == "inline" else ()):
 			yield config.get(key), f"{base}.{key}"
 	if node.get("type") == "action.send_sms":
 		for key in ("recipient", "message"):
 			yield config.get(key), f"{base}.{key}"
 	if node.get("type") == "action.webhook":
 		yield from _nested_value_specs(config.get("payload"), f"{base}.payload")
+	if node.get("type") == "delay.until_event":
+		for key in ("event_source", "event_source_doctype"):
+			if config.get(key):
+				yield config.get(key), f"{base}.{key}"
 
 
 def _config_path_value(config: dict, path: str) -> Any:
@@ -257,6 +342,7 @@ def _required_config_missing(value: Any) -> bool:
 def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publish: bool = False) -> dict:
 	graph = parse_object(graph_value, "workflow graph")
 	issues: list[dict] = []
+	workflow_doctype = str(primary_doctype or graph.get("primary_doctype") or "").strip()
 	if len(canonical_json(graph).encode()) > MAX_GRAPH_BYTES:
 		issues.append(_issue("GRAPH_TOO_LARGE", f"Workflow graph exceeds {MAX_GRAPH_BYTES} bytes"))
 	if graph.get("schema_version") != 1:
@@ -302,7 +388,21 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 		if not isinstance(node_type, str) or node_type not in valid_node_types:
 			issues.append(_issue("UNKNOWN_NODE_TYPE", f"Unknown node type {node_type}", f"{path}.type", node_id))
 		node_version = cint(node.get("type_version") or 1)
-		allowed_versions = {1, 2} if node_type == "action.round_robin" else {1}
+		allowed_versions = (
+			{1, 2}
+			if isinstance(node_type, str)
+			and node_type
+			in {
+				"action.round_robin",
+				"action.send_email",
+				"condition.if_else",
+				"condition.deduplicate",
+				"transform.value",
+				"trigger.event",
+				"delay.until_event",
+			}
+			else {1}
+		)
 		if node_version not in allowed_versions:
 			issues.append(_issue("UNKNOWN_NODE_VERSION", "This node version is not supported", f"{path}.type_version", node_id))
 		config = node.get("config")
@@ -311,16 +411,164 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 		elif not isinstance(config, dict):
 			issues.append(_issue("INVALID_NODE_CONFIG", "Node config must be an object", f"{path}.config", node_id))
 			continue
-		if isinstance(node_type, str) and node_type in {"trigger.document_insert", "trigger.document_change", "condition.if_else"}:
+		if isinstance(node_type, str) and node_type in {"trigger.document_insert", "trigger.document_change", "trigger.filter_criteria"}:
 			issues.extend(validate_expression(config.get("condition"), f"{path}.config.condition"))
-		if node.get("type") == "condition.if_else" and not config.get("condition"):
-			issues.append(_issue("MISSING_BRANCH_CONDITION", "If/else requires a condition", f"{path}.config.condition", node_id))
+			if node_type == "trigger.filter_criteria" and not config.get("condition"):
+				issues.append(_issue("MISSING_FILTER_CRITERIA", "Add enrollment filter criteria", f"{path}.config.condition", node_id))
+			if node_type == "trigger.document_change":
+				watch_fields = config.get("watch_fields", [])
+				if not isinstance(watch_fields, list) or len(watch_fields) > 50 or any(not isinstance(field, str) or not field.strip() for field in watch_fields) or len(set(watch_fields)) != len(watch_fields):
+					issues.append(_issue("INVALID_WATCH_FIELDS", "Changed-field selection must contain up to fifty unique field names", f"{path}.config.watch_fields", node_id))
+		if node.get("type") == "trigger.event":
+			entries = event_trigger_entries(config, node_version)
+			if not entries:
+				issues.append(_issue("MISSING_EVENT_TRIGGER", "Add at least one enrollment event", f"{path}.config.events", node_id))
+			elif len(entries) > 20:
+				issues.append(_issue("TOO_MANY_EVENT_TRIGGERS", "Event enrollment supports at most twenty OR event groups", f"{path}.config.events", node_id))
+			seen_event_ids: set[str] = set()
+			for event_index, entry in enumerate(entries):
+				entry_path = f"{path}.config.events.{event_index}" if node_version >= 2 else f"{path}.config"
+				entry_id = str(entry.get("id") or "").strip()
+				topic = str(entry.get("event_topic") or "").strip()
+				if node_version >= 2 and (not entry_id or not ID_PATTERN.match(entry_id) or entry_id in seen_event_ids):
+					issues.append(_issue("INVALID_EVENT_TRIGGER_ID", "Each enrollment event needs a unique safe id", f"{entry_path}.id", node_id))
+				seen_event_ids.add(entry_id)
+				if not topic:
+					issues.append(_issue("MISSING_EVENT_TOPIC", "Choose a business event", f"{entry_path}.event_topic", node_id))
+				elif not business_event_available(topic, workflow_doctype, "trigger"):
+					issues.append(
+						_issue(
+							"EVENT_NOT_AVAILABLE_FOR_WORKFLOW_OBJECT",
+							f"{topic} is not an enrollment event for {workflow_doctype}",
+							f"{entry_path}.event_topic",
+							node_id,
+						)
+					)
+				issues.extend(_validate_event_filter(entry.get("event_filter"), topic, f"{entry_path}.event_filter"))
+			issues.extend(validate_expression(config.get("condition"), f"{path}.config.condition"))
+		if node.get("type") == "trigger.any":
+			triggers = config.get("triggers")
+			allowed_trigger_types = {"trigger.document_insert", "trigger.document_change", "trigger.filter_criteria", "trigger.event"}
+			if not isinstance(triggers, list) or len(triggers) < 2 or len(triggers) > 20:
+				issues.append(_issue("INVALID_TRIGGER_GROUP_COUNT", "Add between two and twenty enrollment triggers", f"{path}.config.triggers", node_id))
+			else:
+				seen_trigger_ids: set[str] = set()
+				for trigger_index, trigger_entry in enumerate(triggers):
+					trigger_path = f"{path}.config.triggers.{trigger_index}"
+					if not isinstance(trigger_entry, dict):
+						issues.append(_issue("INVALID_TRIGGER_GROUP", "Each enrollment trigger must be an object", trigger_path, node_id))
+						continue
+					entry_id = str(trigger_entry.get("id") or "").strip()
+					entry_type = str(trigger_entry.get("type") or "").strip()
+					entry_config = trigger_entry.get("config") if isinstance(trigger_entry.get("config"), dict) else {}
+					if not entry_id or not ID_PATTERN.match(entry_id) or entry_id in seen_trigger_ids:
+						issues.append(_issue("INVALID_TRIGGER_GROUP_ID", "Each trigger needs a unique safe id", f"{trigger_path}.id", node_id))
+					seen_trigger_ids.add(entry_id)
+					if entry_type not in allowed_trigger_types:
+						issues.append(_issue("INVALID_TRIGGER_GROUP_TYPE", "Choose created, changed, criteria, or business event", f"{trigger_path}.type", node_id))
+						continue
+					issues.extend(validate_expression(entry_config.get("condition"), f"{trigger_path}.config.condition"))
+					if entry_type == "trigger.filter_criteria" and not entry_config.get("condition"):
+						issues.append(_issue("MISSING_FILTER_CRITERIA", "Add enrollment filter criteria", f"{trigger_path}.config.condition", node_id))
+					if entry_type == "trigger.document_change":
+						watch_fields = entry_config.get("watch_fields", [])
+						if not isinstance(watch_fields, list) or len(watch_fields) > 50 or any(not isinstance(field, str) or not field.strip() for field in watch_fields) or len(set(watch_fields)) != len(watch_fields):
+							issues.append(_issue("INVALID_WATCH_FIELDS", "Changed-field selection must contain up to fifty unique field names", f"{trigger_path}.config.watch_fields", node_id))
+					if entry_type == "trigger.event":
+						topic = str(entry_config.get("event_topic") or "").strip()
+						if not topic:
+							issues.append(_issue("MISSING_EVENT_TOPIC", "Choose a business event", f"{trigger_path}.config.event_topic", node_id))
+						elif not business_event_available(topic, workflow_doctype, "trigger"):
+							issues.append(_issue("EVENT_NOT_AVAILABLE_FOR_WORKFLOW_OBJECT", f"{topic} is not an enrollment event for {workflow_doctype}", f"{trigger_path}.config.event_topic", node_id))
+						issues.extend(_validate_event_filter(entry_config.get("event_filter"), topic, f"{trigger_path}.config.event_filter"))
+		if node.get("type") == "condition.if_else":
+			if node_version == 1:
+				issues.extend(validate_expression(config.get("condition"), f"{path}.config.condition"))
+				if not config.get("condition"):
+					issues.append(_issue("MISSING_BRANCH_CONDITION", "If/else requires a condition", f"{path}.config.condition", node_id))
+			else:
+				branches = config.get("branches")
+				if not isinstance(branches, list) or not branches:
+					issues.append(_issue("MISSING_CRITERIA_BRANCHES", "Add at least one named criteria branch", f"{path}.config.branches", node_id))
+				elif len(branches) > 20:
+					issues.append(_issue("TOO_MANY_CRITERIA_BRANCHES", "If/else supports at most twenty named branches", f"{path}.config.branches", node_id))
+				else:
+					seen_handles: set[str] = set()
+					seen_names: set[str] = set()
+					for branch_index, branch in enumerate(branches):
+						branch_path = f"{path}.config.branches.{branch_index}"
+						if not isinstance(branch, dict):
+							issues.append(_issue("INVALID_CRITERIA_BRANCH", "Each branch must be an object", branch_path, node_id))
+							continue
+						handle = str(branch.get("handle") or "").strip()
+						name = str(branch.get("name") or "").strip()
+						if not handle or handle == "none" or not ID_PATTERN.match(handle):
+							issues.append(_issue("INVALID_CRITERIA_BRANCH_HANDLE", "Each branch needs a unique safe handle", f"{branch_path}.handle", node_id))
+						if not name or len(name) > 80 or name.casefold() == "none":
+							issues.append(_issue("INVALID_CRITERIA_BRANCH_NAME", "Enter a branch name up to 80 characters; None is reserved", f"{branch_path}.name", node_id))
+						if handle in seen_handles or name.casefold() in seen_names:
+							issues.append(_issue("DUPLICATE_CRITERIA_BRANCH", "Branch names and handles must be unique", branch_path, node_id))
+						seen_handles.add(handle)
+						seen_names.add(name.casefold())
+						if not branch.get("condition"):
+							issues.append(_issue("MISSING_BRANCH_CONDITION", "Each named branch requires criteria", f"{branch_path}.condition", node_id))
+						else:
+							issues.extend(validate_expression(branch.get("condition"), f"{branch_path}.condition"))
+		if node.get("type") == "condition.random_split":
+			branches = percentage_branch_outputs(node)
+			if len(branches) < 2 or len(branches) > 20:
+				issues.append(_issue("INVALID_PERCENTAGE_BRANCH_COUNT", "Add between two and twenty percentage paths", f"{path}.config.branches", node_id))
+			seen_handles: set[str] = set()
+			seen_names: set[str] = set()
+			total = 0.0
+			for branch_index, branch in enumerate(branches):
+				branch_path = f"{path}.config.branches.{branch_index}"
+				handle = str(branch.get("handle") or "").strip()
+				name = str(branch.get("name") or "").strip()
+				try:
+					percentage = float(branch.get("percentage"))
+				except (TypeError, ValueError):
+					percentage = 0
+				if not handle or handle == "default" or not ID_PATTERN.match(handle):
+					issues.append(_issue("INVALID_PERCENTAGE_BRANCH_HANDLE", "Each percentage path needs a unique safe handle", f"{branch_path}.handle", node_id))
+				if not name or len(name) > 80:
+					issues.append(_issue("INVALID_PERCENTAGE_BRANCH_NAME", "Enter a path name up to 80 characters", f"{branch_path}.name", node_id))
+				if handle in seen_handles or name.casefold() in seen_names:
+					issues.append(_issue("DUPLICATE_PERCENTAGE_BRANCH", "Percentage path names and handles must be unique", branch_path, node_id))
+				if percentage <= 0 or percentage > 100:
+					issues.append(_issue("INVALID_PERCENTAGE", "Each path percentage must be greater than zero and at most 100", f"{branch_path}.percentage", node_id))
+				seen_handles.add(handle)
+				seen_names.add(name.casefold())
+				total += percentage
+			if branches and abs(total - 100.0) > 0.000001:
+				issues.append(_issue("INVALID_PERCENTAGE_TOTAL", "Percentage paths must total exactly 100", f"{path}.config.branches", node_id))
 		if node.get("type") == "delay.fixed":
 			seconds = cint(config.get("seconds"))
 			if seconds < 60 or seconds > 365 * 24 * 60 * 60:
 				issues.append(_issue("INVALID_DELAY", "Delay must be between one minute and 365 days", f"{path}.config.seconds", node_id))
-		if node.get("type") == "delay.until_date" and not str(config.get("field") or "").strip():
-			issues.append(_issue("MISSING_DELAY_FIELD", "Choose a date or datetime field", f"{path}.config.field", node_id))
+		if node.get("type") == "delay.drip":
+			batch_size = cint(config.get("batch_size"))
+			interval = cint(config.get("interval_seconds"))
+			if batch_size < 1 or batch_size > 10000:
+				issues.append(_issue("INVALID_DRIP_BATCH", "Batch size must be between 1 and 10,000", f"{path}.config.batch_size", node_id))
+			if interval < 60 or interval > 365 * 24 * 60 * 60:
+				issues.append(_issue("INVALID_DRIP_INTERVAL", "Batch interval must be between one minute and 365 days", f"{path}.config.interval_seconds", node_id))
+		if node.get("type") == "delay.until_date":
+			mode = str(config.get("mode") or ("literal" if config.get("datetime") else "field"))
+			if mode == "field":
+				if not str(config.get("field") or "").strip():
+					issues.append(_issue("MISSING_DELAY_FIELD", "Choose a date or datetime field", f"{path}.config.field", node_id))
+			elif mode == "literal":
+				literal = str(config.get("datetime") or "").strip()
+				if not literal:
+					issues.append(_issue("MISSING_DELAY_DATETIME", "Choose a specific date and time", f"{path}.config.datetime", node_id))
+				else:
+					try:
+						get_datetime(literal)
+					except (TypeError, ValueError):
+						issues.append(_issue("INVALID_DELAY_DATETIME", "Enter a valid date and time", f"{path}.config.datetime", node_id))
+			else:
+				issues.append(_issue("INVALID_DELAY_MODE", "Choose a fixed date/time or record field", f"{path}.config.mode", node_id))
 		if node.get("type") == "condition.switch":
 			if not str(config.get("field") or "").strip():
 				issues.append(_issue("MISSING_SWITCH_FIELD", "Choose a field to branch on", f"{path}.config.field", node_id))
@@ -343,14 +591,59 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 						issues.append(_issue("DUPLICATE_SWITCH_CASE", "Switch values and handles must be unique", case_path, node_id))
 					seen_values.add(value)
 					seen_handles.add(handle)
-		if node.get("type") == "condition.deduplicate" and not str(config.get("match_field") or "").strip():
-			issues.append(_issue("MISSING_DEDUPLICATE_FIELD", "Choose a field to check for duplicates", f"{path}.config.match_field", node_id))
+		if node.get("type") == "condition.deduplicate":
+			match_fields = config.get("match_fields") if node_version >= 2 else [config.get("match_field")]
+			if not isinstance(match_fields, list) or not match_fields or len(match_fields) > 10 or any(not str(field or "").strip() for field in match_fields) or len(set(match_fields)) != len(match_fields):
+				if node_version >= 2:
+					issues.append(_issue("INVALID_DEDUPLICATE_FIELDS", "Choose between one and ten unique fields to check for duplicates", f"{path}.config.match_fields", node_id))
+				else:
+					issues.append(_issue("MISSING_DEDUPLICATE_FIELD", "Choose a field to check for duplicates", f"{path}.config.match_field", node_id))
+			if node_version >= 2 and config.get("match_mode", "all") not in {"all", "any"}:
+				issues.append(_issue("INVALID_DEDUPLICATE_MODE", "Choose whether all or any selected fields must match", f"{path}.config.match_mode", node_id))
 		if node.get("type") == "delay.until_event":
-			if not str(config.get("event_topic") or "").strip():
+			event_topic = str(config.get("event_topic") or "").strip()
+			data_source = event_wait_data_source(config)
+			timeout_mode = event_wait_timeout_mode(config)
+			if not event_topic:
 				issues.append(_issue("MISSING_EVENT_TOPIC", "Enter an event topic", f"{path}.config.event_topic", node_id))
-			timeout_seconds = cint(config.get("timeout_seconds") or 0)
-			if timeout_seconds < 60 or timeout_seconds > 365 * 24 * 60 * 60:
-				issues.append(_issue("INVALID_EVENT_TIMEOUT", "Event timeout must be between one minute and 365 days", f"{path}.config.timeout_seconds", node_id))
+			elif not business_event_available(event_topic, workflow_doctype, "wait"):
+				issues.append(
+					_issue(
+						"EVENT_NOT_AVAILABLE_FOR_WORKFLOW_OBJECT",
+						f"{event_topic} is not a wait event for {workflow_doctype}",
+						f"{path}.config.event_topic",
+						node_id,
+					)
+				)
+			issues.extend(
+				_validate_event_filter(
+					config.get("event_filter"),
+					event_topic,
+					f"{path}.config.event_filter",
+				)
+			)
+			if data_source not in {"enrolled_record", "action_output"}:
+				issues.append(_issue("INVALID_EVENT_DATA_SOURCE", "Choose this workflow record or an earlier action output", f"{path}.config.data_source", node_id))
+			context = get_business_event_context(event_topic)
+			if event_topic and data_source not in set(context.get("source_modes") or ["enrolled_record"]):
+				issues.append(_issue("EVENT_DATA_SOURCE_NOT_AVAILABLE", "The selected event is not available for this data source", f"{path}.config.data_source", node_id))
+			if data_source == "action_output":
+				if not config.get("event_source"):
+					issues.append(_issue("MISSING_EVENT_SOURCE", "Choose an earlier action", f"{path}.config.event_source", node_id))
+				else:
+					issues.extend(validate_value_spec(config.get("event_source"), f"{path}.config.event_source"))
+				if config.get("event_source_doctype"):
+					issues.extend(validate_value_spec(config.get("event_source_doctype"), f"{path}.config.event_source_doctype"))
+			if timeout_mode not in {"duration", "indefinite"}:
+				issues.append(_issue("INVALID_EVENT_TIMEOUT_MODE", "Choose a maximum wait or wait indefinitely", f"{path}.config.timeout_mode", node_id))
+			elif timeout_mode == "duration":
+				timeout_seconds = cint(config.get("timeout_seconds") or 0)
+				if timeout_seconds < 60 or timeout_seconds > 365 * 24 * 60 * 60:
+					issues.append(_issue("INVALID_EVENT_TIMEOUT", "Event timeout must be between one minute and 365 days", f"{path}.config.timeout_seconds", node_id))
+			elif cint(node.get("type_version") or 1) < 2:
+				issues.append(_issue("LEGACY_EVENT_WAIT_REQUIRES_TIMEOUT", "Legacy event waits require a maximum wait", f"{path}.config.timeout_mode", node_id))
+			elif cint(config.get("branch_on_timeout")):
+				issues.append(_issue("INDEFINITE_WAIT_CANNOT_BRANCH", "An indefinite wait has no timeout path", f"{path}.config.branch_on_timeout", node_id))
 		if node.get("type") == "delay.business_hours":
 			time_pattern = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 			start_time = str(config.get("start_time") or "09:00")
@@ -365,14 +658,20 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 			except ZoneInfoNotFoundError:
 				issues.append(_issue("INVALID_TIMEZONE", "Choose a valid IANA timezone", f"{path}.config.timezone", node_id))
 		if node.get("type") == "transform.value":
-			if config.get("operation") not in {"coalesce", "concat", "upper", "lower"}:
+			if config.get("operation") not in {"coalesce", "concat", "upper", "lower", "parse_number", "format_number", "format_phone", "format_currency", "random_number", "math"}:
 				issues.append(_issue("INVALID_TRANSFORM", "Choose a supported transform operation", f"{path}.config.operation", node_id))
 			values = config.get("values")
-			if not isinstance(values, list) or not values:
+			if config.get("operation") != "random_number" and (not isinstance(values, list) or not values):
 				issues.append(_issue("MISSING_TRANSFORM_VALUES", "Add at least one transform input", f"{path}.config.values", node_id))
-			else:
+			elif isinstance(values, list):
 				for value_index, value in enumerate(values):
 					issues.extend(validate_value_spec(value, f"{path}.config.values.{value_index}"))
+			if config.get("operation") == "math" and config.get("math_operation", "add") not in {"add", "subtract", "multiply", "divide", "modulo", "power"}:
+				issues.append(_issue("INVALID_MATH_OPERATION", "Choose a supported math operation", f"{path}.config.math_operation", node_id))
+			if config.get("operation") == "random_number":
+				minimum, maximum = config.get("minimum", 0), config.get("maximum", 100)
+				if isinstance(minimum, bool) or isinstance(maximum, bool) or not isinstance(minimum, (int, float)) or not isinstance(maximum, (int, float)) or minimum >= maximum:
+					issues.append(_issue("INVALID_RANDOM_RANGE", "Random minimum must be less than maximum", f"{path}.config.minimum", node_id))
 		if isinstance(node_type, str) and node_type in {"action.update_record", "action.create_record"}:
 			assignments = config.get("assignments")
 			if not isinstance(assignments, list) or not assignments:
@@ -400,8 +699,27 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 				issues.append(_issue("INVALID_TODO_PRIORITY", "Unsupported ToDo priority", f"{path}.config.priority", node_id))
 		if node.get("type") == "action.add_comment" and not str(config.get("content") or "").strip():
 			issues.append(_issue("MISSING_COMMENT", "Enter comment content", f"{path}.config.content", node_id))
+		if node.get("type") == "action.create_note":
+			for key in ("title", "content"):
+				if not str(config.get(key) or "").strip():
+					issues.append(_issue("MISSING_NOTE_VALUE", "Enter a note title and content", f"{path}.config.{key}", node_id))
+		if node.get("type") == "action.merge_contact":
+			fields = config.get("match_fields")
+			if not isinstance(fields, list) or not fields or len(fields) > 3 or any(field not in {"email_id", "phone", "mobile_no"} for field in fields) or len(set(fields)) != len(fields):
+				issues.append(_issue("INVALID_CONTACT_MERGE_FIELDS", "Choose one to three unique Contact email or phone fields", f"{path}.config.match_fields", node_id))
+			if config.get("match_mode", "all") not in {"all", "any"}:
+				issues.append(_issue("INVALID_CONTACT_MERGE_MODE", "Choose whether all or any identity fields must match", f"{path}.config.match_mode", node_id))
+		if node.get("type") == "action.verify_email":
+			issues.extend(validate_value_spec(config.get("email"), f"{path}.config.email"))
+		if node.get("type") == "action.remove_from_workflow" and not str(config.get("target_workflow") or "").strip():
+			issues.append(_issue("MISSING_TARGET_WORKFLOW", "Choose the current or another workflow", f"{path}.config.target_workflow", node_id))
+		if node.get("type") == "action.complete_goal" and not str(config.get("goal") or "").strip():
+			issues.append(_issue("MISSING_GOAL_NAME", "Enter a goal name", f"{path}.config.goal", node_id))
 		if node.get("type") == "action.notify_user":
-			for key, message in (("for_user", "Choose a notification recipient"), ("subject", "Enter a notification subject"), ("message", "Enter a notification message")):
+			audience = str(config.get("audience") or "specific")
+			if audience not in {"specific", "assigned", "all"}:
+				issues.append(_issue("INVALID_NOTIFICATION_AUDIENCE", "Choose a supported notification audience", f"{path}.config.audience", node_id))
+			for key, message in ((("for_user", "Choose a notification recipient"),) if audience == "specific" else ()) + (("subject", "Enter a notification subject"), ("message", "Enter a notification message")):
 				if not str(config.get(key) or "").strip():
 					issues.append(_issue("MISSING_NOTIFICATION_VALUE", message, f"{path}.config.{key}", node_id))
 		if node.get("type") == "transform.associated_record":
@@ -430,9 +748,22 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 		if node.get("type") == "action.round_robin" and not str(config.get("group") or "").strip():
 			issues.append(_issue("MISSING_ROUND_ROBIN_GROUP", "Choose an assignment group", f"{path}.config.group", node_id))
 		if node.get("type") in {"action.send_email", "action.send_sms"}:
-			for key in (("recipient", "subject", "message") if node.get("type") == "action.send_email" else ("recipient", "message")):
+			keys = ("recipient", "message") if node.get("type") == "action.send_sms" else ("recipient",)
+			for key in keys:
 				issues.extend(validate_value_spec(config.get(key), f"{path}.config.{key}"))
-			if not str(config.get("purpose") or "").strip():
+			if node.get("type") == "action.send_email":
+				content_mode = str(config.get("content_mode") or ("template" if config.get("email_template") else "inline"))
+				if content_mode == "template":
+					if not str(config.get("email_template") or "").strip():
+						issues.append(_issue("MISSING_EMAIL_TEMPLATE", "Choose an Email Template", f"{path}.config.email_template", node_id))
+					if config.get("subject_override"):
+						issues.extend(validate_value_spec(config.get("subject_override"), f"{path}.config.subject_override"))
+				elif content_mode == "inline":
+					for key in ("subject", "message"):
+						issues.extend(validate_value_spec(config.get(key), f"{path}.config.{key}"))
+				else:
+					issues.append(_issue("INVALID_EMAIL_CONTENT_MODE", "Choose Email Template or quick inline content", f"{path}.config.content_mode", node_id))
+			if node.get("type") == "action.send_sms" and not str(config.get("purpose") or "").strip():
 				issues.append(_issue("MISSING_CONSENT_PURPOSE", "Enter the consent purpose", f"{path}.config.purpose", node_id))
 		if node.get("type") == "action.webhook":
 			if not str(config.get("integration_secret") or "").strip():
@@ -441,6 +772,21 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 				issues.append(_issue("INVALID_WEBHOOK_URL", "Webhook URL must use HTTPS", f"{path}.config.url", node_id))
 			if not isinstance(config.get("payload"), dict):
 				issues.append(_issue("INVALID_WEBHOOK_PAYLOAD", "Webhook payload must be a JSON object", f"{path}.config.payload", node_id))
+		if node.get("type") == "action.instagram_message":
+			for key in ("recipient_id", "message"):
+				issues.extend(validate_value_spec(config.get(key), f"{path}.config.{key}"))
+			if not str(config.get("integration_secret") or "").strip():
+				issues.append(_issue("MISSING_INTEGRATION_SECRET", "Choose an integration secret", f"{path}.config.integration_secret", node_id))
+			if not str(config.get("url") or "").startswith("https://"):
+				issues.append(_issue("INVALID_INSTAGRAM_URL", "Instagram endpoint must use HTTPS", f"{path}.config.url", node_id))
+		if node.get("type") == "action.asana":
+			operation = str(config.get("operation") or "")
+			if operation not in {"create_task", "update_task", "create_subtask", "create_project"}:
+				issues.append(_issue("INVALID_ASANA_OPERATION", "Choose a supported Asana operation", f"{path}.config.operation", node_id))
+			if not isinstance(config.get("payload"), dict) or not config.get("payload"):
+				issues.append(_issue("INVALID_ASANA_PAYLOAD", "Asana fields must be a non-empty JSON object", f"{path}.config.payload", node_id))
+			if operation in {"update_task", "create_subtask"}:
+				issues.extend(validate_value_spec(config.get("target_gid"), f"{path}.config.target_gid"))
 		definition = definitions.get(node_type, {}) if isinstance(node_type, str) else {}
 		for required in (definition.get("authoring_schema") or {}).get("required") or []:
 			required_path = str(required.get("path") or "").strip()
@@ -462,6 +808,9 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 
 	if sum(
 		_count_predicates(config.get("condition"))
+		+ sum(_count_predicates(branch.get("condition")) for branch in criteria_branch_outputs(node))
+		+ sum(_count_predicates(entry.get("event_filter")) for entry in event_trigger_entries(config, node.get("type_version") or 1) if node.get("type") == "trigger.event")
+		+ (_count_predicates(config.get("event_filter")) if node.get("type") == "delay.until_event" else 0)
 		for node in node_map.values()
 		if isinstance((config := node.get("config") or {}), dict)
 	) > MAX_PREDICATES:
@@ -480,6 +829,7 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 	incoming: dict[str, int] = {node_id: 0 for node_id in node_map}
 	edge_ids: set[str] = set()
 	branch_handles: dict[str, set[str]] = {}
+	branch_handle_counts: dict[str, dict[str, int]] = {}
 	for index, edge in enumerate(edges):
 		path = f"edges.{index}"
 		if not isinstance(edge, dict):
@@ -503,8 +853,10 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 		source_type = node_map[source].get("type")
 		handle = edge.get("source_handle")
 		handle = handle if isinstance(handle, str) else ""
-		if isinstance(source_type, str) and source_type in {"condition.if_else", "condition.switch", "condition.deduplicate", "delay.until_event"}:
+		if isinstance(source_type, str) and source_type in {"condition.if_else", "condition.random_split", "condition.switch", "condition.deduplicate", "delay.until_event"}:
 			branch_handles.setdefault(source, set()).add(handle)
+			counts = branch_handle_counts.setdefault(source, {})
+			counts[handle] = counts.get(handle, 0) + 1
 		elif handle != "default":
 			issues.append(_issue("INVALID_SOURCE_HANDLE", "This node supports only the default output", f"{path}.source_handle", source))
 
@@ -517,24 +869,52 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 			"condition.deduplicate": {"duplicate", "unique"},
 			"delay.until_event": {"event", "timeout"},
 		}.get(node_type)
+		if node_type == "delay.until_event" and cint(node.get("type_version") or 1) >= 2:
+			expected = {"event", "timeout"} if cint(config.get("branch_on_timeout")) else {"default"}
+		if node_type == "condition.if_else" and cint(node.get("type_version") or 1) >= 2:
+			expected = {"none"} | {str(branch.get("handle")) for branch in criteria_branch_outputs(node) if branch.get("handle")}
+		if node_type == "condition.random_split":
+			expected = {str(branch.get("handle")) for branch in percentage_branch_outputs(node) if branch.get("handle")}
 		if node_type == "condition.switch":
 			expected = {"default"} | {
 				str(case.get("handle")) for case in config.get("cases") or [] if isinstance(case, dict) and case.get("handle")
 			}
-		if handles != expected:
-			issues.append(_issue("INVALID_BRANCH_EDGES", "Branch outputs must each be connected exactly once", node_id=node_id))
+		if expected is not None and not handles.issubset(expected):
+			issues.append(_issue("INVALID_BRANCH_EDGES", "An edge uses an output that is not available on this branch", node_id=node_id))
+		if any(count > 1 for count in branch_handle_counts.get(node_id, {}).values()):
+			issues.append(_issue("INVALID_BRANCH_EDGES", "Each branch output can be connected at most once", node_id=node_id))
+	for node_id, node in node_map.items():
+		if node.get("type") != "action.go_to":
+			continue
+		target = str((node.get("config") or {}).get("target_node_id") or "").strip()
+		if target not in node_map or target == node_id or target == start_id:
+			issues.append(_issue("INVALID_GO_TO_TARGET", "Choose another existing non-trigger step", f"nodes.{node_id}.config.target_node_id", node_id))
+			continue
+		if adjacency[node_id]:
+			issues.append(_issue("GO_TO_HAS_EDGE", "Go to uses its selected destination and cannot also have an outgoing connection", node_id=node_id))
+			continue
+		adjacency[node_id].append(target)
+		predecessors[target].append(node_id)
+		incoming[target] += 1
 	for node_id, node in node_map.items():
 		outgoing = len(adjacency[node_id])
 		node_type = node.get("type")
-		if isinstance(node_type, str) and node_type in {"condition.if_else", "condition.deduplicate", "delay.until_event"} and outgoing != 2:
-			issues.append(_issue("INVALID_BRANCH_COUNT", "This branch needs exactly two outgoing edges", node_id=node_id))
-		elif node_type == "condition.switch" and outgoing != len((node.get("config") or {}).get("cases") or []) + 1:
-			issues.append(_issue("INVALID_BRANCH_COUNT", "Switch needs one edge per case plus the default edge", node_id=node_id))
+		if node_type == "condition.if_else" and cint(node.get("type_version") or 1) >= 2:
+			if outgoing > len(criteria_branch_outputs(node)) + 1:
+				issues.append(_issue("INVALID_BRANCH_COUNT", "If/else has more connections than available branches", node_id=node_id))
+		elif node_type == "condition.random_split" and outgoing > len(percentage_branch_outputs(node)):
+			issues.append(_issue("INVALID_BRANCH_COUNT", "Random split has more connections than percentage paths", node_id=node_id))
+		elif node_type == "delay.until_event" and cint(node.get("type_version") or 1) >= 2 and outgoing > (2 if cint((node.get("config") or {}).get("branch_on_timeout")) else 1):
+			issues.append(_issue("INVALID_BRANCH_COUNT", "This event delay has more connections than its configured outputs", node_id=node_id))
+		elif isinstance(node_type, str) and node_type in {"condition.if_else", "condition.deduplicate", "delay.until_event"} and outgoing > 2:
+			issues.append(_issue("INVALID_BRANCH_COUNT", "This branch supports at most two outgoing paths", node_id=node_id))
+		elif node_type == "condition.switch" and outgoing > len((node.get("config") or {}).get("cases") or []) + 1:
+			issues.append(_issue("INVALID_BRANCH_COUNT", "Switch has more connections than available cases", node_id=node_id))
 		elif node_type == "end.complete" and outgoing:
 			issues.append(_issue("END_HAS_EDGE", "End nodes cannot have outgoing edges", node_id=node_id))
 		elif node_type == "action.delete_record" and outgoing:
 			issues.append(_issue("DELETE_HAS_EDGE", "Delete-record nodes cannot have outgoing edges", node_id=node_id))
-		elif (not isinstance(node_type, str) or node_type not in {"condition.if_else", "condition.switch", "condition.deduplicate", "delay.until_event", "end.complete", "action.delete_record"}) and outgoing > 1:
+		elif (not isinstance(node_type, str) or node_type not in {"condition.if_else", "condition.random_split", "condition.switch", "condition.deduplicate", "delay.until_event", "end.complete", "action.delete_record"}) and outgoing > 1:
 			issues.append(_issue("TOO_MANY_OUTGOING", "Node supports at most one outgoing edge", node_id=node_id))
 		if node_id == start_id and incoming[node_id]:
 			issues.append(_issue("START_HAS_INCOMING", "Start node cannot have incoming edges", node_id=node_id))
@@ -592,8 +972,39 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 					reference_type = reference_node.get("type")
 					allowed_paths = NODE_OUTPUT_PATHS.get(reference_type)
 					path_root = str(value.get("path") or "").split(".", 1)[0]
+					if value_path.endswith(".event_source"):
+						context = get_business_event_context(str((node.get("config") or {}).get("event_topic") or ""))
+						allowed_source_types = set(context.get("source_node_types") or [])
+						expected_path = "email_queue" if reference_type == "action.send_email" else "name"
+						if reference_type not in allowed_source_types or path_root != expected_path:
+							issues.append(_issue("INVALID_EVENT_SOURCE", "Choose a compatible earlier action for this event", value_path, node_id))
+					if value_path.endswith(".event_source_doctype") and (
+						reference_type not in {"action.create_record", "action.copy_record", "action.create_todo"}
+						or path_root != "doctype"
+					):
+						issues.append(_issue("INVALID_EVENT_SOURCE_DOCTYPE", "The earlier action must provide its record type", value_path, node_id))
 					if allowed_paths is not None and path_root not in allowed_paths:
 						issues.append(_issue("UNKNOWN_OUTPUT_PATH", "Output path is not produced by the source node", f"{value_path}.path", node_id))
+			if node.get("type") == "delay.until_event" and event_wait_data_source(node.get("config")) == "action_output":
+				config = node.get("config") or {}
+				source = config.get("event_source") if isinstance(config.get("event_source"), dict) else {}
+				source_node = node_map.get(source.get("node_id"))
+				if source_node and source_node.get("type") == "action.send_email":
+					source_doctype = config.get("event_source_doctype")
+					if source_doctype and (
+						not isinstance(source_doctype, dict)
+						or source_doctype.get("kind") != "literal"
+						or source_doctype.get("value") != "Email Queue"
+					):
+						issues.append(_issue("INVALID_EMAIL_EVENT_SOURCE_DOCTYPE", "Email action events must use the produced Email Queue message", f"nodes.{index}.config.event_source_doctype", node_id))
+				elif source_node:
+					source_doctype = config.get("event_source_doctype") if isinstance(config.get("event_source_doctype"), dict) else {}
+					if (
+						source_doctype.get("kind") != "node_output"
+						or source_doctype.get("node_id") != source.get("node_id")
+						or source_doctype.get("path") != "doctype"
+					):
+						issues.append(_issue("MISSING_EVENT_SOURCE_DOCTYPE", "Choose the record output from the same earlier action", f"nodes.{index}.config.event_source_doctype", node_id))
 	return {"valid": not issues, "issues": issues, "graph": graph, "graph_hash": graph_hash(graph)}
 
 

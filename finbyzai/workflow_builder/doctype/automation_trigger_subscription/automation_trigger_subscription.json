@@ -47,7 +47,7 @@
    "fieldtype": "Select",
    "label": "Event Type",
    "reqd": 1,
-   "options": "MANUAL\nAFTER_INSERT\nON_UPDATE\nSCHEDULED"
+   "options": "MANUAL\nAFTER_INSERT\nON_UPDATE\nSCHEDULED\nEVENT"
   },
   {
    "fieldname": "dependency_fields_json",

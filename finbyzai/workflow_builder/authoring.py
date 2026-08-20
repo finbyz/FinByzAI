@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import frappe
 from frappe import _
-from frappe.utils import cint, now_datetime
+from frappe.utils import cint, now_datetime, validate_email_address
 
+from . import emailing
 from .errors import AutomationConflictError, AutomationError, AutomationPermissionError
 from .registry import assert_field_access, doctype_eligibility, field_catalog_result, is_eligible_doctype
 from .schema import (
@@ -56,6 +59,31 @@ def _normalized_settings(settings_value: Any) -> dict:
 	for key in ("goal_condition", "eligibility_condition"):
 		if not settings.get(key):
 			settings.pop(key, None)
+	window = settings.get("execution_window")
+	if isinstance(window, dict) and bool(cint(window.get("enabled"))):
+		settings["execution_window"] = {
+			"enabled": True,
+			"timezone": str(window.get("timezone") or "UTC").strip(),
+			"start_time": str(window.get("start_time") or "09:00"),
+			"end_time": str(window.get("end_time") or "17:00"),
+			"weekdays": window.get("weekdays") if isinstance(window.get("weekdays"), list) else [0, 1, 2, 3, 4],
+			"calendar": str(window.get("calendar") or "").strip(),
+		}
+	else:
+		settings.pop("execution_window", None)
+	communication = settings.get("communication")
+	if isinstance(communication, dict):
+		settings["communication"] = {
+			"default_sender_name": str(communication.get("default_sender_name") or "").strip()[:140],
+			"default_sender_email": str(communication.get("default_sender_email") or "").strip()[:320],
+			"default_sms_sender": str(communication.get("default_sms_sender") or "").strip()[:140],
+			"stop_on_response": bool(cint(communication.get("stop_on_response"))),
+			"mark_responses_read": bool(cint(communication.get("mark_responses_read"))),
+		}
+		if not any(settings["communication"].values()):
+			settings.pop("communication", None)
+	else:
+		settings.pop("communication", None)
 	return settings
 
 
@@ -232,20 +260,51 @@ def validate_bindings(graph: dict, execution_user: str, workflow_name: str | Non
 				issues.append({"severity": "error", "code": "SUBFLOW_DOCTYPE_MISMATCH", "node_id": node_id, "path": f"nodes.{node_id}.config.subflow_id", "message": _("The subflow must use the same primary DocType.")})
 			elif workflow_name and _subflow_reaches(target.name, workflow_name):
 				issues.append({"severity": "error", "code": "SUBFLOW_DEPENDENCY_CYCLE", "node_id": node_id, "path": f"nodes.{node_id}.config.subflow_id", "message": _("This subflow dependency would create a cycle.")})
-		expression = config.get("condition")
-		for predicate in _condition_predicates(expression):
-			fieldname = predicate.get("field")
-			operator = predicate.get("operator")
-			try:
-				assert_field_access(
-					primary_doctype,
-					fieldname,
-					permission_type="read",
-					user=execution_user,
-					capability=("condition_scalar", "condition_collection") if operator in {"is_set", "is_not_set"} else "condition_collection" if operator in {"contains_any", "contains_all", "contains_none"} else "condition_scalar",
-				)
-			except frappe.PermissionError as exc:
-				issues.append({"severity": "error", "code": "FIELD_PERMISSION", "node_id": node_id, "path": f"nodes.{node_id}.config.condition", "message": str(exc)})
+		condition_sources = [(config.get("condition"), f"nodes.{node_id}.config.condition")]
+		if node_type == "trigger.any":
+			condition_sources.extend(
+				((entry.get("config") or {}).get("condition"), f"nodes.{node_id}.config.triggers.{entry_index}.config.condition")
+				for entry_index, entry in enumerate(config.get("triggers") or [])
+				if isinstance(entry, dict) and isinstance(entry.get("config"), dict)
+			)
+		if node_type == "condition.if_else" and cint(node.get("type_version") or 1) >= 2:
+			condition_sources.extend(
+				(branch.get("condition"), f"nodes.{node_id}.config.branches.{branch_index}.condition")
+				for branch_index, branch in enumerate(config.get("branches") or [])
+				if isinstance(branch, dict)
+			)
+		for expression, expression_path in condition_sources:
+			for predicate in _condition_predicates(expression):
+				fieldname = str(predicate.get("field") or "").strip()
+				if not fieldname:
+					# Structural graph validation reports the actionable "Choose a field" issue.
+					continue
+				operator = predicate.get("operator")
+				try:
+					assert_field_access(
+						primary_doctype,
+						fieldname,
+						permission_type="read",
+						user=execution_user,
+						capability=("condition_scalar", "condition_collection") if operator in {"is_set", "is_not_set"} else "condition_collection" if operator in {"contains_any", "contains_all", "contains_none"} else "condition_scalar",
+					)
+				except frappe.PermissionError as exc:
+					issues.append({"severity": "error", "code": "FIELD_PERMISSION", "node_id": node_id, "path": expression_path, "message": str(exc)})
+		if node_type == "trigger.document_change":
+			for field_index, fieldname in enumerate(config.get("watch_fields") or []):
+				try:
+					assert_field_access(primary_doctype, fieldname, permission_type="read", user=execution_user, capability="scalar_read")
+				except frappe.PermissionError as exc:
+					issues.append({"severity": "error", "code": "FIELD_PERMISSION", "node_id": node_id, "path": f"nodes.{node_id}.config.watch_fields.{field_index}", "message": str(exc)})
+		if node_type == "trigger.any":
+			for entry_index, entry in enumerate(config.get("triggers") or []):
+				if not isinstance(entry, dict) or entry.get("type") != "trigger.document_change":
+					continue
+				for field_index, fieldname in enumerate((entry.get("config") or {}).get("watch_fields") or []):
+					try:
+						assert_field_access(primary_doctype, fieldname, permission_type="read", user=execution_user, capability="scalar_read")
+					except frappe.PermissionError as exc:
+						issues.append({"severity": "error", "code": "FIELD_PERMISSION", "node_id": node_id, "path": f"nodes.{node_id}.config.triggers.{entry_index}.config.watch_fields.{field_index}", "message": str(exc)})
 		if node_type in {"action.update_record", "action.create_record"}:
 			target_doctype = primary_doctype if node_type == "action.update_record" else config.get("target_doctype")
 			if not target_doctype or not is_eligible_doctype(
@@ -313,7 +372,7 @@ def validate_bindings(graph: dict, execution_user: str, workflow_name: str | Non
 					_validate_assignment_value_type(assignment.get("value"), target_field, source_field)
 				except (frappe.PermissionError, AutomationError) as exc:
 					issues.append({"severity": "error", "code": "FIELD_PERMISSION", "node_id": node_id, "path": f"nodes.{node_id}.config.assignments", "message": str(exc)})
-		if node_type == "delay.until_date":
+		if node_type == "delay.until_date" and str(config.get("mode") or ("literal" if config.get("datetime") else "field")) == "field":
 			try:
 				assert_field_access(primary_doctype, config.get("field"), permission_type="read", user=execution_user, capability="scalar_read")
 				fieldtype = frappe.get_meta(primary_doctype).get_field(config.get("field")).fieldtype
@@ -322,11 +381,14 @@ def validate_bindings(graph: dict, execution_user: str, workflow_name: str | Non
 			except (frappe.PermissionError, AutomationError, AttributeError) as exc:
 				issues.append({"severity": "error", "code": "DELAY_FIELD_PERMISSION", "node_id": node_id, "path": f"nodes.{node_id}.config.field", "message": str(exc)})
 		if node_type in {"condition.switch", "condition.deduplicate"}:
-			fieldname = config.get("field") if node_type == "condition.switch" else config.get("match_field")
-			try:
-				assert_field_access(primary_doctype, fieldname, permission_type="read", user=execution_user, capability="switch" if node_type == "condition.switch" else "deduplicate")
-			except frappe.PermissionError as exc:
-				issues.append({"severity": "error", "code": "FIELD_PERMISSION", "node_id": node_id, "path": f"nodes.{node_id}.config", "message": str(exc)})
+			fieldnames = [config.get("field")] if node_type == "condition.switch" else (
+				config.get("match_fields") if cint(node.get("type_version") or 1) >= 2 else [config.get("match_field")]
+			)
+			for fieldname in fieldnames or []:
+				try:
+					assert_field_access(primary_doctype, fieldname, permission_type="read", user=execution_user, capability="switch" if node_type == "condition.switch" else "deduplicate")
+				except frappe.PermissionError as exc:
+					issues.append({"severity": "error", "code": "FIELD_PERMISSION", "node_id": node_id, "path": f"nodes.{node_id}.config", "message": str(exc)})
 		if node_type == "delay.business_hours":
 			calendar = str(config.get("calendar") or "").strip()
 			if calendar and not frappe.db.exists("Holiday List", calendar):
@@ -395,11 +457,29 @@ def validate_bindings(graph: dict, execution_user: str, workflow_name: str | Non
 			if not is_eligible_doctype(primary_doctype, permission_type="delete", user=execution_user):
 				issues.append({"severity": "error", "code": "DOCTYPE_PERMISSION", "node_id": node_id, "path": f"nodes.{node_id}.config", "message": _("Execution user cannot delete the enrolled DocType.")})
 		if node_type == "action.send_email":
-			for key in ("recipient", "subject", "message"):
+			content_mode = str(config.get("content_mode") or ("template" if config.get("email_template") else "inline"))
+			keys = ["recipient"]
+			if content_mode == "inline":
+				keys.extend(["subject", "message"])
+			elif content_mode == "template" and config.get("subject_override"):
+				keys.append("subject_override")
+			for key in keys:
 				try:
 					_validate_value_binding(config.get(key), primary_doctype, execution_user)
 				except frappe.PermissionError as exc:
 					issues.append({"severity": "error", "code": "FIELD_PERMISSION", "node_id": node_id, "path": f"nodes.{node_id}.config.{key}", "message": str(exc)})
+			if content_mode == "template" and config.get("email_template"):
+				try:
+					emailing.get_email_template(config.get("email_template"), primary_doctype, check_permission=False)
+				except AutomationError as exc:
+					issues.append({"severity": "error", "code": "INVALID_EMAIL_TEMPLATE", "node_id": node_id, "path": f"nodes.{node_id}.config.email_template", "message": str(exc)})
+			for key in ("sender_email", "reply_to"):
+				address = str(config.get(key) or "").strip()
+				if address and not validate_email_address(address, throw=False):
+					issues.append({"severity": "error", "code": "INVALID_EMAIL_ADDRESS", "node_id": node_id, "path": f"nodes.{node_id}.config.{key}", "message": _("Enter a valid {0} address.").format(key.replace("_", " ").title())})
+			sender_email = str(config.get("sender_email") or "").strip()
+			if sender_email and not frappe.db.exists("Email Account", {"email_id": sender_email, "enable_outgoing": 1}):
+				issues.append({"severity": "error", "code": "UNAUTHORIZED_EMAIL_SENDER", "node_id": node_id, "path": f"nodes.{node_id}.config.sender_email", "message": _("Choose the address of an enabled outgoing Email Account.")})
 		if node_type == "action.send_sms":
 			for key in ("recipient", "message"):
 				try:
@@ -414,9 +494,46 @@ def validate_bindings(graph: dict, execution_user: str, workflow_name: str | Non
 			secret = frappe.db.get_value("Automation Integration Secret", config.get("integration_secret"), ["enabled", "allowed_hosts"], as_dict=True)
 			if not secret or not secret.enabled:
 				issues.append({"severity": "error", "code": "INTEGRATION_SECRET_DISABLED", "node_id": node_id, "path": f"nodes.{node_id}.config.integration_secret", "message": _("Choose an enabled integration secret.")})
+		if node_type == "action.instagram_message":
+			for key in ("recipient_id", "message"):
+				try:
+					_validate_value_binding(config.get(key), primary_doctype, execution_user)
+				except frappe.PermissionError as exc:
+					issues.append({"severity": "error", "code": "FIELD_PERMISSION", "node_id": node_id, "path": f"nodes.{node_id}.config.{key}", "message": str(exc)})
+			secret = frappe.db.get_value("Automation Integration Secret", config.get("integration_secret"), ["enabled", "allowed_hosts"], as_dict=True)
+			if not secret or not secret.enabled:
+				issues.append({"severity": "error", "code": "INTEGRATION_SECRET_DISABLED", "node_id": node_id, "path": f"nodes.{node_id}.config.integration_secret", "message": _("Choose an enabled integration secret for Meta.")})
+		if node_type == "action.asana":
+			try:
+				_validate_value_binding_tree(config.get("payload"), primary_doctype, execution_user)
+				if config.get("target_gid"):
+					_validate_value_binding(config.get("target_gid"), primary_doctype, execution_user)
+			except frappe.PermissionError as exc:
+				issues.append({"severity": "error", "code": "FIELD_PERMISSION", "node_id": node_id, "path": f"nodes.{node_id}.config.payload", "message": str(exc)})
+			if "asana_integration" not in frappe.get_installed_apps():
+				issues.append({"severity": "error", "code": "ASANA_APP_REQUIRED", "node_id": node_id, "path": f"nodes.{node_id}.config", "message": _("Install and configure the Asana Integration app before publishing.")})
+			else:
+				settings = frappe.get_cached_doc("Asana Settings")
+				if not settings.enabled or not settings.workspace_gid:
+					issues.append({"severity": "error", "code": "ASANA_NOT_CONFIGURED", "node_id": node_id, "path": f"nodes.{node_id}.config", "message": _("Enable Asana Settings and configure its workspace before publishing.")})
 		if node_type == "action.create_todo" and not frappe.db.get_value("User", config.get("allocated_to"), "enabled"):
 			issues.append({"severity": "error", "code": "INVALID_ASSIGNEE", "node_id": node_id, "path": f"nodes.{node_id}.config.allocated_to", "message": _("Choose an enabled assignee.")})
-		if node_type == "action.notify_user" and not frappe.db.get_value("User", config.get("for_user"), "enabled"):
+		if node_type == "action.verify_email":
+			try:
+				_validate_value_binding(config.get("email"), primary_doctype, execution_user)
+			except frappe.PermissionError as exc:
+				issues.append({"severity": "error", "code": "FIELD_PERMISSION", "node_id": node_id, "path": f"nodes.{node_id}.config.email", "message": str(exc)})
+		if node_type == "action.copy_record" and not doctype_eligibility(primary_doctype, permission_type="create", user=execution_user)["available"]:
+			issues.append({"severity": "error", "code": "COPY_PERMISSION", "node_id": node_id, "path": f"nodes.{node_id}.config", "message": _("The execution user cannot create this DocType.")})
+		if node_type == "action.merge_contact" and primary_doctype != "Contact":
+			issues.append({"severity": "error", "code": "CONTACT_MERGE_DOCTYPE", "node_id": node_id, "path": f"nodes.{node_id}.config", "message": _("Merge contact can only be used in a Contact workflow.")})
+		if node_type == "action.create_note" and not frappe.has_permission("Note", ptype="create", user=execution_user):
+			issues.append({"severity": "error", "code": "NOTE_PERMISSION", "node_id": node_id, "path": f"nodes.{node_id}.config", "message": _("The execution user cannot create Notes.")})
+		if node_type == "action.remove_from_workflow":
+			target = str(config.get("target_workflow") or "")
+			if target != "current" and not frappe.db.exists("Automation Workflow", {"name": target, "primary_doctype": primary_doctype}):
+				issues.append({"severity": "error", "code": "TARGET_WORKFLOW_NOT_FOUND", "node_id": node_id, "path": f"nodes.{node_id}.config.target_workflow", "message": _("Choose a workflow for the same primary DocType.")})
+		if node_type == "action.notify_user" and str(config.get("audience") or "specific") == "specific" and not frappe.db.get_value("User", config.get("for_user"), "enabled"):
 			issues.append({"severity": "error", "code": "INVALID_RECIPIENT", "node_id": node_id, "path": f"nodes.{node_id}.config.for_user", "message": _("Choose an enabled notification recipient.")})
 	return issues
 
@@ -430,6 +547,32 @@ def validate_settings(settings_value: Any, primary_doctype: str, execution_user:
 	read_mode = settings["read_mode"]
 	if read_mode not in {"CURRENT", "ENROLLMENT_SNAPSHOT"}:
 		issues.append({"severity": "error", "code": "INVALID_READ_MODE", "path": "settings.read_mode", "message": _("Choose current values or enrollment snapshot values.")})
+	window = settings.get("execution_window")
+	if isinstance(window, dict):
+		time_pattern = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+		start_time = str(window.get("start_time") or "")
+		end_time = str(window.get("end_time") or "")
+		if not time_pattern.match(start_time) or not time_pattern.match(end_time) or start_time >= end_time:
+			issues.append({"severity": "error", "code": "INVALID_EXECUTION_WINDOW", "path": "settings.execution_window.start_time", "message": _("The action window requires valid start and end times, with start before end.")})
+		weekdays = window.get("weekdays")
+		if not isinstance(weekdays, list) or not weekdays or any(isinstance(day, bool) or not isinstance(day, int) or day < 0 or day > 6 for day in weekdays) or len(set(weekdays)) != len(weekdays):
+			issues.append({"severity": "error", "code": "INVALID_EXECUTION_DAYS", "path": "settings.execution_window.weekdays", "message": _("Choose one or more unique action-window days.")})
+		try:
+			ZoneInfo(str(window.get("timezone") or ""))
+		except ZoneInfoNotFoundError:
+			issues.append({"severity": "error", "code": "INVALID_EXECUTION_TIMEZONE", "path": "settings.execution_window.timezone", "message": _("Choose a valid IANA timezone for the action window.")})
+		calendar = str(window.get("calendar") or "").strip()
+		if calendar and not frappe.db.exists("Holiday List", calendar):
+			issues.append({"severity": "error", "code": "INVALID_EXECUTION_CALENDAR", "path": "settings.execution_window.calendar", "message": _("The selected action-window Holiday List does not exist.")})
+	communication = settings.get("communication") or {}
+	sender_email = str(communication.get("default_sender_email") or "").strip()
+	if sender_email:
+		from frappe.utils import validate_email_address
+
+		if not validate_email_address(sender_email, throw=False):
+			issues.append({"severity": "error", "code": "INVALID_DEFAULT_SENDER", "path": "settings.communication.default_sender_email", "message": _("Enter a valid default sender email address.")})
+		elif not frappe.db.exists("Email Account", {"email_id": sender_email, "enable_outgoing": 1}):
+			issues.append({"severity": "error", "code": "UNAUTHORIZED_DEFAULT_SENDER", "path": "settings.communication.default_sender_email", "message": _("Choose the address of an enabled outgoing Email Account.")})
 	for key in ("goal_condition", "eligibility_condition"):
 		expression = settings.get(key)
 		for issue in validate_expression(expression, f"settings.{key}"):
@@ -480,6 +623,7 @@ def create_workflow_record(
 	description: str = "",
 	execution_user: str | None = None,
 	trigger_type: str = "trigger.manual",
+	folder: str = "",
 	*,
 	idempotency_key: str | None = None,
 	operation: str = "create",
@@ -500,6 +644,7 @@ def create_workflow_record(
 			"doctype": "Automation Workflow",
 			"title": str(title or "").strip(),
 			"description": description,
+			"folder": str(folder or "").strip()[:140],
 			"primary_doctype": primary_doctype,
 			"status": "DRAFT",
 			"execution_user": execution_user,
@@ -540,17 +685,21 @@ def list_workflow_records(
 	search: str | None = None,
 	primary_doctype: str | None = None,
 	exclude_workflow: str | None = None,
+	folder: str | None = None,
 ) -> dict:
 	filters = {"status": status} if status else {}
 	if primary_doctype:
 		filters["primary_doctype"] = primary_doctype
 	if exclude_workflow:
 		filters["name"] = ["!=", exclude_workflow]
+	if folder is not None:
+		filters["folder"] = str(folder).strip()
 	needle = str(search or "").strip()
 	or_filters = (
 		{
 			"name": ["like", f"%{needle}%"],
 			"title": ["like", f"%{needle}%"],
+			"folder": ["like", f"%{needle}%"],
 			"primary_doctype": ["like", f"%{needle}%"],
 		}
 		if needle
@@ -561,7 +710,7 @@ def list_workflow_records(
 		"Automation Workflow",
 		filters=filters,
 		or_filters=or_filters,
-		fields=["name", "title", "primary_doctype", "status", "active_version", "latest_version", "execution_user", "modified", "owner"],
+		fields=["name", "title", "folder", "primary_doctype", "status", "active_version", "latest_version", "execution_user", "modified", "owner"],
 		order_by="modified desc",
 		start=max(cint(start), 0),
 		limit=limit + 1,
@@ -596,6 +745,17 @@ def list_workflow_records(
 		"total_count": count_for(),
 		"status_counts": {"ACTIVE": count_for({"status": "ACTIVE"}), "PAUSED": count_for({"status": "PAUSED"})},
 	}
+
+
+def set_workflow_folder(workflow_name: str, folder: str | None) -> dict:
+	workflow = _workflow(workflow_name, "write", for_update=True)
+	value = str(folder or "").strip()
+	if len(value) > 140 or any(part in {".", ".."} for part in value.split("/")):
+		raise AutomationError(_("Folder names must be at most 140 characters and cannot contain dot path segments."))
+	workflow.folder = value
+	workflow.save()
+	create_audit(workflow.name, "WORKFLOW_FOLDER_CHANGED", {"folder": value})
+	return {"workflow_id": workflow.name, "folder": value}
 
 
 def delete_workflow_record(workflow_name: str) -> dict:
@@ -865,26 +1025,41 @@ def publish_workflow(workflow_name: str, draft_revision: int, *, activate: bool 
 	).insert(ignore_permissions=True)
 	graph = parse_object(draft.graph_json)
 	trigger = next(node for node in graph["nodes"] if node["id"] == graph["start_node_id"])
-	config = trigger.get("config") or {}
-	event_type = {
+	event_type_by_trigger = {
 		"trigger.manual": "MANUAL",
 		"trigger.document_insert": "AFTER_INSERT",
 		"trigger.document_change": "ON_UPDATE",
+		"trigger.filter_criteria": "ON_UPDATE",
+		"trigger.event": "EVENT",
 		"trigger.schedule": "SCHEDULED",
-	}[trigger["type"]]
-	frappe.get_doc(
-		{
-			"doctype": "Automation Trigger Subscription",
-			"workflow": workflow.name,
-			"workflow_version": version.name,
-			"trigger_node_id": trigger["id"],
-			"primary_doctype": workflow.primary_doctype,
-			"event_type": event_type,
-			"dependency_fields_json": json.dumps(sorted(condition_fields(config.get("condition")))),
-			"config_json": json.dumps(config),
-			"active": 0,
-		}
-	).insert(ignore_permissions=True)
+	}
+	if trigger["type"] == "trigger.any":
+		trigger_specs = [
+			{
+				"id": str(entry.get("id") or f"trigger-{index + 1}"),
+				"type": str(entry.get("type") or ""),
+				"config": entry.get("config") if isinstance(entry.get("config"), dict) else {},
+			}
+			for index, entry in enumerate((trigger.get("config") or {}).get("triggers") or [])
+			if isinstance(entry, dict)
+		]
+	else:
+		trigger_specs = [{"id": trigger["id"], "type": trigger["type"], "config": trigger.get("config") or {}}]
+	for trigger_spec in trigger_specs:
+		config = trigger_spec["config"]
+		frappe.get_doc(
+			{
+				"doctype": "Automation Trigger Subscription",
+				"workflow": workflow.name,
+				"workflow_version": version.name,
+				"trigger_node_id": f"{trigger['id']}:{trigger_spec['id']}" if trigger["type"] == "trigger.any" else trigger["id"],
+				"primary_doctype": workflow.primary_doctype,
+				"event_type": event_type_by_trigger[trigger_spec["type"]],
+				"dependency_fields_json": json.dumps(sorted(condition_fields(config.get("condition")) | {str(field) for field in config.get("watch_fields") or [] if field})),
+				"config_json": json.dumps({**config, "_trigger_type": trigger_spec["type"], "_trigger_group_id": trigger_spec["id"]}),
+				"active": 0,
+			}
+		).insert(ignore_permissions=True)
 	previous_status = workflow.status
 	previous_active_version = workflow.active_version
 	workflow.latest_version = next_version

@@ -15,11 +15,13 @@ from finbyzai.workflow_builder.engine import (
 from finbyzai.workflow_builder.errors import AutomationError
 from finbyzai.workflow_builder.registry import (
 	NODE_OUTPUT_PATHS,
+	business_event_catalog,
 	doctype_eligibility,
 	field_catalog,
 	field_catalog_result,
 	is_eligible_doctype,
 	node_catalog,
+	workflow_object_profile,
 )
 from finbyzai.workflow_builder.schema import (
 	condition_fields,
@@ -39,6 +41,91 @@ def predicate(field, operator, value=None):
 
 
 class TestAutomationSchema(IntegrationTestCase):
+	def test_business_event_catalog_is_scoped_to_enrolled_doctype_and_usage(self):
+		lead_trigger_topics = {row["topic"] for row in business_event_catalog("Lead", "trigger")}
+		opportunity_trigger_topics = {row["topic"] for row in business_event_catalog("Opportunity", "trigger")}
+		customer_trigger_topics = {row["topic"] for row in business_event_catalog("Customer", "trigger")}
+		contact_trigger_topics = {row["topic"] for row in business_event_catalog("Contact", "trigger")}
+		sales_order_trigger_topics = {row["topic"] for row in business_event_catalog("Sales Order", "trigger")}
+		sales_order_wait_topics = {row["topic"] for row in business_event_catalog("Sales Order", "wait")}
+
+		self.assertIn("crm.lead.qualified", lead_trigger_topics)
+		self.assertNotIn("crm.lead.qualified", opportunity_trigger_topics)
+		self.assertNotIn("crm.contact.list.joined", opportunity_trigger_topics)
+		self.assertIn("crm.call.inbound", opportunity_trigger_topics)
+		self.assertIn("crm.call.inbound", contact_trigger_topics)
+		self.assertNotIn("commerce.store.login", lead_trigger_topics)
+		self.assertNotIn("commerce.order.created", lead_trigger_topics)
+		self.assertIn("commerce.store.login", customer_trigger_topics)
+		self.assertIn("commerce.order.created", customer_trigger_topics)
+		self.assertNotIn("commerce.order.created", sales_order_trigger_topics)
+		self.assertIn("email.clicked", sales_order_wait_topics)
+		self.assertEqual(workflow_object_profile("Opportunity")["primary_doctype"], "Opportunity")
+		lead_list = next(row for row in business_event_catalog("Lead", "trigger") if row["topic"] == "crm.contact.list.joined")
+		self.assertEqual(lead_list["label"], "Joined a list")
+		self.assertEqual(lead_list["category"], "CRM events")
+
+	def test_business_event_catalog_explains_event_producers_and_record_resolution(self):
+		rows = business_event_catalog("Lead", "trigger")
+		qualified = next(row for row in rows if row["topic"] == "crm.lead.qualified")
+		self.assertEqual(qualified["producer_status"], "native")
+		self.assertEqual(qualified["source_app"], "ERPNext Lead")
+		self.assertIn("Qualification status", qualified["trigger_alternative"])
+		self.assertIn("Lead", qualified["record_resolution"])
+
+	def test_known_business_events_cannot_be_published_for_the_wrong_workflow_object(self):
+		graph = empty_graph("Opportunity", "trigger.event")
+		graph["nodes"][0]["config"] = {
+			"events": [{"id": "lead-qualified", "event_topic": "crm.lead.qualified", "event_filter": None}],
+			"condition": None,
+		}
+		codes = {issue["code"] for issue in validate_graph(graph, primary_doctype="Opportunity", publish=True)["issues"]}
+		self.assertIn("EVENT_NOT_AVAILABLE_FOR_WORKFLOW_OBJECT", codes)
+
+		graph["nodes"][0]["config"]["events"][0]["event_topic"] = "custom.partner.event"
+		codes = {issue["code"] for issue in validate_graph(graph, primary_doctype="Opportunity", publish=True)["issues"]}
+		self.assertNotIn("EVENT_NOT_AVAILABLE_FOR_WORKFLOW_OBJECT", codes)
+
+	def test_mixed_enrollment_trigger_groups_validate_as_or_subscriptions(self):
+		graph = empty_graph("Lead", "trigger.any")
+		graph["nodes"][0]["config"] = {
+			"triggers": [
+				{"id": "created", "type": "trigger.document_insert", "config": {"condition": None}},
+				{"id": "qualified", "type": "trigger.event", "config": {"event_topic": "crm.lead.qualified", "event_filter": None, "condition": None}},
+			]
+		}
+		self.assertTrue(validate_graph(graph, primary_doctype="Lead", publish=True)["valid"])
+		graph["nodes"][0]["config"]["triggers"][1]["id"] = "created"
+		self.assertIn("INVALID_TRIGGER_GROUP_ID", {issue["code"] for issue in validate_graph(graph)["issues"]})
+
+	def test_drip_go_to_and_integration_nodes_have_strict_contracts(self):
+		graph = empty_graph("Lead")
+		graph["nodes"].extend([
+			{"id": "drip", "type": "delay.drip", "type_version": 1, "config": {"batch_size": 25, "interval_seconds": 3600}},
+			{"id": "jump", "type": "action.go_to", "type_version": 1, "config": {"target_node_id": "end"}},
+			{"id": "end", "type": "end.complete", "type_version": 1, "config": {}},
+		])
+		graph["edges"] = [
+			{"id": "e1", "source": "trigger-1", "source_handle": "default", "target": "drip"},
+			{"id": "e2", "source": "drip", "source_handle": "default", "target": "jump"},
+		]
+		self.assertTrue(validate_graph(graph, primary_doctype="Lead", publish=True)["valid"])
+		graph["nodes"][1]["config"]["batch_size"] = 0
+		self.assertIn("INVALID_DRIP_BATCH", {issue["code"] for issue in validate_graph(graph)["issues"]})
+		graph["nodes"][1]["config"]["batch_size"] = 25
+		graph["nodes"][2]["config"]["target_node_id"] = "trigger-1"
+		self.assertIn("INVALID_GO_TO_TARGET", {issue["code"] for issue in validate_graph(graph)["issues"]})
+
+		for node_type, config in (
+			("action.instagram_message", {"integration_secret": "meta", "url": "https://graph.facebook.com/me/messages", "recipient_id": {"kind": "literal", "value": "123"}, "message": {"kind": "literal", "value": "Hello"}, "purpose": "workflow"}),
+			("action.asana", {"operation": "create_task", "payload": {"name": {"kind": "literal", "value": "Follow up"}}}),
+		):
+			candidate = empty_graph("Lead")
+			candidate["nodes"].append({"id": "external", "type": node_type, "type_version": 1, "config": config})
+			candidate["edges"] = [{"id": "external-edge", "source": "trigger-1", "source_handle": "default", "target": "external"}]
+			with self.subTest(node_type=node_type):
+				self.assertTrue(validate_graph(candidate, primary_doctype="Lead")["valid"])
+
 	def test_node_catalog_exposes_the_validation_output_contract(self):
 		catalog = {item["type"]: item for item in node_catalog()}
 		self.assertNotIn("action.custom_script", catalog)
@@ -98,6 +185,125 @@ class TestAutomationSchema(IntegrationTestCase):
 		result = validate_graph(graph, primary_doctype="Lead")
 		self.assertIn("UNKNOWN_NODE_VERSION", {issue["code"] for issue in result["issues"]})
 
+	def test_named_criteria_branches_have_independent_conditions_and_none_output(self):
+		graph = empty_graph("Lead")
+		graph["nodes"].extend(
+			[
+				{
+					"id": "branch",
+					"type": "condition.if_else",
+					"type_version": 2,
+					"config": {
+						"branches": [
+							{"handle": "german", "name": "German", "condition": predicate("language", "eq", "de")},
+							{
+								"handle": "high-value",
+								"name": "High value",
+								"condition": {"kind": "all", "children": [predicate("status", "eq", "Open"), predicate("annual_revenue", "gte", 10000)]},
+							},
+						]
+					},
+				},
+				{"id": "end-de", "type": "end.complete", "type_version": 1, "config": {}},
+				{"id": "end-value", "type": "end.complete", "type_version": 1, "config": {}},
+				{"id": "end-none", "type": "end.complete", "type_version": 1, "config": {}},
+			]
+		)
+		graph["edges"] = [
+			{"id": "e1", "source": "trigger-1", "source_handle": "default", "target": "branch"},
+			{"id": "e2", "source": "branch", "source_handle": "german", "target": "end-de"},
+			{"id": "e3", "source": "branch", "source_handle": "high-value", "target": "end-value"},
+			{"id": "e4", "source": "branch", "source_handle": "none", "target": "end-none"},
+		]
+		self.assertTrue(validate_graph(graph, primary_doctype="Lead", publish=True)["valid"])
+
+		graph["nodes"][1]["config"]["branches"][1]["name"] = "German"
+		codes = {issue["code"] for issue in validate_graph(graph)["issues"]}
+		self.assertIn("DUPLICATE_CRITERIA_BRANCH", codes)
+
+	def test_specific_datetime_wait_and_event_trigger_validate(self):
+		graph = empty_graph("Lead", "trigger.event")
+		graph["nodes"][0]["config"] = {
+			"events": [{"id": "click", "event_topic": "email.clicked", "event_filter": None}],
+			"condition": None,
+		}
+		graph["nodes"].append(
+			{
+				"id": "wait",
+				"type": "delay.until_date",
+				"type_version": 1,
+				"config": {"mode": "literal", "datetime": "2026-12-15 14:30:00"},
+			}
+		)
+		graph["edges"] = [{"id": "e1", "source": "trigger-1", "source_handle": "default", "target": "wait"}]
+		self.assertTrue(validate_graph(graph, primary_doctype="Lead", publish=True)["valid"])
+
+		graph["nodes"][1]["config"]["datetime"] = ""
+		codes = {issue["code"] for issue in validate_graph(graph)["issues"]}
+		self.assertIn("MISSING_DELAY_DATETIME", codes)
+
+	def test_event_trigger_v2_supports_or_groups_and_event_specific_filters(self):
+		graph = empty_graph("Lead", "trigger.event")
+		graph["nodes"][0].update(
+			{
+				"type_version": 2,
+				"config": {
+					"events": [
+						{
+							"id": "click",
+							"event_topic": "email.clicked",
+							"event_filter": predicate("email_type", "eq", "Marketing"),
+						},
+						{
+							"id": "form",
+							"event_topic": "crm.form.submitted",
+							"event_filter": predicate("form_name", "eq", "Contact Us"),
+						},
+					],
+					"condition": predicate("status", "eq", "Lead"),
+				},
+			}
+		)
+		self.assertTrue(validate_graph(graph, primary_doctype="Lead", publish=True)["valid"])
+
+		graph["nodes"][0]["config"]["events"][0]["event_filter"] = predicate("form_name", "eq", "Wrong source")
+		codes = {issue["code"] for issue in validate_graph(graph)["issues"]}
+		self.assertIn("UNKNOWN_EVENT_FILTER_FIELD", codes)
+
+	def test_named_branches_allow_twenty_and_unconnected_paths_end_implicitly(self):
+		graph = empty_graph("Lead")
+		branches = [
+			{"handle": f"branch-{index}", "name": f"Branch {index}", "condition": predicate("status", "eq", f"State {index}")}
+			for index in range(20)
+		]
+		graph["nodes"].append(
+			{"id": "branch", "type": "condition.if_else", "type_version": 2, "config": {"branches": branches}}
+		)
+		graph["edges"] = [{"id": "e1", "source": "trigger-1", "source_handle": "default", "target": "branch"}]
+		self.assertTrue(validate_graph(graph, primary_doctype="Lead", publish=True)["valid"])
+
+		graph["nodes"][1]["config"]["branches"].append(
+			{"handle": "branch-20", "name": "Branch 20", "condition": predicate("status", "eq", "State 20")}
+		)
+		codes = {issue["code"] for issue in validate_graph(graph)["issues"]}
+		self.assertIn("TOO_MANY_CRITERIA_BRANCHES", codes)
+
+	def test_random_percentage_split_requires_named_paths_totalling_one_hundred(self):
+		graph = empty_graph("Lead")
+		graph["nodes"].extend([
+			{"id": "split", "type": "condition.random_split", "type_version": 1, "config": {"branches": [{"handle": "group-a", "name": "Group A", "percentage": 70}, {"handle": "group-b", "name": "Group B", "percentage": 30}]}},
+			{"id": "end-a", "type": "end.complete", "type_version": 1, "config": {}},
+			{"id": "end-b", "type": "end.complete", "type_version": 1, "config": {}},
+		])
+		graph["edges"] = [
+			{"id": "e1", "source": "trigger-1", "source_handle": "default", "target": "split"},
+			{"id": "e2", "source": "split", "source_handle": "group-a", "target": "end-a"},
+			{"id": "e3", "source": "split", "source_handle": "group-b", "target": "end-b"},
+		]
+		self.assertTrue(validate_graph(graph, primary_doctype="Lead", publish=True)["valid"])
+		graph["nodes"][1]["config"]["branches"][1]["percentage"] = 20
+		self.assertIn("INVALID_PERCENTAGE_TOTAL", {issue["code"] for issue in validate_graph(graph)["issues"]})
+
 	def test_reachability_cycle_and_handle_validation(self):
 		graph = {
 			"schema_version": 1,
@@ -141,6 +347,134 @@ class TestAutomationSchema(IntegrationTestCase):
 				self.assertTrue(validate_graph(graph, primary_doctype="Lead", publish=True)["valid"])
 				graph["edges"][2]["source_handle"] = handles[0]
 				self.assertIn("INVALID_BRANCH_EDGES", {issue["code"] for issue in validate_graph(graph)["issues"]})
+
+	def test_event_delay_v2_uses_one_path_by_default_and_optional_outcome_branches(self):
+		graph = empty_graph("Lead")
+		graph["nodes"].extend([
+			{"id": "wait", "type": "delay.until_event", "type_version": 2, "config": {"event_topic": "email.clicked", "event_filter": None, "timeout_seconds": 3600, "branch_on_timeout": 0}},
+			{"id": "end", "type": "end.complete", "type_version": 1, "config": {}},
+		])
+		graph["edges"] = [
+			{"id": "e1", "source": "trigger-1", "source_handle": "default", "target": "wait"},
+			{"id": "e2", "source": "wait", "source_handle": "default", "target": "end"},
+		]
+		self.assertTrue(validate_graph(graph, primary_doctype="Lead", publish=True)["valid"])
+
+		graph["edges"][1]["source_handle"] = "event"
+		self.assertIn("INVALID_BRANCH_EDGES", {issue["code"] for issue in validate_graph(graph)["issues"]})
+
+		graph["nodes"][1]["config"]["branch_on_timeout"] = 1
+		graph["nodes"].append({"id": "timeout-end", "type": "end.complete", "type_version": 1, "config": {}})
+		graph["edges"].append({"id": "e3", "source": "wait", "source_handle": "timeout", "target": "timeout-end"})
+		self.assertTrue(validate_graph(graph, primary_doctype="Lead", publish=True)["valid"])
+
+	def test_email_event_delay_can_scope_to_a_guaranteed_prior_send_email_output(self):
+		graph = empty_graph("Lead")
+		graph["nodes"].extend([
+			{"id": "send", "type": "action.send_email", "type_version": 1, "config": {"recipient": {"kind": "literal", "value": "person@example.com"}, "subject": {"kind": "literal", "value": "Hello"}, "message": {"kind": "literal", "value": "Body"}, "purpose": "workflow"}},
+			{"id": "wait", "type": "delay.until_event", "type_version": 2, "config": {"event_topic": "email.clicked", "event_filter": None, "event_source": {"kind": "node_output", "node_id": "send", "path": "email_queue"}, "timeout_seconds": 3600, "branch_on_timeout": 0}},
+			{"id": "end", "type": "end.complete", "type_version": 1, "config": {}},
+		])
+		graph["edges"] = [
+			{"id": "e1", "source": "trigger-1", "source_handle": "default", "target": "send"},
+			{"id": "e2", "source": "send", "source_handle": "default", "target": "wait"},
+			{"id": "e3", "source": "wait", "source_handle": "default", "target": "end"},
+		]
+		self.assertTrue(validate_graph(graph, primary_doctype="Lead", publish=True)["valid"])
+		graph["nodes"][2]["config"]["event_source"] = {"kind": "node_output", "node_id": "trigger-1", "path": "email_queue"}
+		codes = {issue["code"] for issue in validate_graph(graph)["issues"]}
+		self.assertIn("INVALID_EVENT_SOURCE", codes)
+		graph["nodes"][2]["config"].update({
+			"event_source": {"kind": "node_output", "node_id": "send", "path": "email_queue"},
+			"event_source_doctype": {"kind": "literal", "value": "Lead"},
+		})
+		codes = {issue["code"] for issue in validate_graph(graph)["issues"]}
+		self.assertIn("INVALID_EMAIL_EVENT_SOURCE_DOCTYPE", codes)
+
+	def test_hubspot_style_event_wait_sources_and_indefinite_timeout_contract(self):
+		graph = empty_graph("Lead")
+		graph["nodes"].extend([
+			{
+				"id": "todo",
+				"type": "action.create_todo",
+				"type_version": 1,
+				"config": {"allocated_to": "Administrator", "description": "Follow up"},
+			},
+			{
+				"id": "wait",
+				"type": "delay.until_event",
+				"type_version": 2,
+				"config": {
+					"data_source": "action_output",
+					"event_topic": "workflow.todo.completed",
+					"event_source": {"kind": "node_output", "node_id": "todo", "path": "name"},
+					"event_source_doctype": {"kind": "node_output", "node_id": "todo", "path": "doctype"},
+					"timeout_mode": "indefinite",
+					"branch_on_timeout": 0,
+				},
+			},
+			{"id": "end", "type": "end.complete", "type_version": 1, "config": {}},
+		])
+		graph["edges"] = [
+			{"id": "e1", "source": "trigger-1", "source_handle": "default", "target": "todo"},
+			{"id": "e2", "source": "todo", "source_handle": "default", "target": "wait"},
+			{"id": "e3", "source": "wait", "source_handle": "default", "target": "end"},
+		]
+		self.assertTrue(validate_graph(graph, primary_doctype="Lead", publish=True)["valid"])
+
+		graph["nodes"][2]["config"]["branch_on_timeout"] = 1
+		codes = {issue["code"] for issue in validate_graph(graph, primary_doctype="Lead", publish=True)["issues"]}
+		self.assertIn("INDEFINITE_WAIT_CANNOT_BRANCH", codes)
+
+		graph["nodes"][2]["config"].update({
+			"branch_on_timeout": 0,
+			"event_topic": "email.opened",
+		})
+		codes = {issue["code"] for issue in validate_graph(graph, primary_doctype="Lead", publish=True)["issues"]}
+		self.assertIn("INVALID_EVENT_SOURCE", codes)
+
+	def test_send_email_v2_supports_templates_and_keeps_inline_email_compatible(self):
+		graph = empty_graph("Lead")
+		graph["nodes"].append(
+			{
+				"id": "email",
+				"type": "action.send_email",
+				"type_version": 2,
+				"config": {
+					"content_mode": "template",
+					"email_template": "Lead welcome",
+					"recipient": {"kind": "record_field", "field": "email_id"},
+					"subject_override": {"kind": "literal", "value": ""},
+					"purpose": "workflow",
+				},
+			}
+		)
+		graph["edges"] = [
+			{"id": "e1", "source": "trigger-1", "source_handle": "default", "target": "email"}
+		]
+
+		result = validate_graph(graph, primary_doctype="Lead")
+		self.assertNotIn("UNKNOWN_NODE_VERSION", {issue["code"] for issue in result["issues"]})
+		self.assertNotIn("MISSING_REQUIRED_CONFIG", {issue["code"] for issue in result["issues"]})
+		self.assertNotIn("MISSING_EMAIL_TEMPLATE", {issue["code"] for issue in result["issues"]})
+
+		graph["nodes"][1]["config"]["email_template"] = ""
+		self.assertIn("MISSING_EMAIL_TEMPLATE", {issue["code"] for issue in validate_graph(graph)["issues"]})
+
+		graph["nodes"][1]["config"] = {
+			"content_mode": "inline",
+			"recipient": {"kind": "literal", "value": "person@example.com"},
+			"subject": {"kind": "literal", "value": "Hello"},
+			"message": {"kind": "literal", "value": "Body"},
+			"purpose": "workflow",
+		}
+		self.assertTrue(validate_graph(graph, primary_doctype="Lead")["valid"])
+
+		graph["nodes"][1]["config"]["content_mode"] = "unknown"
+		self.assertIn(
+			"INVALID_EMAIL_CONTENT_MODE",
+			{issue["code"] for issue in validate_graph(graph)["issues"]},
+		)
 
 	def test_graph_limits(self):
 		graph = empty_graph("Lead")

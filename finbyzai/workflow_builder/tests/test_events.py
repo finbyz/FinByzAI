@@ -1,12 +1,13 @@
 from datetime import timedelta
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
 from frappe.utils import now_datetime
 
-from finbyzai.workflow_builder import engine, events
+from finbyzai.workflow_builder import engine, events, integrations
+from finbyzai.workflow_builder.api import signal_event
 from finbyzai.workflow_builder.authoring import (
 	create_workflow_record,
 	get_workflow_draft,
@@ -79,6 +80,352 @@ class TestAutomationEvents(IntegrationTestCase):
 		with patch.object(events, "_matching_subscriptions", return_value=[]):
 			doc.save()
 
+	def test_business_event_signal_releases_waits_and_enrolls_matching_workflows(self):
+		record = frappe._dict(doctype="Lead", name="LEAD-EVENT")
+		record.status = "Lead"
+		record.check_permission = MagicMock()
+		subscription = frappe._dict(
+			workflow="WF-EVENT",
+			workflow_version="WFV-EVENT",
+			config_json=frappe.as_json(
+				{
+					"events": [
+						{
+							"id": "marketing-click",
+							"event_topic": "email.clicked",
+							"event_filter": {
+								"kind": "predicate",
+								"field": "email_type",
+								"operator": "eq",
+								"value": "Marketing",
+							},
+						}
+					],
+					"condition": {"kind": "predicate", "field": "status", "operator": "eq", "value": "Lead"},
+				}
+			),
+		)
+		with (
+			patch.object(engine, "release_event_waiters", return_value=2) as release,
+			patch.object(frappe, "get_doc", return_value=record),
+			patch.object(frappe, "get_list", return_value=[subscription]),
+			patch.object(
+				frappe.db,
+				"get_value",
+				return_value=frappe._dict(status="ACTIVE", active_version="WFV-EVENT"),
+			),
+			patch.object(engine, "enroll", return_value="RUN-EVENT") as enroll_event,
+		):
+			result = signal_event(
+				"email.clicked",
+				{"event_id": "provider-event-1", "email_type": "Marketing"},
+				record_doctype="Lead",
+				record_name="LEAD-EVENT",
+			)
+
+		self.assertEqual(result["released"], 2)
+		self.assertEqual(result["enrolled"], [{"workflow": "WF-EVENT", "run_id": "RUN-EVENT"}])
+		release.assert_called_once_with(
+			"email.clicked",
+			{"event_id": "provider-event-1", "email_type": "Marketing"},
+			record_doctype="Lead",
+			record_name="LEAD-EVENT",
+			source_doctype=None,
+			source_name=None,
+		)
+		enroll_event.assert_called_once_with(
+			"WF-EVENT",
+			"Lead",
+			"LEAD-EVENT",
+			source="EVENT:email.clicked",
+			occurrence_key="email.clicked:provider-event-1",
+		)
+
+	def test_business_event_signal_skips_nonmatching_event_criteria(self):
+		record = frappe._dict(doctype="Lead", name="LEAD-EVENT", status="Lead")
+		record.check_permission = MagicMock()
+		subscription = frappe._dict(
+			workflow="WF-EVENT",
+			workflow_version="WFV-EVENT",
+			config_json=frappe.as_json(
+				{
+					"events": [
+						{
+							"id": "marketing-click",
+							"event_topic": "email.clicked",
+							"event_filter": {"kind": "predicate", "field": "email_type", "operator": "eq", "value": "Marketing"},
+						}
+					]
+				}
+			),
+		)
+		with (
+			patch.object(engine, "release_event_waiters", return_value=0),
+			patch.object(frappe, "get_doc", return_value=record),
+			patch.object(frappe, "get_list", return_value=[subscription]),
+			patch.object(engine, "enroll") as enroll_event,
+		):
+			result = signal_event(
+				"email.clicked",
+				{"event_id": "provider-event-2", "email_type": "Transactional"},
+				record_doctype="Lead",
+				record_name="LEAD-EVENT",
+			)
+
+		self.assertEqual(result["enrolled"], [])
+		enroll_event.assert_not_called()
+
+	def test_business_event_signal_indexes_the_exact_workflow_email_message(self):
+		with patch.object(engine, "release_event_waiters", return_value=1) as release:
+			result = events.signal_business_event(
+				"email.opened",
+				{"event_id": "open-1", "email_queue": "EMAIL-QUEUE-1"},
+			)
+		self.assertEqual(result["released"], 1)
+		release.assert_called_once_with(
+			"email.opened",
+			{"event_id": "open-1", "email_queue": "EMAIL-QUEUE-1"},
+			record_doctype=None,
+			record_name=None,
+			source_doctype="Email Queue",
+			source_name="EMAIL-QUEUE-1",
+		)
+
+	def test_public_event_source_permission_is_checked_before_wait_release(self):
+		source = MagicMock()
+		source.check_permission.side_effect = frappe.PermissionError
+		with (
+			patch.object(frappe, "get_doc", return_value=source),
+			patch.object(engine, "release_event_waiters") as release,
+			self.assertRaises(frappe.PermissionError),
+		):
+			events.signal_business_event(
+				"record.updated",
+				{"event_id": "source-event-1"},
+				source_doctype="ToDo",
+				source_name="TODO-PRIVATE",
+				check_record_permission=True,
+			)
+		release.assert_not_called()
+
+	def test_native_record_and_todo_wait_events_use_the_durable_outbox(self):
+		lead = frappe._dict(doctype="Lead", name="LEAD-NATIVE", status="Open", docstatus=0, modified="2026-08-20 10:00:00")
+		lead.flags = frappe._dict()
+		lead.meta = SimpleNamespace(istable=False, issingle=False, is_virtual=False)
+		lead.get_doc_before_save = lambda: frappe._dict(status="New")
+		with (
+			patch.object(events, "_native_wait_sources", return_value=(True, False)),
+			patch.object(events.frappe.db, "table_exists", return_value=True),
+		):
+			lead_occurrences = events._native_wait_occurrences(lead, "ON_UPDATE", ["status"])
+		self.assertEqual(lead_occurrences[0]["topic"], "record.updated")
+		self.assertTrue(lead_occurrences[0]["enrolled"])
+
+		outbox = SimpleNamespace(
+			name="OUTBOX-NATIVE",
+			event_id="outbox-native",
+			event_type="ON_UPDATE",
+			object_doctype="Lead",
+			object_name="LEAD-NATIVE",
+			changed_fields_json='["status"]',
+			decision_json=frappe.as_json({"native_wait_events": lead_occurrences}),
+			trace_id="TRACE-NATIVE",
+			causation_id=None,
+			recursion_depth=0,
+		)
+		with (
+			patch.object(events.frappe, "get_doc", return_value=lead),
+			patch.object(events, "_matching_subscriptions", return_value=[]),
+			patch.object(events, "reevaluate_active_run_policies", return_value=[]),
+			patch.object(events.engine, "release_event_waiters", return_value=1) as release,
+			patch.object(events, "_complete_event") as complete,
+		):
+			events._process_event(outbox)
+		release.assert_called_once_with(
+			"record.updated",
+			lead_occurrences[0]["payload"],
+			record_doctype="Lead",
+			record_name="LEAD-NATIVE",
+			source_doctype=None,
+			source_name=None,
+		)
+		self.assertEqual(complete.call_args.kwargs["decisions"][0]["kind"], "WAIT_EVENT")
+
+		todo = frappe._dict(doctype="ToDo", name="TODO-NATIVE", status="Closed", allocated_to="Administrator", docstatus=0, modified="2026-08-20 10:05:00")
+		todo.flags = frappe._dict()
+		todo.meta = SimpleNamespace(istable=False, issingle=False, is_virtual=False)
+		todo.get_doc_before_save = lambda: frappe._dict(status="Open")
+		with (
+			patch.object(events, "_native_wait_sources", side_effect=[(False, False), (False, True)]),
+			patch.object(events.frappe.db, "table_exists", return_value=True),
+		):
+			todo_occurrences = events._native_wait_occurrences(todo, "ON_UPDATE", ["status"])
+		self.assertEqual(todo_occurrences[0]["topic"], "workflow.todo.completed")
+		self.assertTrue(todo_occurrences[0]["action_output"])
+
+	def test_aircall_adapter_emits_only_terminal_inbound_links(self):
+		doc = frappe._dict(
+			doctype="Call Log",
+			name="CALL-1",
+			id="aircall-1",
+			medium="Aircall",
+			type="Incoming",
+			status="Completed",
+			duration=42,
+			customer="CUSTOMER-1",
+			links=[
+				frappe._dict(link_doctype="Lead", link_name="LEAD-1"),
+				frappe._dict(link_doctype="Opportunity", link_name="OPP-1"),
+			],
+		)
+		doc["from"] = "+4912345"
+		doc.get_doc_before_save = lambda: frappe._dict(status="In Progress")
+		with patch(
+			"aircall_integration.aircall_integration.call_context.get_contacts_matching_number",
+			return_value=["CONTACT-1"],
+		), patch.object(integrations, "_signal") as emit:
+			integrations.capture_aircall_inbound_call(doc)
+		self.assertEqual(emit.call_count, 4)
+		self.assertEqual(
+			{(call.args[1], call.args[2]) for call in emit.call_args_list},
+			{
+				("Contact", "CONTACT-1"),
+				("Lead", "LEAD-1"),
+				("Opportunity", "OPP-1"),
+				("Customer", "CUSTOMER-1"),
+			},
+		)
+
+	def test_customer_portal_login_adapter_targets_customer_only(self):
+		login_manager = SimpleNamespace(user_type="Website User")
+		with (
+			patch("customer_portal.utils.portal.get_current_customer_name", return_value="CUSTOMER-1"),
+			patch.object(integrations.frappe, "session", frappe._dict(sid="SESSION-1", user="portal@example.com")),
+			patch.object(integrations, "_signal") as emit,
+		):
+			integrations.capture_customer_portal_login(login_manager)
+		emit.assert_called_once()
+		self.assertEqual(emit.call_args.args[:3], ("commerce.store.login", "Customer", "CUSTOMER-1"))
+
+	def test_lead_qualification_adapter_emits_only_on_transition(self):
+		doc = frappe._dict(
+			doctype="Lead",
+			name="LEAD-1",
+			qualification_status="Qualified",
+			modified="2026-08-20 10:00:00",
+		)
+		doc.get_doc_before_save = lambda: frappe._dict(qualification_status="In Process")
+		with patch.object(integrations, "_signal") as emit:
+			integrations.capture_lead_qualified(doc)
+		emit.assert_called_once()
+		self.assertEqual(emit.call_args.args[:3], ("crm.lead.qualified", "Lead", "LEAD-1"))
+
+	def test_email_group_adapter_resolves_supported_crm_objects(self):
+		doc = frappe._dict(
+			doctype="Email Group Member",
+			name="MEMBER-1",
+			email_group="Newsletter",
+			email="person@example.com",
+			unsubscribed=0,
+			modified="2026-08-20 10:00:00",
+		)
+		doc.get_doc_before_save = lambda: None
+		with patch.object(
+			integrations.frappe,
+			"get_all",
+			side_effect=[["CONTACT-1"], ["LEAD-1"]],
+		), patch.object(integrations, "_signal") as emit:
+			integrations.capture_email_group_membership(doc)
+		self.assertEqual(
+			{(call.args[1], call.args[2]) for call in emit.call_args_list},
+			{("Contact", "CONTACT-1"), ("Lead", "LEAD-1")},
+		)
+
+	def test_sales_order_adapter_marks_customer_portal_checkout(self):
+		doc = frappe._dict(
+			doctype="Sales Order",
+			name="SO-1",
+			customer="CUSTOMER-1",
+			order_type="Shopping Cart",
+			items=[frappe._dict(prevdoc_docname="QTN-CART-1")],
+		)
+		with patch.object(integrations.frappe.db, "exists", return_value="QTN-CART-1"), patch.object(
+			integrations, "_signal"
+		) as emit:
+			integrations.capture_sales_order_created(doc)
+		payload = emit.call_args.args[3]
+		self.assertEqual(emit.call_args.args[:3], ("commerce.order.created", "Customer", "CUSTOMER-1"))
+		self.assertEqual(payload["source"], "Customer Portal")
+
+	def test_web_form_adapter_emits_for_the_exact_saved_target(self):
+		doc = frappe._dict(doctype="Lead", name="LEAD-WEB-FORM", modified="2026-08-20 10:00:00")
+		doc.get_doc_before_save = lambda: None
+		frappe.flags.in_web_form = True
+		frappe.form_dict.web_form = "Public lead form"
+		try:
+			with patch.object(integrations, "_signal") as emit:
+				integrations.capture_web_form_submission(doc)
+		finally:
+			frappe.flags.pop("in_web_form", None)
+			frappe.form_dict.pop("web_form", None)
+		emit.assert_called_once()
+		self.assertEqual(emit.call_args.args[:3], ("crm.form.submitted", "Lead", "LEAD-WEB-FORM"))
+		self.assertEqual(emit.call_args.args[3]["form_name"], "Public lead form")
+
+	def test_communication_adapter_normalizes_reply_and_email_delivery_status(self):
+		doc = frappe._dict(
+			doctype="Communication",
+			name="COMM-1",
+			reference_doctype="Lead",
+			reference_name="LEAD-1",
+			sent_or_received="Received",
+			communication_medium="Email",
+			sender="person@example.com",
+			delivery_status="Clicked",
+			message_id="provider-message-1",
+			subject="Nurture",
+		)
+		doc.get_doc_before_save = lambda: frappe._dict(sent_or_received="Sent", delivery_status="Sent")
+		with patch.object(integrations.frappe.db, "get_value", return_value="EMAIL-QUEUE-1"), patch.object(
+			integrations, "_signal"
+		) as emit:
+			integrations.capture_communication_event(doc)
+		self.assertEqual([call.args[0] for call in emit.call_args_list], ["communication.responded", "email.clicked"])
+		self.assertEqual(emit.call_args_list[1].args[3]["email_queue"], "EMAIL-QUEUE-1")
+
+	def test_abandoned_cart_adapter_skips_converted_orders_and_emits_linked_records(self):
+		rows = [
+			frappe._dict(name="QTN-ABANDONED", quotation_to="Lead", party_name="LEAD-1", contact_person="CONTACT-1", modified=now_datetime()),
+			frappe._dict(name="QTN-CONVERTED", quotation_to="Customer", party_name="CUSTOMER-1", contact_person=None, modified=now_datetime()),
+		]
+		with (
+			patch.object(integrations, "_runtime_ready", return_value=True),
+			patch.object(integrations.frappe, "get_all", return_value=rows),
+			patch.object(integrations.frappe.db, "exists", side_effect=lambda doctype, filters=None: filters.get("prevdoc_docname") == "QTN-CONVERTED"),
+			patch.object(integrations, "_signal") as emit,
+		):
+			count = integrations.capture_abandoned_shopping_carts()
+		self.assertEqual(count, 2)
+		self.assertEqual(
+			{(call.args[1], call.args[2]) for call in emit.call_args_list},
+			{("Lead", "LEAD-1"), ("Contact", "CONTACT-1")},
+		)
+
+	def test_stop_on_response_cancels_the_run_and_its_timer(self):
+		lead, _published, run_name, timer_name = self._waiting_policy_run(
+			"Stop on response",
+			"Response Policy",
+			{"communication": {"stop_on_response": True}},
+		)
+		stopped = engine.apply_response_policy(
+			"Lead",
+			lead.name,
+			{"communication": "COMM-RESPONSE"},
+		)
+		self.assertEqual(stopped, 1)
+		self.assertEqual(frappe.db.get_value("Automation Run", run_name, "status"), "CANCELLED")
+		self.assertEqual(frappe.db.get_value("Automation Timer", timer_name, "status"), "CANCELLED")
+
 	def test_no_subscription_creates_no_outbox_or_queue_wake(self):
 		with patch.object(events, "_matching_subscriptions", return_value=[]), patch.object(
 			events, "_register_dispatch_wake"
@@ -88,6 +435,24 @@ class TestAutomationEvents(IntegrationTestCase):
 			frappe.db.exists("Automation Outbox Event", {"object_doctype": "Lead", "object_name": lead.name})
 		)
 		wake.assert_not_called()
+
+	def test_filter_criteria_subscription_listens_to_insert_and_update_events(self):
+		created = create_workflow_record("Filter criteria trigger", "Lead", trigger_type="trigger.filter_criteria")
+		graph = created["graph"]
+		graph["nodes"][0]["config"] = {
+			"condition": {"kind": "predicate", "field": "status", "operator": "eq", "value": "Lead"}
+		}
+		self.assertTrue(save_workflow_draft(created["workflow"], 0, graph)["valid"])
+		published = publish_workflow(created["workflow"], 1)
+		subscription = frappe.db.get_value(
+			"Automation Trigger Subscription",
+			{"workflow_version": published["version"]},
+			["name", "event_type"],
+			as_dict=True,
+		)
+		self.assertEqual(subscription.event_type, "ON_UPDATE")
+		self.assertIn(subscription.name, {row.name for row in events._matching_subscriptions("Lead", "AFTER_INSERT")})
+		self.assertIn(subscription.name, {row.name for row in events._matching_subscriptions("Lead", "ON_UPDATE")})
 
 	def test_internal_framework_doctypes_are_rejected_before_subscription_lookup(self):
 		doc = frappe.get_doc({"doctype": "Error Log", "method": "automation test", "error": "test"})
@@ -257,6 +622,39 @@ class TestAutomationEvents(IntegrationTestCase):
 		)
 		self.assertIn("company_name", frappe.parse_json(pending_fields))
 		self.assertEqual(frappe.get_meta("Workflow").module, "Workflow")
+
+	def test_document_change_can_require_an_explicit_watched_field(self):
+		created = create_workflow_record("Watched field update", "Lead", trigger_type="trigger.document_change")
+		graph = created["graph"]
+		graph["nodes"][0]["config"] = {
+			"watch_fields": ["company_name"],
+			"condition": {"kind": "predicate", "field": "first_name", "operator": "eq", "value": "Watcher"},
+		}
+		save_workflow_draft(created["workflow"], 0, graph)
+		publish_workflow(created["workflow"], 1)
+		lead = frappe.get_doc({"doctype": "Lead", "first_name": "Watcher"}).insert()
+
+		lead.first_name = "Unwatched change"
+		lead.save()
+		event_name = frappe.db.get_value(
+			"Automation Outbox Event",
+			{"object_doctype": "Lead", "object_name": lead.name, "event_type": "ON_UPDATE", "status": "PENDING"},
+			"name",
+		)
+		self.assertTrue(event_name)
+		self.assertEqual(events.process_outbox_event(event_name), 0)
+		self.assertFalse(frappe.db.exists("Automation Run", {"workflow": created["workflow"], "record_name": lead.name}))
+
+		lead.first_name = "Watcher"
+		lead.company_name = "Watched Company"
+		lead.save()
+		event_name = frappe.db.get_value(
+			"Automation Outbox Event",
+			{"object_doctype": "Lead", "object_name": lead.name, "event_type": "ON_UPDATE", "status": "PENDING"},
+			"name",
+		)
+		self.assertEqual(events.process_outbox_event(event_name), 1)
+		self.assertTrue(frappe.db.exists("Automation Run", {"workflow": created["workflow"], "record_name": lead.name}))
 
 	def test_relevant_change_completes_live_run_and_cancels_durable_wait(self):
 		goal = {"kind": "predicate", "field": "first_name", "operator": "eq", "value": "Goal reached"}

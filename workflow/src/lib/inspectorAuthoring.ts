@@ -92,6 +92,30 @@ export function parseCondition(value: unknown): ConditionExpression {
   return emptyPredicate()
 }
 
+export function conditionToFilterGroups(value: unknown): ConditionPredicate[][] | null {
+  const expression = parseCondition(value)
+  if (expression.kind === 'predicate') return [[expression]]
+  if (expression.kind === 'all' && expression.children.every((child) => child.kind === 'predicate')) {
+    return [expression.children as ConditionPredicate[]]
+  }
+  if (expression.kind !== 'any') return null
+  const groups: ConditionPredicate[][] = []
+  for (const child of expression.children) {
+    if (child.kind === 'predicate') groups.push([child])
+    else if (child.kind === 'all' && child.children.every((candidate) => candidate.kind === 'predicate')) groups.push(child.children as ConditionPredicate[])
+    else return null
+  }
+  return groups.length ? groups : [[emptyPredicate()]]
+}
+
+export function filterGroupsToCondition(groups: ConditionPredicate[][]): ConditionExpression {
+  const normalized = groups.length ? groups : [[emptyPredicate()]]
+  return {
+    kind: 'any',
+    children: normalized.map((group) => ({ kind: 'all', children: group.length ? group : [emptyPredicate()] })),
+  }
+}
+
 export function parseAssignments(value: unknown): WorkflowAssignment[] {
   if (!Array.isArray(value)) return []
   return value.flatMap((candidate) => {

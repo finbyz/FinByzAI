@@ -14,6 +14,8 @@
   "token_batch_size",
   "timer_batch_size",
   "max_recursion_depth",
+  "retention_section",
+  "history_retention_days",
   "monitoring_section",
   "health_failure_window_hours",
   "incident_alert_user",
@@ -81,6 +83,18 @@
    "label": "Maximum Recursion Depth",
    "default": "10",
    "description": "Maximum nested automation/subflow depth for one causation chain. Further recursion is stopped to prevent workflow loops."
+  },
+  {
+   "fieldname": "retention_section",
+   "fieldtype": "Section Break",
+   "label": "History Retention"
+  },
+  {
+   "default": "180",
+   "description": "Completed, failed, and cancelled workflow execution details older than this number of days are purged daily. Minimum 180 days preserves the client-required six-month history window.",
+   "fieldname": "history_retention_days",
+   "fieldtype": "Int",
+   "label": "Execution History Retention (Days)"
   },
   {
    "fieldname": "monitoring_section",

@@ -10,6 +10,11 @@
   "node_id",
   "timer_type",
   "event_topic",
+  "record_doctype",
+  "record_name",
+  "source_type",
+  "source_doctype",
+  "source_name",
   "due_at",
   "status",
   "released_at"
@@ -40,13 +45,44 @@
    "fieldtype": "Select",
    "label": "Timer Type",
    "reqd": 1,
-   "options": "DELAY\nTIMEOUT\nRETRY"
+   "options": "DELAY\nTIMEOUT\nEVENT_WAIT\nRETRY"
+  },
+  {
+   "fieldname": "record_doctype",
+   "fieldtype": "Link",
+   "label": "Enrolled Record Type",
+   "options": "DocType",
+   "search_index": 1
+  },
+  {
+   "fieldname": "record_name",
+   "fieldtype": "Data",
+   "label": "Enrolled Record",
+   "search_index": 1
+  },
+  {
+   "fieldname": "source_type",
+   "fieldtype": "Select",
+   "label": "Event Data Source",
+   "options": "ENROLLED_RECORD\nACTION_EMAIL\nACTION_RECORD"
+  },
+  {
+   "fieldname": "source_doctype",
+   "fieldtype": "Link",
+   "label": "Event Source Type",
+   "options": "DocType",
+   "search_index": 1
+  },
+  {
+   "fieldname": "source_name",
+   "fieldtype": "Data",
+   "label": "Event Source",
+   "search_index": 1
   },
   {
    "fieldname": "due_at",
    "fieldtype": "Datetime",
-   "label": "Due At",
-   "reqd": 1
+   "label": "Due At"
   },
   {
    "fieldname": "event_topic",
