@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import time
 from typing import Any
 from zoneinfo import available_timezones
 
 import frappe
 from frappe import _
-from frappe.utils import cint
+from frappe.email.email_body import get_formatted_html
+from frappe.utils import cint, validate_email_address
 
-from . import authoring, bulk, engine, events, external, observability, registry
+from . import authoring, bulk, emailing, engine, events, external, observability, registry
 from .configuration import (
 	automation_enabled,
 	external_actions_enabled,
@@ -89,6 +91,167 @@ def get_node_types():
 	return {"node_types": registry.node_catalog()}
 
 
+def _email_workflow(workflow_id: str, ptype: str = "read"):
+	workflow = frappe.get_doc("Automation Workflow", workflow_id)
+	workflow.check_permission(ptype)
+	return workflow
+
+
+def _email_preview_record(workflow, record_name: str | None):
+	if not record_name:
+		return frappe._dict(doctype=workflow.primary_doctype)
+	record = frappe.get_doc(workflow.primary_doctype, record_name)
+	record.check_permission("read")
+	return record
+
+
+@frappe.whitelist()
+def list_email_templates(workflow_id: str, search: str | None = None, start: int = 0, page_length: int = 20):
+	registry.require_builder()
+	workflow = _email_workflow(workflow_id)
+	meta = frappe.get_meta("Email Template")
+	fields = ["name", "subject", "enabled", "use_html", "modified"]
+	for fieldname in ("reference_doctype", "custom_reference_doctype", "custom_builder_mode", "custom_preheader_text"):
+		if meta.has_field(fieldname):
+			fields.append(fieldname)
+	filters = {"enabled": 1} if meta.has_field("enabled") else {}
+	needle = str(search or "").strip()
+	rows = frappe.get_list(
+		"Email Template",
+		filters=filters,
+		or_filters={"name": ["like", f"%{needle}%"], "subject": ["like", f"%{needle}%"]} if needle else None,
+		fields=fields,
+		order_by="modified desc",
+		limit=200,
+	)
+	compatible = [
+		emailing.email_template_summary(row, workflow.primary_doctype)
+		for row in rows
+		if not emailing.template_reference_doctype(row)
+		or emailing.template_reference_doctype(row) == workflow.primary_doctype
+	]
+	start = max(cint(start), 0)
+	limit = min(max(cint(page_length), 1), 50)
+	return {"rows": compatible[start : start + limit], "has_more": len(compatible) > start + limit}
+
+
+@frappe.whitelist()
+def get_workflow_email_template(workflow_id: str, template_name: str):
+	registry.require_builder()
+	workflow = _email_workflow(workflow_id)
+	template = emailing.get_email_template(template_name, workflow.primary_doctype)
+	return emailing.email_template_summary(template, workflow.primary_doctype)
+
+
+@frappe.whitelist(methods=["POST"])
+def create_workflow_email_template(workflow_id: str, template_name: str, subject: str):
+	registry.require_builder()
+	workflow = _email_workflow(workflow_id, "write")
+	if "finbyzreach" not in frappe.get_installed_apps():
+		raise AutomationError(_("The visual Email Template Builder app is not installed."))
+	from finbyzreach.email_template_builder.api import create_visual_template
+
+	result = create_visual_template(template_name, subject)
+	template = frappe.get_doc("Email Template", result["name"])
+	meta = frappe.get_meta("Email Template")
+	if meta.has_field("custom_reference_doctype"):
+		template.custom_reference_doctype = workflow.primary_doctype
+	if meta.has_field("reference_doctype"):
+		template.reference_doctype = workflow.primary_doctype
+	template.save()
+	return {**result, **emailing.email_template_summary(template, workflow.primary_doctype)}
+
+
+@frappe.whitelist(methods=["POST"])
+def preview_workflow_email(workflow_id: str, config=None, record_name: str | None = None):
+	registry.require_builder()
+	workflow = _email_workflow(workflow_id)
+	record = _email_preview_record(workflow, record_name)
+	content = emailing.resolve_email_content(
+		_object(config, "email configuration"),
+		record=record,
+		outputs={},
+		primary_doctype=workflow.primary_doctype,
+	)
+	html = get_formatted_html(
+		content["subject"], content["message"], raw_html=bool(content["raw_html"]), add_css=not bool(content["raw_html"])
+	)
+	return {
+		**content,
+		"html": html,
+		"bytes": len(html.encode()),
+		"record_name": record_name or None,
+	}
+
+
+def _check_workflow_test_email_rate_limit() -> None:
+	window = 600
+	key = frappe.cache.make_key(f"workflow-email-test:{frappe.session.user}:{int(time.time()) // window}")
+	if not frappe.cache.get(key):
+		frappe.cache.setex(key, window, 0)
+	if frappe.cache.incrby(key, 1) > 10:
+		frappe.throw(_("You can send at most 10 workflow test emails every 10 minutes."), frappe.RateLimitExceededError)
+
+
+@frappe.whitelist(methods=["POST"])
+def send_workflow_test_email(
+	workflow_id: str,
+	config=None,
+	recipient: str | None = None,
+	record_name: str | None = None,
+):
+	registry.require_builder()
+	workflow = _email_workflow(workflow_id)
+	recipient = str(recipient or "").strip()
+	if any(character in recipient for character in (",", ";", "\n", "\r")):
+		raise AutomationError(_("Send a test to one email address at a time."))
+	validate_email_address(recipient, throw=True)
+	_check_workflow_test_email_rate_limit()
+	record = _email_preview_record(workflow, record_name)
+	values = _object(config, "email configuration")
+	content = emailing.resolve_email_content(values, record=record, outputs={}, primary_doctype=workflow.primary_doctype)
+	draft_name = frappe.db.get_value("Automation Workflow Draft", {"workflow": workflow.name}, "name")
+	settings = parse_object(frappe.db.get_value("Automation Workflow Draft", draft_name, "settings_json") or "{}", "workflow settings") if draft_name else {}
+	communication = settings.get("communication") or {}
+	sender_email = str(values.get("sender_email") or communication.get("default_sender_email") or "").strip()
+	if sender_email and not frappe.db.exists("Email Account", {"email_id": sender_email, "enable_outgoing": 1}):
+		raise AutomationError(_("Choose the address of an enabled outgoing Email Account."))
+	sender_name = str(values.get("sender_name") or communication.get("default_sender_name") or "").strip()
+	sender = f"{sender_name} <{sender_email}>" if sender_name and sender_email else sender_email or None
+	reply_to = str(values.get("reply_to") or "").strip()
+	if reply_to:
+		validate_email_address(reply_to, throw=True)
+	queue = frappe.sendmail(
+		recipients=[recipient],
+		sender=sender,
+		reply_to=reply_to or None,
+		subject=f"[TEST] {content['subject']}",
+		content=content["message"],
+		delayed=True,
+		reference_doctype="Automation Workflow",
+		reference_name=workflow.name,
+		add_unsubscribe_link=0,
+		raw_html=bool(content["raw_html"]),
+		add_css=not bool(content["raw_html"]),
+	)
+	if not queue or not getattr(queue, "name", None):
+		raise AutomationError(_("Frappe did not create an Email Queue record."))
+	return {"status": "queued", "email_queue": queue.name, "recipient": recipient, "subject": content["subject"]}
+
+
+@frappe.whitelist()
+def get_event_types(primary_doctype: str | None = None, usage: str = "all"):
+	registry.require_builder()
+	usage = str(usage or "all").strip().lower()
+	if usage not in {"all", "trigger", "wait"}:
+		raise AutomationError(_("Event catalogue usage must be all, trigger, or wait."))
+	return {
+		"event_types": registry.business_event_catalog(primary_doctype, usage),
+		"object_profile": registry.workflow_object_profile(primary_doctype),
+		"usage": usage,
+	}
+
+
 @frappe.whitelist()
 def get_integration_secrets(search: str | None = None):
 	registry.require_publisher()
@@ -123,9 +286,10 @@ def list_workflows(
 	search: str | None = None,
 	primary_doctype: str | None = None,
 	exclude_workflow: str | None = None,
+	folder: str | None = None,
 ):
 	registry.require_viewer()
-	return authoring.list_workflow_records(start, page_length, status, search, primary_doctype, exclude_workflow)
+	return authoring.list_workflow_records(start, page_length, status, search, primary_doctype, exclude_workflow, folder)
 
 
 @frappe.whitelist()
@@ -226,7 +390,7 @@ def discard_outbox_event(event_id: str):
 
 
 @frappe.whitelist(methods=["POST"])
-def create_workflow(envelope=None, title=None, primary_doctype=None, description=None, execution_user=None, trigger_type=None):
+def create_workflow(envelope=None, title=None, primary_doctype=None, description=None, execution_user=None, trigger_type=None, folder=None):
 	registry.require_builder()
 	data = _envelope(
 		envelope,
@@ -235,6 +399,7 @@ def create_workflow(envelope=None, title=None, primary_doctype=None, description
 		description=description,
 		execution_user=execution_user,
 		trigger_type=trigger_type,
+		folder=folder,
 	)
 	payload = data["payload"]
 	return authoring.create_workflow_record(
@@ -243,8 +408,16 @@ def create_workflow(envelope=None, title=None, primary_doctype=None, description
 		payload.get("description") or data.get("description") or "",
 		payload.get("execution_user") or data.get("execution_user"),
 		payload.get("trigger_type") or data.get("trigger_type") or "trigger.manual",
+		payload.get("folder") or data.get("folder") or "",
 		idempotency_key=data.get("idempotency_key"),
 	)
+
+
+@frappe.whitelist(methods=["POST"])
+def set_workflow_folder(envelope=None, workflow_id=None, folder=None):
+	registry.require_builder()
+	data = _envelope(envelope, workflow_id=workflow_id, folder=folder)
+	return authoring.set_workflow_folder(data.get("workflow_id"), data["payload"].get("folder", data.get("folder")))
 
 
 @frappe.whitelist(methods=["POST"])
@@ -571,18 +744,27 @@ def enroll_manual(envelope=None, workflow_id=None, record_name=None, idempotency
 
 
 @frappe.whitelist(methods=["POST"])
-def signal_event(event_topic: str, payload=None, record_doctype: str | None = None, record_name: str | None = None):
-	"""Resume matching durable event waits from an authorized integration."""
+def signal_event(
+	event_topic: str,
+	payload=None,
+	record_doctype: str | None = None,
+	record_name: str | None = None,
+	source_doctype: str | None = None,
+	source_name: str | None = None,
+	idempotency_key: str | None = None,
+):
+	"""Resume waits and enroll matching event-triggered workflows."""
 	registry.require_operator()
-	return {
-		"event_topic": str(event_topic or "").strip(),
-		"released": engine.release_event_waiters(
-			event_topic,
-			_object(payload, "event payload"),
-			record_doctype=record_doctype,
-			record_name=record_name,
-		),
-	}
+	return events.signal_business_event(
+		event_topic,
+		_object(payload, "event payload"),
+		record_doctype=record_doctype,
+		record_name=record_name,
+		source_doctype=source_doctype,
+		source_name=source_name,
+		idempotency_key=idempotency_key,
+		check_record_permission=True,
+	)
 
 
 @frappe.whitelist()

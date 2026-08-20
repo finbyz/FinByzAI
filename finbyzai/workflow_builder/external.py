@@ -18,6 +18,7 @@ from frappe import _
 from frappe.utils import cint, now_datetime, validate_email_address
 
 from .configuration import external_actions_enabled
+from .emailing import resolve_email_content
 from .errors import AutomationError, AutomationTransientError
 from .schema import resolve_value
 
@@ -121,36 +122,53 @@ def _require_consent(run, *, channel: str, purpose: str, recipient: str | None, 
 		raise AutomationError(_("No current consent grant exists for this external action."))
 
 
-def queue_email(run, config: dict, *, record, outputs: dict[str, Any]) -> dict:
+def queue_email(run, config: dict, *, record, outputs: dict[str, Any], workflow_settings: dict | None = None) -> dict:
 	if not external_actions_enabled():
 		raise AutomationError(_("External workflow actions are disabled in Automation Settings."))
 	recipient = str(_resolve_tree(config.get("recipient"), record=record, outputs=outputs) or "").strip()
 	if not validate_email_address(recipient, throw=False):
 		raise AutomationError(_("Email action resolved to an invalid recipient."))
-	purpose = str(config.get("purpose") or "workflow")[:140]
-	_require_consent(
-		run,
-		channel="EMAIL",
-		purpose=purpose,
-		recipient=recipient,
-		required=bool(cint(config.get("require_consent", 1))),
+	content = resolve_email_content(
+		config, record=record, outputs=outputs, primary_doctype=run.record_doctype
 	)
-	subject = str(_resolve_tree(config.get("subject"), record=record, outputs=outputs) or "")[:998]
-	message = str(_resolve_tree(config.get("message"), record=record, outputs=outputs) or "")
+	subject = content["subject"]
+	message = content["message"]
 	if not subject or not message:
 		raise AutomationError(_("Email subject and message are required."))
+	communication = (workflow_settings or {}).get("communication") or {}
+	sender_email = str(config.get("sender_email") or communication.get("default_sender_email") or "").strip()
+	sender_name = str(config.get("sender_name") or communication.get("default_sender_name") or "").strip()
+	if sender_email and not frappe.db.exists(
+		"Email Account", {"email_id": sender_email, "enable_outgoing": 1}
+	):
+		raise AutomationError(_("Choose the address of an enabled outgoing Email Account."))
+	sender = f"{sender_name} <{sender_email}>" if sender_email and sender_name else sender_email
+	reply_to = str(config.get("reply_to") or "").strip()
+	if reply_to and not validate_email_address(reply_to, throw=False):
+		raise AutomationError(_("Email Reply-To address is invalid."))
 	queue = frappe.sendmail(
 		recipients=[recipient],
+		sender=sender,
+		reply_to=reply_to or None,
 		subject=subject,
-		message=message,
+		content=message,
 		delayed=True,
 		reference_doctype=run.record_doctype,
 		reference_name=run.record_name,
 		add_unsubscribe_link=1,
+		raw_html=bool(content["raw_html"]),
+		add_css=not bool(content["raw_html"]),
 	)
 	if not queue or not getattr(queue, "name", None):
 		raise AutomationError(_("Frappe did not create an Email Queue record."))
-	return {"email_queue": queue.name, "recipient": recipient}
+	return {
+		"email_queue": queue.name,
+		"recipient": recipient,
+		"sender": sender or None,
+		"reply_to": reply_to or None,
+		"email_template": content.get("email_template"),
+		"content_hash": content.get("content_hash"),
+	}
 
 
 def _safe_webhook_url(url: str, allowed_hosts: set[str]) -> tuple[str, str, tuple[str, ...]]:
@@ -256,7 +274,7 @@ def send_webhook(run, config: dict, *, record, outputs: dict[str, Any], effect_k
 	_consented_recipient = str(config.get("consent_recipient") or "")
 	_require_consent(
 		run,
-		channel="WEBHOOK",
+		channel=str(config.get("_consent_channel") or "WEBHOOK"),
 		purpose=str(config.get("purpose") or "workflow")[:140],
 		recipient=_consented_recipient,
 		required=bool(cint(config.get("require_consent", 0))),
@@ -286,6 +304,81 @@ def send_webhook(run, config: dict, *, record, outputs: dict[str, Any], effect_k
 	if not 200 <= status < 300:
 		raise AutomationError(_("Webhook provider rejected the request with HTTP {0}.").format(status))
 	return {"status_code": status, "response_hash": hashlib.sha256(response_data).hexdigest()}
+
+
+def send_instagram_message(run, config: dict, *, record, outputs: dict[str, Any], effect_key: str) -> dict:
+	recipient_id = str(_resolve_tree(config.get("recipient_id"), record=record, outputs=outputs) or "").strip()
+	message = str(_resolve_tree(config.get("message"), record=record, outputs=outputs) or "").strip()
+	if not recipient_id or len(recipient_id) > 140 or not message or len(message) > 2000:
+		raise AutomationError(_("Instagram recipient and a message up to 2,000 characters are required."))
+	result = send_webhook(
+		run,
+		{
+			**config,
+			"_consent_channel": "INSTAGRAM",
+			"consent_recipient": recipient_id,
+			"payload": {"recipient": {"id": recipient_id}, "message": {"text": message}},
+		},
+		record=record,
+		outputs=outputs,
+		effect_key=effect_key,
+	)
+	return {**result, "recipient_id": recipient_id}
+
+
+def execute_asana(config: dict, *, record, outputs: dict[str, Any]) -> dict:
+	if "asana_integration" not in frappe.get_installed_apps():
+		raise AutomationError(_("The Asana Integration app is not installed."))
+	settings = frappe.get_cached_doc("Asana Settings")
+	if not settings.enabled or not settings.workspace_gid:
+		raise AutomationError(_("Asana Settings are disabled or incomplete."))
+	payload = _resolve_tree(config.get("payload") or {}, record=record, outputs=outputs)
+	if not isinstance(payload, dict) or not payload or len(json.dumps(payload, default=str)) > 128 * 1024:
+		raise AutomationError(_("Asana fields must be a non-empty JSON object no larger than 128 KiB."))
+	operation = str(config.get("operation") or "")
+	target_gid = str(_resolve_tree(config.get("target_gid"), record=record, outputs=outputs) or "").strip()
+	try:
+		from asana_integration import client as asana_client
+
+		if operation == "create_task":
+			payload.setdefault("workspace", settings.workspace_gid)
+			response = asana_client.create_task(payload)
+		elif operation == "update_task":
+			if not target_gid:
+				raise AutomationError(_("Asana task GID is required for update."))
+			response = asana_client.update_task(target_gid, payload)
+		elif operation == "create_subtask":
+			if not target_gid:
+				raise AutomationError(_("Parent Asana task GID is required for a subtask."))
+			payload["parent"] = target_gid
+			response = asana_client.create_task(payload)
+		elif operation == "create_project":
+			import asana
+
+			payload.setdefault("workspace", settings.workspace_gid)
+			api = asana.ProjectsApi(asana_client.get_api_client())
+			response = api.create_project({"data": payload}, {"opt_fields": "gid,name,permalink_url"})
+			if hasattr(response, "to_dict"):
+				response = response.to_dict()
+			if isinstance(response, dict) and isinstance(response.get("data"), dict):
+				response = response["data"]
+		else:
+			raise AutomationError(_("Unsupported Asana operation."))
+	except AutomationError:
+		raise
+	except Exception as exc:
+		status = cint(getattr(exc, "status", 0) or getattr(getattr(exc, "response", None), "status_code", 0))
+		if status == 429 or status >= 500:
+			raise AutomationTransientError(_("Asana temporarily rejected the request.")) from exc
+		raise AutomationError(_("Asana rejected the request: {0}").format(str(exc)[:500])) from exc
+	if not isinstance(response, dict):
+		response = {"value": str(response)}
+	return {
+		"gid": response.get("gid"),
+		"name": response.get("name"),
+		"permalink_url": response.get("permalink_url"),
+		"operation": operation,
+	}
 
 
 def _normalise_sms_recipient(value: Any) -> str:
@@ -343,7 +436,7 @@ def _send_sms_via_frappe_gateway(recipient: str, message: str) -> int:
 	return response.status_code
 
 
-def send_frappe_sms(run, config: dict, *, record, outputs: dict[str, Any]) -> dict:
+def send_frappe_sms(run, config: dict, *, record, outputs: dict[str, Any], workflow_settings: dict | None = None) -> dict:
 	if not external_actions_enabled():
 		raise AutomationError(_("External workflow actions are disabled in Automation Settings."))
 
@@ -361,24 +454,32 @@ def send_frappe_sms(run, config: dict, *, record, outputs: dict[str, Any]) -> di
 	)
 
 	hook_methods = frappe.get_hooks("send_sms")
+	sender_name = str(config.get("sender_name") or ((workflow_settings or {}).get("communication") or {}).get("default_sms_sender") or "")
 	if hook_methods:
 		# Preserve Frappe's documented extension point. A successful return means the
 		# custom provider accepted responsibility for delivery.
-		frappe.get_attr(hook_methods[-1])([recipient], message, "", False)
+		frappe.get_attr(hook_methods[-1])([recipient], message, sender_name, False)
 		status_code = None
 	else:
 		status_code = _send_sms_via_frappe_gateway(recipient, message)
 
-	return {"recipient": recipient, "status": "SENT", "status_code": status_code, "consent_check": True}
+	result = {"recipient": recipient, "status": "SENT", "status_code": status_code, "consent_check": True}
+	if sender_name:
+		result["sender"] = sender_name
+	return result
 
 
-def execute_external(node_type: str, run, config: dict, *, record, outputs: dict[str, Any], effect_key: str) -> dict:
+def execute_external(node_type: str, run, config: dict, *, record, outputs: dict[str, Any], effect_key: str, workflow_settings: dict | None = None) -> dict:
 	if node_type == "action.send_email":
-		output = queue_email(run, config, record=record, outputs=outputs)
+		output = queue_email(run, config, record=record, outputs=outputs, workflow_settings=workflow_settings)
 	elif node_type == "action.webhook":
 		output = send_webhook(run, config, record=record, outputs=outputs, effect_key=effect_key)
+	elif node_type == "action.instagram_message":
+		output = send_instagram_message(run, config, record=record, outputs=outputs, effect_key=effect_key)
+	elif node_type == "action.asana":
+		output = execute_asana(config, record=record, outputs=outputs)
 	elif node_type == "action.send_sms":
-		output = send_frappe_sms(run, config, record=record, outputs=outputs)
+		output = send_frappe_sms(run, config, record=record, outputs=outputs, workflow_settings=workflow_settings)
 	else:
 		raise AutomationError(_("Unsupported external action."))
 	return {"status": "COMPLETE", "output": output}

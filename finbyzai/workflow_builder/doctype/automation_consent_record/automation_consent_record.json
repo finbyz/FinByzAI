@@ -9,7 +9,7 @@
  "fields": [
   {"fieldname": "record_doctype", "fieldtype": "Link", "label": "Record DocType", "options": "DocType", "reqd": 1},
   {"fieldname": "record_name", "fieldtype": "Dynamic Link", "label": "Record Name", "options": "record_doctype", "reqd": 1},
-  {"fieldname": "channel", "fieldtype": "Select", "label": "Channel", "options": "EMAIL\nSMS\nWEBHOOK", "reqd": 1},
+  {"fieldname": "channel", "fieldtype": "Select", "label": "Channel", "options": "EMAIL\nSMS\nINSTAGRAM\nWEBHOOK", "reqd": 1},
   {"fieldname": "purpose", "fieldtype": "Data", "label": "Purpose", "reqd": 1},
   {"fieldname": "recipient", "fieldtype": "Data", "label": "Recipient"},
   {"fieldname": "status", "fieldtype": "Select", "label": "Status", "options": "GRANTED\nDENIED\nREVOKED", "reqd": 1},

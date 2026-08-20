@@ -33,6 +33,8 @@ INDEXES = {
 	"Automation Timer": [
 		(["status", "due_at", "creation"], "idx_automation_timer_due"),
 		(["run", "status"], "idx_automation_timer_run"),
+		(["status", "event_topic", "record_doctype", "record_name"], "idx_automation_timer_event_record"),
+		(["status", "event_topic", "source_doctype", "source_name"], "idx_automation_timer_event_source"),
 	],
 	"Automation Trigger Subscription": [
 		(["primary_doctype", "event_type", "active"], "idx_automation_subscription_match"),
@@ -162,4 +164,5 @@ def after_install() -> None:
 def after_migrate() -> None:
 	ensure_module_ownership()
 	ensure_automation_roles()
+	ensure_automation_indexes()
 	quarantine_invalid_active_versions()

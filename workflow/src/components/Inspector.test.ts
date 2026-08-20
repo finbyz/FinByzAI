@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { WorkflowGraph } from '../types'
-import { availableOutputNodes, isRequiredAuthoringValueMissing, nodeOutputPaths, parseAssignments, parseCondition, parseWebhookPayload, type NodeOutputCatalog } from '../lib/inspectorAuthoring'
+import { availableOutputNodes, conditionToFilterGroups, filterGroupsToCondition, isRequiredAuthoringValueMissing, nodeOutputPaths, parseAssignments, parseCondition, parseWebhookPayload, type NodeOutputCatalog } from '../lib/inspectorAuthoring'
 
 const outputs: NodeOutputCatalog = {
-  'condition.if_else': ['matched'],
+	'condition.if_else': ['matched', 'selected_handle', 'branch_name'],
+	'condition.random_split': ['selected_handle', 'branch_name', 'bucket'],
   'condition.switch': ['value', 'matched_handle'],
   'delay.business_hours': ['released', 'due_at', 'timezone'],
   'action.create_record': ['doctype', 'name'],
@@ -24,7 +25,8 @@ describe('Inspector authoring contracts', () => {
     expect(nodeOutputPaths(node('switch', 'condition.switch'), outputs)).toEqual(['value', 'matched_handle'])
     expect(nodeOutputPaths(node('numeric', 'action.numeric_adjust'), outputs)).toContain('previous')
     expect(nodeOutputPaths(node('association', 'action.manage_association'), outputs)).toContain('doctype')
-    expect(nodeOutputPaths(node('hours', 'delay.business_hours'), outputs)).toEqual(['released', 'due_at', 'timezone'])
+		expect(nodeOutputPaths(node('hours', 'delay.business_hours'), outputs)).toEqual(['released', 'due_at', 'timezone'])
+		expect(nodeOutputPaths(node('split', 'condition.random_split'), outputs)).toEqual(['selected_handle', 'branch_name', 'bucket'])
   })
 
   it('preserves invalid webhook JSON so publishing is blocked instead of sending stale data', () => {
@@ -54,6 +56,18 @@ describe('Inspector authoring contracts', () => {
     expect(expression).toMatchObject({ kind: 'all', children: [{ field: 'status' }, { kind: 'any' }] })
     expect(parseCondition({ kind: 'any', children: [] })).toMatchObject({ kind: 'any', children: [{ kind: 'predicate' }] })
   })
+
+	it('maps If/else criteria to simple AND groups separated by OR', () => {
+		const grouped = filterGroupsToCondition([
+			[{ kind: 'predicate', field: 'country', operator: 'eq', value: 'Germany' }, { kind: 'predicate', field: 'language', operator: 'eq', value: 'German' }],
+			[{ kind: 'predicate', field: 'customer_type', operator: 'eq', value: 'Partner' }],
+		])
+		const groups = conditionToFilterGroups(grouped)
+		expect(groups).toHaveLength(2)
+		expect(groups?.[0].map((condition) => condition.field)).toEqual(['country', 'language'])
+		expect(groups?.[1].map((condition) => condition.field)).toEqual(['customer_type'])
+		expect(conditionToFilterGroups({ kind: 'not', children: [{ kind: 'predicate', field: 'disabled', operator: 'eq', value: 1 }] })).toBeNull()
+	})
 
   it('parses multiple literal, record-field, and prior-output assignments', () => {
     expect(parseAssignments([
