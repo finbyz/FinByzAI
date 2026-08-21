@@ -7,9 +7,10 @@ from zoneinfo import available_timezones
 import frappe
 from frappe import _
 from frappe.email.email_body import get_formatted_html
+from frappe.query_builder.functions import Count, JSONValue
 from frappe.utils import cint, validate_email_address
 
-from . import authoring, bulk, emailing, engine, events, external, observability, registry
+from . import authoring, bulk, collaboration, emailing, engine, events, external, observability, registry, webhooks
 from .configuration import (
 	automation_enabled,
 	external_actions_enabled,
@@ -86,9 +87,21 @@ def get_fields(doctype: str, permission_type: str = "read", workflow_id: str | N
 
 
 @frappe.whitelist()
-def get_node_types():
+def get_node_types(workflow_id: str | None = None):
 	registry.require_builder()
-	return {"node_types": registry.node_catalog()}
+	primary_doctype = None
+	execution_user = None
+	if workflow_id:
+		workflow = frappe.get_doc("Automation Workflow", workflow_id)
+		workflow.check_permission("read")
+		primary_doctype = workflow.primary_doctype
+		execution_user = workflow.execution_user
+	return {
+		"node_types": registry.node_catalog(
+			primary_doctype=primary_doctype,
+			execution_user=execution_user,
+		)
+	}
 
 
 def _email_workflow(workflow_id: str, ptype: str = "read"):
@@ -133,6 +146,42 @@ def list_email_templates(workflow_id: str, search: str | None = None, start: int
 	start = max(cint(start), 0)
 	limit = min(max(cint(page_length), 1), 50)
 	return {"rows": compatible[start : start + limit], "has_more": len(compatible) > start + limit}
+
+
+@frappe.whitelist()
+def list_email_senders(search: str | None = None, page_length: int = 20):
+	"""Return enabled outgoing identities, never arbitrary typed sender addresses."""
+	registry.require_builder()
+	needle = str(search or "").strip()
+	# The builder role intentionally receives only these non-secret identity fields;
+	# Email Account credentials and transport settings are never returned.
+	rows = frappe.get_all(
+		"Email Account",
+		filters={"enable_outgoing": 1},
+		or_filters={
+			"name": ["like", f"%{needle}%"],
+			"email_id": ["like", f"%{needle}%"],
+		}
+		if needle
+		else None,
+		fields=["name", "email_id", "default_outgoing"],
+		order_by="default_outgoing desc, name asc",
+		limit=min(max(cint(page_length), 1), 50),
+	)
+	return {
+		"rows": [
+			{
+				"value": row.email_id,
+				"label": row.email_id,
+				"description": _("{0}{1}").format(
+					row.name,
+					_(" · Default outgoing") if cint(row.default_outgoing) else "",
+				),
+			}
+			for row in rows
+			if row.email_id
+		]
+	}
 
 
 @frappe.whitelist()
@@ -421,10 +470,13 @@ def set_workflow_folder(envelope=None, workflow_id=None, folder=None):
 
 
 @frappe.whitelist(methods=["POST"])
-def delete_workflow(envelope=None, workflow_id=None):
+def delete_workflow(envelope=None, workflow_id=None, delete_history=None):
 	registry.require_builder()
-	data = _envelope(envelope, workflow_id=workflow_id)
-	return authoring.delete_workflow_record(data.get("workflow_id"))
+	data = _envelope(envelope, workflow_id=workflow_id, delete_history=delete_history)
+	return authoring.delete_workflow_record(
+		data.get("workflow_id"),
+		data["payload"].get("delete_history", data.get("delete_history")),
+	)
 
 
 @frappe.whitelist()
@@ -892,6 +944,109 @@ def get_automation_analytics(workflow_id: str | None = None, days: int = 30):
 	return observability.analytics(workflow_id, days=days)
 
 
+@frappe.whitelist()
+def get_canvas_metrics(workflow_id: str, workflow_version: str | None = None):
+	"""Return idempotent per-step reach and branch counts for the published canvas."""
+	registry.require_viewer()
+	workflow = frappe.get_doc("Automation Workflow", workflow_id)
+	workflow.check_permission("read")
+	version = str(workflow_version or workflow.active_version or "").strip()
+	if not version:
+		return {"workflow_id": workflow.name, "workflow_version": None, "total_enrollments": 0, "nodes": []}
+	if not frappe.db.exists("Automation Workflow Version", {"name": version, "workflow": workflow.name}):
+		raise AutomationPermissionError(_("That workflow version is not available for this workflow."))
+
+	Run = frappe.qb.DocType("Automation Run")
+	Token = frappe.qb.DocType("Automation Run Token")
+	count = Count(Token.name).as_("count")
+	rows = (
+		frappe.qb.from_(Token)
+		.join(Run).on(Run.name == Token.run)
+		.select(Token.node_id, Token.status, count)
+		.where((Run.workflow == workflow.name) & (Run.workflow_version == version))
+		.groupby(Token.node_id, Token.status)
+	).run(as_dict=True)
+
+	metrics: dict[str, dict] = {}
+	for row in rows:
+		node_id = str(row.node_id)
+		metric = metrics.setdefault(node_id, {
+			"node_id": node_id,
+			"reached": 0,
+			"ready": 0,
+			"running": 0,
+			"waiting": 0,
+			"completed": 0,
+			"failed": 0,
+			"cancelled": 0,
+			"branches": {},
+		})
+		status = str(row.status or "").lower()
+		value = cint(row.count)
+		metric[status] = metric.get(status, 0) + value
+		metric["reached"] += value
+
+	branch_handle = JSONValue(Token.output_json, "$.selected_handle")
+	branch_count = Count(Token.name).as_("count")
+	branch_rows = (
+		frappe.qb.from_(Token)
+		.join(Run).on(Run.name == Token.run)
+		.select(Token.node_id, branch_handle.as_("branch_handle"), branch_count)
+		.where(
+			(Run.workflow == workflow.name)
+			& (Run.workflow_version == version)
+			& (Token.status == "COMPLETED")
+			& Token.output_json.isnotnull()
+			& branch_handle.isnotnull()
+		)
+		.groupby(Token.node_id, branch_handle)
+	).run(as_dict=True)
+	for row in branch_rows:
+		handle = str(row.branch_handle or "").strip()
+		if not handle or str(row.node_id) not in metrics:
+			continue
+		branches = metrics[str(row.node_id)]["branches"]
+		branches[handle] = cint(branches.get(handle)) + cint(row.count)
+
+	total_enrollments = cint(frappe.db.count("Automation Run", {"workflow": workflow.name, "workflow_version": version}))
+	return {
+		"workflow_id": workflow.name,
+		"workflow_version": version,
+		"total_enrollments": total_enrollments,
+		"nodes": list(metrics.values()),
+	}
+
+
+@frappe.whitelist()
+def get_workflow_connections(workflow_id: str):
+	registry.require_viewer()
+	return collaboration.workflow_connections(workflow_id)
+
+
+@frappe.whitelist()
+def list_workflow_comments(workflow_id: str, step_id: str | None = None, include_resolved: int = 1):
+	registry.require_viewer()
+	return collaboration.list_comments(workflow_id, step_id=step_id, include_resolved=bool(cint(include_resolved)))
+
+
+@frappe.whitelist(methods=["POST"])
+def create_workflow_comment(workflow_id: str, content: str, step_id: str | None = None, mention_users=None):
+	registry.require_builder()
+	return collaboration.create_comment(workflow_id, content, step_id=step_id, mention_users=mention_users)
+
+
+@frappe.whitelist(methods=["POST"])
+def set_workflow_comment_resolved(comment_id: str, resolved: int = 1):
+	registry.require_builder()
+	return collaboration.set_comment_resolved(comment_id, bool(cint(resolved)))
+
+
+@frappe.whitelist(methods=["POST"])
+def delete_workflow_comment(comment_id: str):
+	registry.require_builder()
+	return collaboration.delete_comment(comment_id)
+
+
 @frappe.whitelist(methods=["POST"])
 def cancel_run(run_id: str):
 	registry.require_operator()
@@ -1017,6 +1172,7 @@ def create_schedule(
 	overlap_policy="SKIP",
 	max_records=0,
 	records_per_minute=500,
+	recurrence=None,
 ):
 	registry.require_operator()
 	data = _envelope(
@@ -1033,6 +1189,7 @@ def create_schedule(
 		overlap_policy=overlap_policy,
 		max_records=max_records,
 		records_per_minute=records_per_minute,
+		recurrence=recurrence,
 	)
 	payload = data["payload"]
 	return bulk.create_schedule(
@@ -1048,6 +1205,7 @@ def create_schedule(
 		overlap_policy=payload.get("overlap_policy", data.get("overlap_policy", "SKIP")),
 		max_records=cint(payload.get("max_records", data.get("max_records", 0))),
 		records_per_minute=cint(payload.get("records_per_minute", data.get("records_per_minute", 500))),
+		recurrence=payload.get("recurrence", data.get("recurrence")),
 	)
 
 
@@ -1071,7 +1229,7 @@ def list_schedules(workflow_id: str):
 	rows = frappe.get_list(
 		"Automation Schedule",
 		filters={"workflow": workflow.name},
-		fields=["name", "enabled", "frequency", "timezone", "version_policy", "workflow_version", "catch_up_policy", "overlap_policy", "filters_json", "batch_size", "records_per_minute", "max_records", "next_run_at", "last_run_at", "last_backfill_job", "modified"],
+		fields=["name", "enabled", "frequency", "recurrence_json", "timezone", "version_policy", "workflow_version", "catch_up_policy", "overlap_policy", "filters_json", "batch_size", "records_per_minute", "max_records", "next_run_at", "last_run_at", "last_backfill_job", "modified"],
 		order_by="creation desc",
 		limit=100,
 	)
@@ -1089,3 +1247,45 @@ def list_schedules(workflow_id: str):
 	for row in rows:
 		row.has_history = row.name in historical
 	return {"rows": rows}
+
+
+@frappe.whitelist(methods=["POST"])
+def create_inbound_webhook(envelope=None, workflow_id=None, **kwargs):
+	registry.require_publisher()
+	data = _envelope(envelope, workflow_id=workflow_id, **kwargs)
+	payload = data["payload"]
+	return webhooks.create_definition(
+		data.get("workflow_id"),
+		payload.get("title") or "Inbound workflow webhook",
+		auth_type=payload.get("auth_type") or "HMAC SHA256",
+		record_identity_field=payload.get("record_identity_field") or "name",
+		payload_record_path=payload.get("payload_record_path") or "record_id",
+		payload_fields=payload.get("payload_fields"),
+		payload_filters=payload.get("payload_filters"),
+		idempotency_path=payload.get("idempotency_path") or "event_id",
+		max_request_bytes=cint(payload.get("max_request_bytes") or 262144),
+		requests_per_minute=cint(payload.get("requests_per_minute") or 60),
+	)
+
+
+@frappe.whitelist()
+def list_inbound_webhooks(workflow_id: str):
+	registry.require_publisher()
+	return webhooks.list_definitions(workflow_id)
+
+
+@frappe.whitelist(methods=["POST"])
+def rotate_inbound_webhook_secret(webhook_id: str):
+	registry.require_publisher()
+	return webhooks.rotate_secret(webhook_id)
+
+
+@frappe.whitelist(methods=["POST"])
+def set_inbound_webhook_enabled(webhook_id: str, enabled: int):
+	registry.require_publisher()
+	return webhooks.set_enabled(webhook_id, bool(cint(enabled)))
+
+
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+def receive_inbound_webhook(endpoint_key: str):
+	return webhooks.receive(endpoint_key)

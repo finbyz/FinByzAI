@@ -393,23 +393,65 @@ class TestAutomationEvents(IntegrationTestCase):
 		self.assertEqual([call.args[0] for call in emit.call_args_list], ["communication.responded", "email.clicked"])
 		self.assertEqual(emit.call_args_list[1].args[3]["email_queue"], "EMAIL-QUEUE-1")
 
-	def test_abandoned_cart_adapter_skips_converted_orders_and_emits_linked_records(self):
+	def test_abandoned_cart_adapter_emits_only_unconverted_customer_portal_carts(self):
 		rows = [
-			frappe._dict(name="QTN-ABANDONED", quotation_to="Lead", party_name="LEAD-1", contact_person="CONTACT-1", modified=now_datetime()),
+			frappe._dict(name="QTN-LEAD", quotation_to="Lead", party_name="LEAD-1", contact_person="CONTACT-1", modified=now_datetime()),
+			frappe._dict(name="QTN-ABANDONED", quotation_to="Customer", party_name="CUSTOMER-1", contact_person="CONTACT-1", modified=now_datetime()),
 			frappe._dict(name="QTN-CONVERTED", quotation_to="Customer", party_name="CUSTOMER-1", contact_person=None, modified=now_datetime()),
 		]
 		with (
 			patch.object(integrations, "_runtime_ready", return_value=True),
-			patch.object(integrations.frappe, "get_all", return_value=rows),
+			patch.object(integrations.frappe, "get_all", return_value=rows) as get_all,
 			patch.object(integrations.frappe.db, "exists", side_effect=lambda doctype, filters=None: filters.get("prevdoc_docname") == "QTN-CONVERTED"),
 			patch.object(integrations, "_signal") as emit,
 		):
 			count = integrations.capture_abandoned_shopping_carts()
-		self.assertEqual(count, 2)
-		self.assertEqual(
-			{(call.args[1], call.args[2]) for call in emit.call_args_list},
-			{("Lead", "LEAD-1"), ("Contact", "CONTACT-1")},
-		)
+		self.assertEqual(count, 1)
+		emit.assert_called_once()
+		self.assertEqual(emit.call_args.args[1:3], ("Customer", "CUSTOMER-1"))
+		query = get_all.call_args.kwargs
+		self.assertEqual(query["order_by"], "modified desc, name desc")
+		self.assertEqual(query["filters"]["quotation_to"], "Customer")
+		self.assertEqual(query["filters"]["modified"][0], "between")
+
+	def test_abandoned_cart_adapter_pages_through_the_entire_transition_window(self):
+		full_page = [frappe._dict(name=f"QTN-{index}", quotation_to="", party_name="", contact_person=None) for index in range(500)]
+		last_page = [frappe._dict(name="QTN-500", quotation_to="", party_name="", contact_person=None)]
+
+		def page(_doctype, **kwargs):
+			return full_page if kwargs.get("start") == 0 else last_page
+
+		with (
+			patch.object(integrations, "_runtime_ready", return_value=True),
+			patch.object(integrations.frappe, "get_all", side_effect=page) as get_all,
+			patch.object(integrations.frappe.db, "exists", return_value=False),
+		):
+			self.assertEqual(integrations.capture_abandoned_shopping_carts(), 0)
+		quotation_pages = [call for call in get_all.call_args_list if "start" in call.kwargs]
+		self.assertEqual([call.kwargs["start"] for call in quotation_pages], [0, 500])
+
+	def test_reach_topic_preference_bridge_emits_only_new_lead_opt_outs(self):
+		before = {"Product news": "ROW-OLD"}
+		after = {"Product news": "ROW-OLD", "Events": "ROW-NEW"}
+		with (
+			patch("finbyzreach.email_marketing.update_subscription_preferences", return_value="success") as update,
+			patch.object(integrations.frappe.db, "get_value", return_value="LEAD-1"),
+			patch.object(integrations, "_reach_unsubscribe_topic_rows", side_effect=[before, after]),
+			patch.object(integrations, "_signal") as emit,
+		):
+			result = integrations.update_reach_subscription_preferences(
+				campaign_recipient="RECIPIENT-1",
+				email="lead@example.com",
+				unsubscribed_topics='["Product news", "Events"]',
+				signed_query_string="signed",
+			)
+		self.assertEqual(result, "success")
+		update.assert_called_once()
+		emit.assert_called_once()
+		self.assertEqual(emit.call_args.args[0:3], ("email.unsubscribed", "Lead", "LEAD-1"))
+		self.assertEqual(emit.call_args.args[3]["email_type"], "topic")
+		self.assertEqual(emit.call_args.args[3]["subscription_topic"], "Events")
+		self.assertEqual(emit.call_args.args[4], "reach-topic-unsubscribe:ROW-NEW")
 
 	def test_stop_on_response_cancels_the_run_and_its_timer(self):
 		lead, _published, run_name, timer_name = self._waiting_policy_run(
@@ -497,6 +539,8 @@ class TestAutomationEvents(IntegrationTestCase):
 				return 1
 			if doctype == "Automation Run" and (filters or {}).get("status") == "FAILED":
 				return 2
+			if doctype == "Automation Effect Ledger":
+				return 5
 			if doctype == "Automation Incident":
 				return 3
 			if doctype == "Automation Dead Letter":
@@ -525,6 +569,7 @@ class TestAutomationEvents(IntegrationTestCase):
 		self.assertEqual(health["runs"]["recent_failed"], 2)
 		self.assertEqual(health["runs"]["stale_active"], 1)
 		self.assertEqual(health["runs"]["orphaned_active"], 1)
+		self.assertEqual(health["stale_external_effects"], 5)
 		self.assertEqual(health["open_incidents"], 3)
 		self.assertEqual(health["open_dead_letters"], 4)
 		self.assertTrue(
@@ -532,6 +577,7 @@ class TestAutomationEvents(IntegrationTestCase):
 				"RECENT_FAILED_RUNS",
 				"STALE_ACTIVE_RUNS",
 				"ORPHANED_ACTIVE_RUNS",
+				"STALE_EXTERNAL_EFFECTS",
 				"OPEN_INCIDENTS",
 				"OPEN_DEAD_LETTERS",
 			}.issubset(health["reasons"])

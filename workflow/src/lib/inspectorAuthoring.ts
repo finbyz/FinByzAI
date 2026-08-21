@@ -82,7 +82,8 @@ export function parseCondition(value: unknown): ConditionExpression {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return emptyPredicate()
   const expression = value as Record<string, unknown>
   if (expression.kind === 'predicate') {
-    return { kind: 'predicate', field: String(expression.field || ''), operator: String(expression.operator || 'eq'), value: expression.value }
+	const source = expression.source && typeof expression.source === 'object' && !Array.isArray(expression.source) ? expression.source as WorkflowValueSpec : undefined
+	return { kind: 'predicate', field: String(expression.field || ''), source, operator: String(expression.operator || 'eq'), value: expression.value }
   }
   if (['all', 'any', 'not'].includes(String(expression.kind))) {
     const kind = expression.kind as ConditionGroup['kind']
@@ -121,11 +122,19 @@ export function parseAssignments(value: unknown): WorkflowAssignment[] {
   return value.flatMap((candidate) => {
     if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return []
     const assignment = candidate as Record<string, unknown>
+    const operation = ['set', 'clear', 'append', 'remove'].includes(String(assignment.operation || '')) ? String(assignment.operation) as WorkflowAssignment['operation'] : undefined
     const rawValue = assignment.value
+    // Clear is a complete operation by itself. Older and API-authored graphs
+    // correctly omit an unused value binding, so keep the row visible instead
+    // of silently dropping it when the editor opens.
+    if (operation === 'clear' && (!rawValue || typeof rawValue !== 'object' || Array.isArray(rawValue))) {
+      return [{ field: String(assignment.field || ''), operation, value: { kind: 'literal', value: '' } as WorkflowValueSpec }]
+    }
     if (!rawValue || typeof rawValue !== 'object' || Array.isArray(rawValue)) return []
     const spec = rawValue as Record<string, unknown>
-    if (spec.kind === 'record_field') return [{ field: String(assignment.field || ''), value: { kind: 'record_field', field: String(spec.field || '') } as WorkflowValueSpec }]
-    if (spec.kind === 'node_output') return [{ field: String(assignment.field || ''), value: { kind: 'node_output', node_id: String(spec.node_id || ''), path: String(spec.path || '') } as WorkflowValueSpec }]
-    return [{ field: String(assignment.field || ''), value: { kind: 'literal', value: spec.value } as WorkflowValueSpec }]
+	const operationValue = operation ? { operation } : {}
+	if (spec.kind === 'record_field') return [{ field: String(assignment.field || ''), ...operationValue, value: { kind: 'record_field', field: String(spec.field || '') } as WorkflowValueSpec }]
+	if (spec.kind === 'node_output') return [{ field: String(assignment.field || ''), ...operationValue, value: { kind: 'node_output', node_id: String(spec.node_id || ''), path: String(spec.path || '') } as WorkflowValueSpec }]
+	return [{ field: String(assignment.field || ''), ...operationValue, value: { kind: 'literal', value: spec.value } as WorkflowValueSpec }]
   })
 }

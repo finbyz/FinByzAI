@@ -39,18 +39,18 @@ NODE_OUTPUT_PATHS = {
 	"action.delete_record": ["doctype", "name", "deleted"],
 	"action.create_record": ["doctype", "name"],
 	"action.manage_association": ["doctype", "name", "operation", "target_name"],
-	"action.round_robin": ["doctype", "name", "assigned_to", "group", "assignment_version"],
+	"action.round_robin": ["doctype", "name", "assigned_to", "group", "assignment_type", "assignment_version"],
 	"action.create_todo": ["doctype", "name", "allocated_to"],
 	"action.add_comment": ["comment"],
-	"action.notify_user": ["for_user"],
-	"action.send_email": ["email_queue", "recipient", "sender", "reply_to", "email_template", "content_hash"],
+	"action.notify_user": ["for_user", "recipients", "recipient_count"],
+	"action.send_email": ["email_queue", "recipient", "sender", "reply_to", "email_template", "content_hash", "subscription_topic", "suppressed", "suppression_reason"],
 	"action.send_sms": ["recipient", "status", "status_code", "consent_check"],
 	"action.webhook": ["status_code", "response_hash"],
 	"action.instagram_message": ["recipient_id", "status_code", "response_hash"],
 	"action.asana": ["gid", "name", "permalink_url", "operation"],
 	"action.call_subflow": ["run_id", "status"],
 	"action.copy_record": ["doctype", "name"],
-	"action.merge_contact": ["canonical_contact", "merged_contact", "matched_fields"],
+	"action.merge_contact": ["canonical_contact", "merged_contact", "matched_fields", "deleted"],
 	"action.unassign_record": ["closed_assignments"],
 	"action.create_note": ["note"],
 	"action.verify_email": ["email", "valid", "reason"],
@@ -93,7 +93,7 @@ BUSINESS_EVENT_CATALOG = [
 	},
 	{
 		"topic": "communication.responded",
-		"label": "Customer replied",
+		"label": "Record replied",
 		"category": "Communication",
 		"description": "An inbound Communication was linked to the enrolled record.",
 		"filter_fields": [
@@ -197,7 +197,8 @@ BUSINESS_EVENT_CATALOG = [
 		"filter_fields": [
 			{"fieldname": "email_queue", "label": "Workflow email message", "fieldtype": "Data"},
 			{"fieldname": "email_id", "label": "Specific email", "fieldtype": "Data"},
-			{"fieldname": "email_type", "label": "Email type", "fieldtype": "Data"},
+			{"fieldname": "email_type", "label": "Unsubscribe scope", "fieldtype": "Select", "options": "global\nrecord\ntopic"},
+			{"fieldname": "subscription_topic", "label": "Reach subscription topic", "fieldtype": "Link", "options": "Subscription Topic"},
 		],
 	},
 	{
@@ -349,8 +350,8 @@ BUSINESS_EVENT_CONTEXT = {
 		"source_modes": ["enrolled_record", "action_output"],
 		"source_node_types": ["action.send_email"],
 		"producer_status": "native",
-		"source_app": "Frappe Email Unsubscribe / Communication",
-		"setup_note": "Emitted from an Email Unsubscribe record or a linked Communication delivery status of Recipient Unsubscribed.",
+		"source_app": "Frappe Email Unsubscribe / Finbyz Reach",
+		"setup_note": "Global and record-specific opt-outs come from Frappe Email Unsubscribe; Lead topic opt-outs come from Finbyz Reach subscription preferences.",
 	},
 	"commerce.store.login": {
 		"trigger_doctypes": {"Customer"},
@@ -370,12 +371,12 @@ BUSINESS_EVENT_CONTEXT = {
 		"trigger_alternative": "For a Sales Order workflow, use the native “Record created” trigger instead of this contact/customer event.",
 	},
 	"commerce.order.abandoned": {
-		"trigger_doctypes": {"Customer", "Contact", "Lead"},
-		"wait_doctypes": {"Customer", "Contact", "Lead"},
+		"trigger_doctypes": {"Customer"},
+		"wait_doctypes": {"Customer"},
 		"source_modes": ["enrolled_record"],
 		"producer_status": "native",
 		"source_app": "ERPNext Shopping Cart",
-		"setup_note": "Draft Shopping Cart Quotations unchanged for 24 hours and not converted to a Sales Order emit an idempotent abandonment event.",
+		"setup_note": "A Customer Portal Shopping Cart quotation linked to the enrolled Customer emits once after remaining unchanged for 24 hours without conversion to a Sales Order.",
 	},
 }
 
@@ -396,48 +397,49 @@ PHONE_FIELDNAMES = {"phone", "phone_no", "mobile", "mobile_no", "contact_mobile"
 
 NODE_CATALOG = [
 	{"type": "trigger.manual", "label": "Manual enrollment", "category": "Triggers", "description": "Enroll selected records from the operator UI.", "default_config": {}},
-	{"type": "trigger.document_insert", "label": "Record created", "category": "Triggers", "description": "Enroll after a new document is committed.", "default_config": {"condition": None}},
-	{"type": "trigger.document_change", "label": "Record changed", "category": "Triggers", "description": "Enroll after any change or only when selected permitted fields change.", "default_config": {"watch_fields": [], "condition": None}},
+	{"type": "trigger.document_insert", "label": "Record created", "category": "Triggers", "description": "Legacy single event-mode trigger retained for existing workflows.", "default_config": {"condition": None}, "authoring_hidden": 1},
+	{"type": "trigger.document_change", "label": "Record changed", "category": "Triggers", "description": "Legacy single event-mode trigger retained for existing workflows.", "default_config": {"watch_fields": [], "condition": None}, "authoring_hidden": 1},
 	{"type": "trigger.filter_criteria", "label": "When filter criteria is met", "category": "Triggers", "description": "Enroll when a new or updated record meets the configured AND/OR field criteria.", "default_config": {"condition": None}},
-	{"type": "trigger.event", "type_version": 2, "label": "When an event occurs", "category": "Triggers", "description": "Enroll when any selected contact, form, call, email, or commerce event occurs.", "default_config": {"events": [{"id": "event-1", "event_topic": "", "event_filter": None}], "condition": None}},
+	{"type": "trigger.event", "type_version": 2, "label": "Business events (legacy editor)", "category": "Triggers", "description": "Legacy business-event boundary retained for existing workflows; new Event mode uses independent trigger cards.", "default_config": {"events": [{"id": "event-1", "event_topic": "", "event_filter": None}], "condition": None}, "authoring_hidden": 1},
 	{"type": "trigger.schedule", "label": "Scheduled", "category": "Triggers", "description": "Enroll records through a durable schedule configured after publishing.", "default_config": {}},
-	{"type": "trigger.any", "label": "Any of multiple triggers", "category": "Triggers", "description": "Enroll when any configured created, changed, criteria, or business-event trigger matches.", "default_config": {"triggers": [{"id": "trigger-1", "type": "trigger.document_insert", "config": {"condition": None}}, {"id": "trigger-2", "type": "trigger.filter_criteria", "config": {"condition": None}}]}},
+	{"type": "trigger.webhook", "label": "Incoming webhook", "category": "Triggers", "description": "Enroll one exact permitted record through a managed authenticated and idempotent endpoint.", "default_config": {}},
+	{"type": "trigger.any", "type_version": 2, "label": "Event triggers", "category": "Triggers", "description": "Enroll when any one of up to twenty independently filtered record or business events occurs.", "default_config": {"triggers": [{"id": "trigger-1", "type": "trigger.event", "config": {"event_topic": "", "event_filter": None, "condition": None}}]}},
 	{"type": "condition.if_else", "type_version": 2, "label": "If / else paths", "category": "Logic", "description": "Choose which named path each record follows; everyone unmatched uses None.", "default_config": {"branches": [{"handle": "branch-1", "name": "Path 1", "condition": None}]}},
-	{"type": "condition.random_split", "label": "Random percentage split", "category": "Logic", "description": "Distribute records predictably across named percentage paths for controlled experiments.", "default_config": {"branches": [{"handle": "split-a", "name": "Group A", "percentage": 50}, {"handle": "split-b", "name": "Group B", "percentage": 50}]}},
+	{"type": "condition.random_split", "label": "Random percentage split", "category": "Logic", "description": "Distribute records predictably across named percentage paths for controlled experiments.", "default_config": {"branches": [{"handle": "split-a", "name": "Group A", "percentage": 50}, {"handle": "split-b", "name": "Group B", "percentage": 50}]}, "authoring_tier": "advanced"},
 	{"type": "condition.switch", "label": "Value branch (legacy)", "category": "Logic", "description": "Legacy exact-value branch retained for existing workflows.", "default_config": {"field": "", "cases": []}, "authoring_hidden": 1},
 	{"type": "condition.deduplicate", "type_version": 2, "label": "Deduplicate", "category": "Logic", "description": "Branch when another record matches one or more selected fields.", "default_config": {"match_fields": [], "match_mode": "all"}},
-	{"type": "delay.fixed", "label": "Fixed delay", "category": "Logic", "description": "Wait durably without sleeping a worker.", "default_config": {"seconds": 3600}},
-	{"type": "delay.drip", "label": "Drip in batches", "category": "Logic", "description": "Release records in durable batches separated by a readable interval.", "default_config": {"batch_size": 100, "interval_seconds": 3600}},
-	{"type": "delay.until_date", "label": "Wait until date", "category": "Logic", "description": "Resume at a specific date and time or a date stored on the record.", "default_config": {"mode": "literal", "datetime": "", "field": ""}},
-	{"type": "delay.until_event", "type_version": 2, "label": "Wait until event", "category": "Logic", "description": "Wait for a new event on this workflow record or an earlier action output, with an optional maximum wait and timeout path.", "default_config": {"data_source": "enrolled_record", "event_topic": "", "event_filter": None, "event_source": None, "event_source_doctype": None, "timeout_mode": "duration", "timeout_seconds": 86400, "branch_on_timeout": 0}},
-	{"type": "delay.business_hours", "label": "Business hours", "category": "Logic", "description": "Wait until the next allowed execution window.", "default_config": {"calendar": "", "timezone": "UTC", "start_time": "09:00", "end_time": "17:00", "weekdays": [0, 1, 2, 3, 4]}},
-	{"type": "transform.value", "type_version": 2, "label": "Transform value", "category": "Logic", "description": "Create a reusable text, number, phone, currency, random, or calculated value without changing the record.", "default_config": {"operation": "coalesce", "values": []}},
-	{"type": "transform.associated_record", "label": "Associated record", "category": "Data", "description": "Fetch a property from a linked record.", "default_config": {"reference_field": "", "fetch_field": ""}},
-	{"type": "transform.child_records", "label": "Child records", "category": "Data", "description": "Fetch properties from child table records.", "default_config": {"child_table_field": "", "fetch_field": ""}},
+	{"type": "delay.fixed", "label": "Set amount of time", "category": "Delays", "description": "Wait for seconds, minutes, hours, days, weeks, or business days.", "default_config": {"seconds": 3600}},
+	{"type": "delay.drip", "label": "Drip / batch interval", "category": "Delays", "description": "Release records in durable batches separated by a readable interval.", "default_config": {"batch_size": 100, "interval_seconds": 3600}, "authoring_tier": "advanced"},
+	{"type": "delay.until_date", "label": "Until date or time", "category": "Delays", "description": "Resume at a calendar date/time or a Date/Datetime field on the record.", "default_config": {"mode": "literal", "datetime": "", "field": ""}},
+	{"type": "delay.until_event", "type_version": 2, "label": "Until event occurs", "category": "Delays", "description": "Wait for a new typed event on this record or an earlier action output, with an optional timeout path.", "default_config": {"data_source": "enrolled_record", "event_topic": "", "event_filter": None, "event_source": None, "event_source_doctype": None, "timeout_mode": "duration", "timeout_seconds": 86400, "branch_on_timeout": 0}},
+	{"type": "delay.business_hours", "label": "Until business window", "category": "Delays", "description": "Wait until the next allowed day and local business time.", "default_config": {"calendar": "", "timezone": "UTC", "start_time": "09:00", "end_time": "17:00", "weekdays": [0, 1, 2, 3, 4]}},
+	{"type": "transform.value", "type_version": 2, "label": "Transform value", "category": "Data", "description": "Create a reusable text, number, phone, currency, random, or calculated value without changing the record.", "default_config": {"operation": "coalesce", "values": []}, "authoring_tier": "advanced"},
+	{"type": "transform.associated_record", "label": "Read associated record", "category": "Data", "description": "Fetch a property from an explicitly linked record.", "default_config": {"reference_field": "", "fetch_field": ""}, "authoring_tier": "advanced"},
+	{"type": "transform.child_records", "label": "Read child records", "category": "Data", "description": "Fetch properties from child-table rows.", "default_config": {"child_table_field": "", "fetch_field": ""}, "authoring_tier": "advanced"},
 	{"type": "action.call_subflow", "label": "Run another workflow", "category": "Logic", "description": "Execute another compatible published workflow, optionally waiting for it to finish.", "default_config": {"subflow_id": "", "wait_for_completion": 1}},
 	{"type": "action.update_record", "label": "Update record", "category": "Actions", "description": "Update writable fields on the enrolled record.", "default_config": {"assignments": []}},
-	{"type": "action.numeric_adjust", "label": "Numeric adjust", "category": "Actions", "description": "Increase or decrease a numeric property.", "default_config": {"field": "", "operation": "add", "amount": 1}},
-	{"type": "action.manage_association", "label": "Manage association", "category": "Actions", "description": "Idempotently link or unlink associated records.", "default_config": {"target_doctype": "", "target_name": "", "link_field": "", "operation": "link"}},
-	{"type": "action.round_robin", "type_version": 2, "label": "Round robin assignment", "category": "Actions", "description": "Atomically rotate ownership across currently enabled group members.", "default_config": {"group": ""}},
-	{"type": "action.delete_record", "label": "Delete record", "category": "Actions", "description": "Delete the enrolled record permanently.", "default_config": {}},
+	{"type": "action.numeric_adjust", "label": "Adjust number", "category": "Actions", "description": "Increase, decrease, multiply, or replace a numeric field.", "default_config": {"field": "", "operation": "add", "amount": 1}, "authoring_tier": "advanced"},
+	{"type": "action.manage_association", "label": "Manage association", "category": "Actions", "description": "Idempotently link or unlink associated records.", "default_config": {"target_doctype": "", "target_name": "", "link_field": "", "operation": "link"}, "authoring_tier": "advanced"},
+	{"type": "action.round_robin", "type_version": 2, "label": "Round robin assignment", "category": "Actions", "description": "Atomically rotate Frappe assignments across a User Group or an explicit user list.", "default_config": {"assignment_type": "group", "group": "", "users": []}, "authoring_tier": "advanced"},
+	{"type": "action.delete_record", "label": "Delete record", "category": "Actions", "description": "Permanently delete the enrolled record and end this path.", "default_config": {}, "authoring_tier": "danger"},
 	{"type": "action.create_record", "label": "Create record", "category": "Actions", "description": "Create another permitted Frappe document.", "default_config": {"target_doctype": "", "assignments": []}},
 	{"type": "action.create_todo", "label": "Create ToDo", "category": "Actions", "description": "Assign a ToDo linked to the enrolled record.", "default_config": {"allocated_to": "", "description": "", "priority": "Medium"}},
 	{"type": "action.add_comment", "label": "Add comment", "category": "Actions", "description": "Add a timeline comment to the enrolled record.", "default_config": {"content": ""}},
-	{"type": "action.create_note", "label": "Create note", "category": "Actions", "description": "Create a Desk Note containing a link back to the enrolled record.", "default_config": {"title": "", "content": ""}},
-	{"type": "action.copy_record", "label": "Copy record", "category": "Actions", "description": "Create a permission-checked copy of the enrolled record.", "default_config": {}},
-	{"type": "action.merge_contact", "label": "Merge contact", "category": "Actions", "description": "Merge the enrolled Contact into an existing canonical Contact matched by selected identity fields.", "default_config": {"match_fields": ["email_id"], "match_mode": "all"}},
-	{"type": "action.unassign_record", "label": "Remove assigned users", "category": "Actions", "description": "Close every open assignment linked to the enrolled record.", "default_config": {}},
-	{"type": "action.verify_email", "label": "Verify email format", "category": "Actions", "description": "Validate a resolved email address without sending a message.", "default_config": {"email": {"kind": "record_field", "field": "email_id"}}},
-	{"type": "action.mark_communications_read", "label": "Mark conversations read", "category": "Actions", "description": "Mark received Communications linked to the enrolled record as seen.", "default_config": {}},
-	{"type": "action.remove_from_workflow", "label": "Remove from workflow", "category": "Logic", "description": "Cancel this record's active runs in the selected workflow and end this path when targeting the current workflow.", "default_config": {"target_workflow": "current"}},
-	{"type": "action.complete_goal", "label": "Complete goal", "category": "Logic", "description": "Record an explicit goal marker and complete this path immediately.", "default_config": {"goal": "Goal reached"}},
-	{"type": "action.go_to", "label": "Go to step", "category": "Logic", "description": "Continue at an existing downstream step without duplicating it.", "default_config": {"target_node_id": ""}},
+	{"type": "action.create_note", "label": "Create Desk note", "category": "Actions", "description": "Create a Desk Note containing a link back to the enrolled record.", "default_config": {"title": "", "content": ""}, "authoring_tier": "advanced"},
+	{"type": "action.copy_record", "label": "Copy record", "category": "Actions", "description": "Create a permission-checked copy of the enrolled record.", "default_config": {}, "authoring_tier": "advanced"},
+	{"type": "action.merge_contact", "label": "Merge contact", "category": "Actions", "description": "Merge the enrolled Contact into one unambiguous canonical Contact.", "default_config": {"match_fields": ["email_id"], "match_mode": "all"}, "authoring_tier": "advanced"},
+	{"type": "action.unassign_record", "label": "Remove assigned users", "category": "Actions", "description": "Close every open Frappe assignment linked to the enrolled record.", "default_config": {}, "authoring_tier": "advanced"},
+	{"type": "action.verify_email", "label": "Check email format", "category": "Data", "description": "Check only whether an email address is syntactically valid; this does not verify its mailbox.", "default_config": {"email": {"kind": "record_field", "field": "email_id"}}, "authoring_tier": "advanced"},
+	{"type": "action.mark_communications_read", "label": "Mark conversations read", "category": "Actions", "description": "Mark received Communications linked to the enrolled record as seen.", "default_config": {}, "authoring_tier": "advanced"},
+	{"type": "action.remove_from_workflow", "label": "Remove from workflow", "category": "Logic", "description": "Cancel this record's active runs in the selected workflow and end this path when targeting the current workflow.", "default_config": {"target_workflow": "current"}, "authoring_tier": "advanced"},
+	{"type": "action.complete_goal", "label": "Mark goal and end path", "category": "Logic", "description": "Record a named goal marker and end this path immediately; ordinary paths already complete automatically.", "default_config": {"goal": "Goal reached"}, "authoring_tier": "advanced"},
+	{"type": "action.go_to", "label": "Go to existing step", "category": "Logic", "description": "Reuse an existing downstream step in large workflows without manual edge drawing.", "default_config": {"target_node_id": ""}, "authoring_tier": "advanced"},
 	{"type": "action.notify_user", "label": "Notify users", "category": "Actions", "description": "Create in-app notifications for a specific user, current assignees, or all enabled system users.", "default_config": {"audience": "specific", "for_user": "", "subject": "", "message": ""}},
-	{"type": "action.send_email", "type_version": 2, "label": "Send email", "category": "External", "description": "Send a reusable standard or visual-builder Email Template with preview, test-send, personalization, and sender controls.", "default_config": {"content_mode": "template", "email_template": "", "recipient": {"kind": "literal", "value": ""}, "subject_override": {"kind": "literal", "value": ""}, "sender_name": "", "sender_email": "", "reply_to": ""}},
+	{"type": "action.send_email", "type_version": 2, "label": "Send email", "category": "External", "description": "Send a standard or visual Email Template with preview, test-send, personalization, sender controls, and recipient suppression checks.", "default_config": {"content_mode": "template", "email_template": "", "recipient": {"kind": "literal", "value": ""}, "subject_override": {"kind": "literal", "value": ""}, "sender_name": "", "sender_email": "", "reply_to": "", "subscription_topic": ""}},
 	{"type": "action.send_sms", "label": "Send SMS", "category": "External", "description": "Send a text message via Frappe SMS Settings.", "default_config": {"recipient": {"kind": "literal", "value": ""}, "message": {"kind": "literal", "value": ""}, "purpose": "workflow", "require_consent": 1}},
-	{"type": "action.webhook", "label": "Send webhook", "category": "External", "description": "POST signed JSON to an allowlisted HTTPS endpoint.", "default_config": {"integration_secret": "", "url": "", "payload": {}, "purpose": "workflow", "require_consent": 0}},
-	{"type": "action.instagram_message", "label": "Send Instagram message", "category": "External", "description": "Send a consent-aware Instagram Direct message through a controlled Meta endpoint.", "default_config": {"integration_secret": "", "url": "https://graph.facebook.com/v23.0/me/messages", "recipient_id": {"kind": "literal", "value": ""}, "message": {"kind": "literal", "value": ""}, "purpose": "workflow", "require_consent": 1}},
-	{"type": "action.asana", "label": "Asana task / project", "category": "External", "description": "Create or update Asana tasks, subtasks, and projects through the installed Asana integration.", "default_config": {"operation": "create_task", "target_gid": {"kind": "literal", "value": ""}, "payload": {"name": {"kind": "literal", "value": ""}}}},
+	{"type": "action.webhook", "label": "Send webhook", "category": "External", "description": "POST signed JSON to an allowlisted HTTPS endpoint.", "default_config": {"integration_secret": "", "url": "", "payload": {}, "purpose": "workflow", "require_consent": 0}, "authoring_tier": "advanced"},
+	{"type": "action.instagram_message", "label": "Send Instagram message", "category": "External", "description": "Send a consent-aware Instagram Direct message through a controlled Meta endpoint.", "default_config": {"integration_secret": "", "url": "https://graph.facebook.com/v23.0/me/messages", "recipient_id": {"kind": "literal", "value": ""}, "message": {"kind": "literal", "value": ""}, "purpose": "workflow", "require_consent": 1}, "authoring_tier": "advanced"},
+	{"type": "action.asana", "label": "Asana task / project", "category": "External", "description": "Create or update Asana tasks, subtasks, and projects through the installed Asana integration.", "default_config": {"operation": "create_task", "target_gid": {"kind": "literal", "value": ""}, "payload": {"name": {"kind": "literal", "value": ""}}}, "authoring_tier": "advanced"},
 	{"type": "end.complete", "label": "Complete (legacy)", "category": "Logic", "description": "Legacy explicit completion marker retained for existing workflows.", "default_config": {}, "authoring_hidden": 1},
 ]
 
@@ -458,14 +460,18 @@ NODE_AUTHORING_SCHEMAS = {
 	# schema.py owns that version-aware rule.
 	"delay.until_event": {"required": [{"path": "event_topic", "label": "Event topic"}]},
 	"delay.business_hours": {"required": [{"path": "timezone", "label": "Timezone"}]},
-	"transform.value": {"required": [{"path": "values", "label": "Inputs"}]},
+	# Transform inputs are operation-dependent. random_number intentionally has
+	# no inputs, so schema.py owns this conditional requirement.
+	"transform.value": {"required": []},
 	"transform.associated_record": {"required": [{"path": "reference_field", "label": "Link field"}, {"path": "fetch_field", "label": "Fetched field"}]},
 	"transform.child_records": {"required": [{"path": "child_table_field", "label": "Child table field"}, {"path": "fetch_field", "label": "Child field"}]},
 	"action.call_subflow": {"required": [{"path": "subflow_id", "label": "Subflow"}]},
 	"action.update_record": {"required": [{"path": "assignments", "label": "Field changes"}]},
 	"action.numeric_adjust": {"required": [{"path": "field", "label": "Target field"}, {"path": "amount", "label": "Amount"}]},
 	"action.manage_association": {"required": [{"path": "target_doctype", "label": "Target DocType"}, {"path": "target_name", "label": "Target record"}, {"path": "link_field", "label": "Link field"}]},
-	"action.round_robin": {"required": [{"path": "group", "label": "Assignment group"}]},
+	# The selected assignment type determines whether group or users is required.
+	# schema.py owns this conditional validation while retaining legacy group-only drafts.
+	"action.round_robin": {"required": []},
 	"action.create_record": {"required": [{"path": "target_doctype", "label": "Target DocType"}, {"path": "assignments", "label": "Field values"}]},
 	"action.create_todo": {"required": [{"path": "allocated_to", "label": "Assignee"}, {"path": "description", "label": "Task description"}]},
 	"action.add_comment": {"required": [{"path": "content", "label": "Comment"}]},
@@ -475,13 +481,40 @@ NODE_AUTHORING_SCHEMAS = {
 	"action.remove_from_workflow": {"required": [{"path": "target_workflow", "label": "Workflow"}]},
 	"action.complete_goal": {"required": [{"path": "goal", "label": "Goal name"}]},
 	"action.go_to": {"required": [{"path": "target_node_id", "label": "Destination step"}]},
-	"action.notify_user": {"required": [{"path": "for_user", "label": "Recipient"}, {"path": "subject", "label": "Subject"}, {"path": "message", "label": "Message"}]},
+	# for_user is required only for the "specific" audience. schema.py validates
+	# the audience-specific recipient together with the common text fields.
+	"action.notify_user": {"required": [{"path": "subject", "label": "Subject"}, {"path": "message", "label": "Message"}]},
 	"action.send_email": {"required": [{"path": "recipient", "label": "Recipient"}]},
 	"action.send_sms": {"required": [{"path": "recipient", "label": "Recipient"}, {"path": "message", "label": "Message"}, {"path": "purpose", "label": "Consent purpose"}]},
 	"action.webhook": {"required": [{"path": "integration_secret", "label": "Integration secret"}, {"path": "url", "label": "HTTPS endpoint"}, {"path": "payload", "label": "JSON payload"}]},
 	"action.instagram_message": {"required": [{"path": "integration_secret", "label": "Integration secret"}, {"path": "url", "label": "Meta HTTPS endpoint"}, {"path": "recipient_id", "label": "Instagram recipient"}, {"path": "message", "label": "Message"}]},
 	"action.asana": {"required": [{"path": "operation", "label": "Operation"}, {"path": "payload", "label": "Asana fields"}]},
 }
+
+
+def round_robin_assignment(config: dict | None) -> dict:
+	"""Normalize explicit v2 assignment pools while preserving published legacy configs."""
+	config = config if isinstance(config, dict) else {}
+	assignment_type = str(config.get("assignment_type") or "").strip().lower()
+	if assignment_type:
+		users_value = config.get("users")
+		users = (
+			[str(value).strip() for value in users_value if str(value).strip()]
+			if isinstance(users_value, list)
+			else []
+		)
+		return {
+			"assignment_type": assignment_type,
+			"group": str(config.get("group") or "").strip(),
+			"users": users,
+			"legacy": False,
+		}
+	return {
+		"assignment_type": "legacy",
+		"group": str(config.get("group") or "").strip(),
+		"users": [],
+		"legacy": True,
+	}
 
 
 def require_capability(capability: str) -> None:
@@ -943,15 +976,50 @@ def _get_plugin_nodes() -> list[dict]:
 	return frappe.local.automation_node_catalog_cache
 
 
-def node_catalog() -> list[dict]:
+def _authoring_availability(node_type: str, primary_doctype: str | None, execution_user: str | None) -> tuple[bool, str | None]:
+	"""Return authoring availability without changing the immutable runtime contract.
+
+	Existing graphs must remain readable and executable even when an integration is
+	removed or a permission changes. This hint is therefore used only by the step
+	catalogue; publish validation remains authoritative.
+	"""
+	if node_type == "action.asana" and "asana_integration" not in frappe.get_installed_apps():
+		return False, _("Install the Asana Integration app to use this action.")
+	if not primary_doctype:
+		return True, None
+	if node_type == "action.merge_contact" and primary_doctype != "Contact":
+		return False, _("This action is available only in Contact workflows.")
+	if node_type == "action.copy_record" and not doctype_eligibility(
+		primary_doctype, permission_type="create", user=execution_user
+	)["available"]:
+		return False, _("The workflow execution user cannot create this DocType.")
+	if node_type == "action.delete_record" and not doctype_eligibility(
+		primary_doctype, permission_type="delete", user=execution_user
+	)["available"]:
+		return False, _("The workflow execution user cannot delete this DocType.")
+	if node_type == "action.create_note" and not frappe.has_permission(
+		"Note", ptype="create", user=execution_user or frappe.session.user
+	):
+		return False, _("The workflow execution user cannot create Desk Notes.")
+	return True, None
+
+
+def node_catalog(*, primary_doctype: str | None = None, execution_user: str | None = None) -> list[dict]:
 	catalog = json.loads(json.dumps(NODE_CATALOG))
 	for node in catalog:
 		node["authoring_schema"] = NODE_AUTHORING_SCHEMAS.get(node["type"], {"required": []})
 		node["output_paths"] = NODE_OUTPUT_PATHS.get(node["type"], [])
+		node.setdefault("authoring_tier", "core")
+		node["available"], node["unavailable_reason"] = _authoring_availability(
+			node["type"], primary_doctype, execution_user
+		)
 	plugin_nodes = json.loads(json.dumps(_get_plugin_nodes()))
 	for node in plugin_nodes:
 		node.setdefault("authoring_schema", {"required": []})
 		node.setdefault("output_paths", [])
+		node.setdefault("authoring_tier", "advanced")
+		node.setdefault("available", True)
+		node.setdefault("unavailable_reason", None)
 	catalog.extend(plugin_nodes)
 	return catalog
 
@@ -1025,12 +1093,24 @@ def business_event_catalog(primary_doctype: str | None = None, usage: str = "all
 			definition["label"] = _("Inbound call received")
 		elif doctype and definition["topic"] == "crm.lead.qualified":
 			definition["label"] = _("Qualification changed to Qualified")
+		elif doctype and definition["topic"] == "communication.responded":
+			definition["label"] = _("{0} replied").format(profile["label"])
 		elif doctype and definition["topic"] == "commerce.store.login":
 			definition["label"] = _("Signed in to customer portal")
 		elif doctype and definition["topic"] == "commerce.order.created":
 			definition["label"] = _("Placed an order")
 		elif doctype and definition["topic"] == "commerce.order.abandoned":
 			definition["label"] = _("Abandoned a cart")
+		if doctype and definition["topic"] == "email.unsubscribed" and doctype != "Lead":
+			definition["filter_fields"] = [
+				field for field in definition["filter_fields"] if field["fieldname"] != "subscription_topic"
+			]
+			for field in definition["filter_fields"]:
+				if field["fieldname"] == "email_type":
+					field["options"] = "global\nrecord"
+			context = dict(context)
+			context["source_app"] = "Frappe Email Unsubscribe / Communication"
+			context["setup_note"] = "Emitted from a Frappe Email Unsubscribe record or a linked Communication delivery status of Recipient Unsubscribed."
 		definition.update(
 			{
 				"available_for": available_for,

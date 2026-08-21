@@ -81,6 +81,12 @@ describe('Inspector authoring contracts', () => {
     ])
   })
 
+	it('preserves a clear-field operation that intentionally has no value binding', () => {
+		expect(parseAssignments([{ field: 'company_name', operation: 'clear' }])).toEqual([
+			{ field: 'company_name', operation: 'clear', value: { kind: 'literal', value: '' } },
+		])
+	})
+
   it('offers outputs only from steps guaranteed to run before a converged action', () => {
     const graph: WorkflowGraph = {
       schema_version: 1,

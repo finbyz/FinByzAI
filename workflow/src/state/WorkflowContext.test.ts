@@ -6,6 +6,7 @@ import {
   workflowHistoryReducer,
   hasExecutionChanges,
 	applyNodeConfig,
+	removeExclusiveOutputBranch,
   saveBeforeCheck,
   type DocumentState,
 } from './WorkflowContext'
@@ -179,19 +180,39 @@ describe('workflow document reducer', () => {
 describe('separate editor and history reducers', () => {
   it('changes selection without changing document identity', () => {
     const editor = workflowEditorReducer(
-      { validationOpen: false, simulationOpen: false, publishOpen: false, runsOpen: false, policiesOpen: false, versionsOpen: false, mode: 'edit' },
+	  { catalogOpen: false, validationOpen: false, simulationOpen: false, publishOpen: false, runsOpen: false, policiesOpen: false, versionsOpen: false, mode: 'edit' },
       { type: 'SELECT', nodeId: 'node-2' },
     )
     expect(editor.selectedNodeId).toBe('node-2')
     expect(initial.graph?.nodes).toHaveLength(1)
   })
 
+  it('tracks the exact enrollment trigger card independently from the start node', () => {
+    const editor = workflowEditorReducer(
+	  { catalogOpen: false, validationOpen: false, simulationOpen: false, publishOpen: false, runsOpen: false, policiesOpen: false, versionsOpen: false, mode: 'edit' },
+      { type: 'SELECT', nodeId: 'trigger-1', triggerGroupId: 'event-card-2' },
+    )
+    expect(editor.selectedNodeId).toBe('trigger-1')
+    expect(editor.selectedTriggerGroupId).toBe('event-card-2')
+  })
+
   it('tracks a guided insertion target and clears it after selection or cancellation', () => {
-    const base = { validationOpen: false, simulationOpen: false, publishOpen: false, runsOpen: false, policiesOpen: false, versionsOpen: false, mode: 'edit' as const }
+	const base = { catalogOpen: false, validationOpen: false, simulationOpen: false, publishOpen: false, runsOpen: false, policiesOpen: false, versionsOpen: false, mode: 'edit' as const }
     const inserting = workflowEditorReducer(base, { type: 'BEGIN_INSERT', placement: { edgeId: 'edge-1', position: { x: 100, y: 200 }, label: 'Between steps' } })
-    expect(inserting.insertion).toMatchObject({ edgeId: 'edge-1', label: 'Between steps' })
+	expect(inserting.insertion).toMatchObject({ edgeId: 'edge-1', label: 'Between steps' })
+	expect(inserting.catalogOpen).toBe(true)
     expect(workflowEditorReducer(inserting, { type: 'SELECT', nodeId: 'node-2' }).insertion).toBeUndefined()
-    expect(workflowEditorReducer(inserting, { type: 'CANCEL_INSERT' }).insertion).toBeUndefined()
+	expect(workflowEditorReducer(inserting, { type: 'CANCEL_INSERT' }).insertion).toBeUndefined()
+  })
+
+	it('uses one editing side panel at a time', () => {
+	const base = { catalogOpen: false, validationOpen: false, simulationOpen: false, publishOpen: false, runsOpen: false, policiesOpen: false, versionsOpen: false, mode: 'edit' as const, selectedNodeId: 'node-2' }
+	const catalog = workflowEditorReducer(base, { type: 'TOGGLE', panel: 'catalogOpen', open: true })
+	expect(catalog.catalogOpen).toBe(true)
+	expect(catalog.selectedNodeId).toBeUndefined()
+	const inspector = workflowEditorReducer({ ...catalog, catalogOpen: true }, { type: 'SELECT', nodeId: 'node-3' })
+	expect(inspector.selectedNodeId).toBe('node-3')
+	expect(inspector.catalogOpen).toBe(false)
   })
 
   it('bounds history and coalesces repeated inspector commands', () => {
@@ -260,9 +281,27 @@ describe('event-wait edge reconciliation', () => {
 		expect(disabled.edges.find((edge) => edge.id === 'out')?.source_handle).toBe('default')
 	})
 
-	it('refuses to hide or invalidate a connected timeout path', () => {
+	it('removes a connected timeout path when the user confirms one-path behavior', () => {
 		const current = waitGraph(true, true)
-		expect(applyNodeConfig(current, 'wait', { branch_on_timeout: 0, timeout_mode: 'duration' })).toBe(current)
-		expect(applyNodeConfig(current, 'wait', { branch_on_timeout: 0, timeout_mode: 'indefinite' })).toBe(current)
+		const collapsed = applyNodeConfig(current, 'wait', { branch_on_timeout: 0, timeout_mode: 'duration' })
+		expect(collapsed).not.toBe(current)
+		expect(collapsed.edges.some((edge) => edge.source_handle === 'timeout')).toBe(false)
+		expect(collapsed.edges.find((edge) => edge.id === 'out')?.source_handle).toBe('default')
+		expect(collapsed.nodes.some((node) => node.id === 'late')).toBe(false)
+		const indefinite = applyNodeConfig(current, 'wait', { branch_on_timeout: 1, timeout_mode: 'indefinite' })
+		expect(indefinite.nodes.find((node) => node.id === 'wait')?.config.branch_on_timeout).toBe(0)
+	})
+
+	it('keeps shared downstream steps when removing one output branch', () => {
+		const current = waitGraph(true, true)
+		current.nodes.push({ id: 'join', type: 'action.add_comment', type_version: 1, position: { x: 0, y: 300 }, config: { content: 'shared' } })
+		current.edges.push(
+			{ id: 'main-join', source: 'next', source_handle: 'default', target: 'join' },
+			{ id: 'timeout-join', source: 'late', source_handle: 'default', target: 'join' },
+		)
+		const collapsed = removeExclusiveOutputBranch(current, 'wait', 'timeout')
+		expect(collapsed.nodes.some((node) => node.id === 'late')).toBe(false)
+		expect(collapsed.nodes.some((node) => node.id === 'join')).toBe(true)
+		expect(collapsed.edges.some((edge) => edge.id === 'main-join')).toBe(true)
 	})
 })

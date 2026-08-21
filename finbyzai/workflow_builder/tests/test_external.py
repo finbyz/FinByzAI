@@ -10,6 +10,7 @@ from finbyzai.workflow_builder.external import (
 	AutomationUnknownCommitError,
 	MAX_WEBHOOK_RESPONSE_BYTES,
 	_consume_rate_limit,
+	_native_email_recipient_exclusion,
 	_normalise_sms_recipient,
 	_post_pinned,
 	_safe_webhook_url,
@@ -26,6 +27,36 @@ from finbyzai.workflow_builder.schema import canonical_json
 
 
 class TestAutomationExternalSafety(IntegrationTestCase):
+	def test_native_email_suppression_honours_global_frappe_unsubscribe(self):
+		run = SimpleNamespace(record_doctype="Lead", record_name="LEAD-1")
+		with (
+			patch.object(frappe.db, "exists", return_value=True) as exists,
+			patch.object(frappe, "get_all") as get_all,
+		):
+			reason = _native_email_recipient_exclusion(run, "PERSON@EXAMPLE.COM")
+
+		self.assertEqual(reason, "Globally unsubscribed")
+		exists.assert_called_once_with(
+			"Email Unsubscribe", {"email": "person@example.com", "global_unsubscribe": 1}
+		)
+		get_all.assert_not_called()
+
+	def test_native_email_suppression_honours_standard_lead_opt_out(self):
+		run = SimpleNamespace(record_doctype="Lead", record_name="LEAD-1")
+
+		def get_all(doctype, **kwargs):
+			if doctype == "Lead":
+				return [SimpleNamespace(disabled=0, unsubscribed=1, status="Open")]
+			return []
+
+		with (
+			patch.object(frappe.db, "exists", return_value=False),
+			patch.object(frappe, "get_all", side_effect=get_all),
+		):
+			reason = _native_email_recipient_exclusion(run, "person@example.com")
+
+		self.assertEqual(reason, "Lead unsubscribed")
+
 	def test_email_action_uses_rendered_template_and_returns_traceable_outputs(self):
 		run = SimpleNamespace(record_doctype="Lead", record_name="LEAD-1")
 		config = {
@@ -47,6 +78,8 @@ class TestAutomationExternalSafety(IntegrationTestCase):
 		with (
 			patch("finbyzai.workflow_builder.external.external_actions_enabled", return_value=True),
 			patch("finbyzai.workflow_builder.external._require_consent") as require_consent,
+			patch("finbyzai.workflow_builder.external._native_email_recipient_exclusion", return_value=None),
+			patch("finbyzai.workflow_builder.external._reach_recipient_exclusion", return_value=None),
 			patch("finbyzai.workflow_builder.external.resolve_email_content", return_value=content),
 			patch.object(frappe.db, "exists", return_value=True),
 			patch.object(frappe, "sendmail", return_value=queue) as sendmail,
@@ -64,6 +97,7 @@ class TestAutomationExternalSafety(IntegrationTestCase):
 			reference_doctype="Lead",
 			reference_name="LEAD-1",
 			add_unsubscribe_link=1,
+			unsubscribe_message="Unsubscribe",
 			raw_html=True,
 			add_css=False,
 		)
@@ -76,8 +110,60 @@ class TestAutomationExternalSafety(IntegrationTestCase):
 				"reply_to": "reply@example.com",
 				"email_template": "Lead welcome",
 				"content_hash": "content-123",
+				"subscription_topic": None,
+				"suppressed": False,
+				"suppression_reason": None,
 			},
 		)
+
+	def test_email_action_completes_as_suppressed_for_reach_topic_opt_out(self):
+		run = SimpleNamespace(record_doctype="Lead", record_name="LEAD-1")
+		config = {
+			"content_mode": "inline",
+			"recipient": {"kind": "literal", "value": "person@example.com"},
+			"subscription_topic": "Product Updates",
+		}
+		content = {"subject": "Hello", "message": "Body", "raw_html": False, "email_template": None, "content_hash": "hash"}
+		with (
+			patch("finbyzai.workflow_builder.external.external_actions_enabled", return_value=True),
+			patch("finbyzai.workflow_builder.external.resolve_email_content", return_value=content),
+			patch.object(frappe, "get_installed_apps", return_value=["finbyzreach"]),
+			patch.object(frappe.db, "exists", return_value=True),
+			patch("finbyzai.workflow_builder.external._native_email_recipient_exclusion", return_value=None),
+			patch("finbyzai.workflow_builder.external._reach_recipient_exclusion", return_value="Unsubscribed from topic Product Updates"),
+			patch.object(frappe, "sendmail") as sendmail,
+		):
+			result = queue_email(run, config, record={}, outputs={})
+
+		self.assertTrue(result["suppressed"])
+		self.assertEqual(result["suppression_reason"], "Unsubscribed from topic Product Updates")
+		self.assertEqual(result["subscription_topic"], "Product Updates")
+		self.assertIsNone(result["email_queue"])
+		sendmail.assert_not_called()
+
+	def test_email_action_enforces_native_global_opt_out_before_reach_topic_check(self):
+		run = SimpleNamespace(record_doctype="Lead", record_name="LEAD-1")
+		config = {
+			"content_mode": "inline",
+			"recipient": {"kind": "literal", "value": "person@example.com"},
+			"subscription_topic": "Product Updates",
+		}
+		content = {"subject": "Hello", "message": "Body", "raw_html": False, "email_template": None, "content_hash": "hash"}
+		with (
+			patch("finbyzai.workflow_builder.external.external_actions_enabled", return_value=True),
+			patch("finbyzai.workflow_builder.external.resolve_email_content", return_value=content),
+			patch.object(frappe, "get_installed_apps", return_value=["finbyzreach"]),
+			patch.object(frappe.db, "exists", return_value=True),
+			patch("finbyzai.workflow_builder.external._native_email_recipient_exclusion", return_value="Globally unsubscribed"),
+			patch("finbyzai.workflow_builder.external._reach_recipient_exclusion") as reach_check,
+			patch.object(frappe, "sendmail") as sendmail,
+		):
+			result = queue_email(run, config, record={}, outputs={})
+
+		self.assertTrue(result["suppressed"])
+		self.assertEqual(result["suppression_reason"], "Globally unsubscribed")
+		reach_check.assert_not_called()
+		sendmail.assert_not_called()
 
 	def test_email_action_rechecks_outgoing_sender_at_execution_time(self):
 		run = SimpleNamespace(record_doctype="Lead", record_name="LEAD-1")

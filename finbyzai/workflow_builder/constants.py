@@ -112,6 +112,7 @@ NODE_TYPES = {
 	"trigger.filter_criteria",
 	"trigger.event",
 	"trigger.schedule",
+	"trigger.webhook",
 	"trigger.any",
 	"condition.if_else",
 	"condition.random_split",
@@ -159,6 +160,7 @@ TRIGGER_NODE_TYPES = {
 	"trigger.filter_criteria",
 	"trigger.event",
 	"trigger.schedule",
+	"trigger.webhook",
 	"trigger.any",
 }
 

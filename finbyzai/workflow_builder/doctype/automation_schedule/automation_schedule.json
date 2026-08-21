@@ -1,12 +1,13 @@
 {
  "actions": [], "allow_rename": 0, "autoname": "format:ASC-{#####}", "creation": "2026-08-05 00:00:00.000000", "doctype": "DocType", "engine": "InnoDB",
- "field_order": ["workflow", "version_policy", "workflow_version", "enabled", "frequency", "timezone", "catch_up_policy", "overlap_policy", "filters_json", "batch_size", "records_per_minute", "max_records", "next_run_at", "last_run_at", "last_backfill_job"],
+ "field_order": ["workflow", "version_policy", "workflow_version", "enabled", "frequency", "recurrence_json", "timezone", "catch_up_policy", "overlap_policy", "filters_json", "batch_size", "records_per_minute", "max_records", "next_run_at", "last_run_at", "last_backfill_job"],
  "fields": [
   {"fieldname": "workflow", "fieldtype": "Link", "label": "Workflow", "options": "Automation Workflow", "reqd": 1},
   {"default": "ACTIVE_AT_RUN", "fieldname": "version_policy", "fieldtype": "Select", "label": "Version Policy", "options": "ACTIVE_AT_RUN\nPINNED", "reqd": 1},
   {"fieldname": "workflow_version", "fieldtype": "Link", "label": "Pinned Workflow Version", "options": "Automation Workflow Version"},
   {"default": "0", "fieldname": "enabled", "fieldtype": "Check", "label": "Enabled"},
-  {"fieldname": "frequency", "fieldtype": "Select", "label": "Frequency", "options": "HOURLY\nDAILY\nWEEKLY", "reqd": 1},
+  {"fieldname": "frequency", "fieldtype": "Select", "label": "Frequency", "options": "ONCE\nHOURLY\nDAILY\nWEEKLY\nMONTHLY\nANNUAL\nDATE_FIELD", "reqd": 1},
+  {"fieldname": "recurrence_json", "fieldtype": "JSON", "label": "Calendar Recurrence"},
   {"fieldname": "timezone", "fieldtype": "Data", "label": "Timezone", "reqd": 1},
   {"default": "RUN_ONCE", "fieldname": "catch_up_policy", "fieldtype": "Select", "label": "Catch-up Policy", "options": "RUN_ONCE\nSKIP", "reqd": 1},
   {"default": "SKIP", "fieldname": "overlap_policy", "fieldtype": "Select", "label": "Overlap Policy", "options": "SKIP\nQUEUE", "reqd": 1},
