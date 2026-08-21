@@ -140,7 +140,6 @@ export function AsyncCombobox({
           onFocus={() => setOpen(true)}
           onChange={(event) => {
             setQuery(event.target.value)
-            if (value) onChange('')
             setOpen(true)
           }}
           onKeyDown={(event) => {

@@ -140,6 +140,27 @@ export function reachableWorkflowNodeIds(graph: WorkflowGraph): Set<string> {
 	return reachable
 }
 
+function enrollmentTriggerCardCount(node: WorkflowNode) {
+	if (node.type === 'trigger.any') return (Array.isArray(node.config.triggers) ? node.config.triggers : []).filter((entry) => entry && typeof entry === 'object').length
+	if (node.type === 'trigger.event' && Array.isArray(node.config.events)) return node.config.events.filter((entry) => entry && typeof entry === 'object').length
+	return 1
+}
+
+/** Keep React Flow rendering and automatic layout on the same node width. */
+export function workflowNodeVisualWidth(node: WorkflowNode): number {
+	if (['trigger.document_insert', 'trigger.document_change', 'trigger.event', 'trigger.any'].includes(node.type)) {
+		// Every enrollment trigger is a real canvas card and the final slot is the
+		// Add trigger card. Do not cap this width: a cap creates an inner scrollbar
+		// that cuts through the derived convergence line. React Flow already owns
+		// canvas panning and zooming, so the enrollment boundary must expose its
+		// complete structural width to layout and edge calculations.
+		const items = enrollmentTriggerCardCount(node) + 1
+		return Math.max(432, items * 216)
+	}
+	const outputs = workflowNodeSourceHandles(node)
+	return outputs.length > 3 ? Math.min(1440, Math.max(252, outputs.length * 84)) : node.type.startsWith('trigger.') ? 310 : 252
+}
+
 /** Produce a readable top-down journey without requiring authors to manually
  * line up branches. Missing branch outputs reserve their own lane so END points
  * do not overlap connected children. Legacy unreachable nodes are moved into a
@@ -154,13 +175,9 @@ export function arrangeWorkflowGraph(graph: WorkflowGraph): WorkflowGraph {
 	const visiting = new Set<string>()
 	let leafIndex = 0
 
-	const nodeWidth = (node: WorkflowNode) => {
-		const outputs = workflowNodeSourceHandles(node)
-		return outputs.length > 3 ? Math.min(1440, Math.max(252, outputs.length * 84)) : 252
-	}
 	const place = (nodeId: string, depth: number): number => {
 		const existing = positions.get(nodeId)
-		if (existing) return existing.x + nodeWidth(nodeById.get(nodeId) as WorkflowNode) / 2
+		if (existing) return existing.x + workflowNodeVisualWidth(nodeById.get(nodeId) as WorkflowNode) / 2
 		const node = nodeById.get(nodeId)
 		if (!node || visiting.has(nodeId)) return leafIndex++ * horizontalGap
 		visiting.add(nodeId)
@@ -171,7 +188,7 @@ export function arrangeWorkflowGraph(graph: WorkflowGraph): WorkflowGraph {
 		}) : [leafIndex++ * horizontalGap]
 		visiting.delete(nodeId)
 		const center = (centers[0] + centers[centers.length - 1]) / 2
-		positions.set(nodeId, { x: center - nodeWidth(node) / 2, y: 80 + depth * verticalGap })
+		positions.set(nodeId, { x: center - workflowNodeVisualWidth(node) / 2, y: 80 + depth * verticalGap })
 		return center
 	}
 
@@ -180,7 +197,7 @@ export function arrangeWorkflowGraph(graph: WorkflowGraph): WorkflowGraph {
 	const reachablePositions = [...positions.values()]
 	const minimumX = Math.min(...reachablePositions.map((position) => position.x), 80)
 	const shiftX = minimumX < 80 ? 80 - minimumX : 0
-	const maximumX = Math.max(...reachablePositions.map((position) => position.x + 252 + shiftX), 332)
+	const maximumX = Math.max(...graph.nodes.filter((node) => reachable.has(node.id)).map((node) => (positions.get(node.id)?.x || 0) + workflowNodeVisualWidth(node) + shiftX), 332)
 	graph.nodes.filter((node) => !reachable.has(node.id)).forEach((node, index) => {
 		positions.set(node.id, { x: maximumX + 220, y: 80 + index * 220 })
 	})
@@ -215,7 +232,7 @@ export function suggestedNodePlacement(graph: WorkflowGraph, selectedNodeId?: st
 		const handle = handles.find((candidate) => !graph.edges.some((edge) => edge.source === node.id && edge.source_handle === candidate))
 		if (!handle) continue
 		const index = Math.max(handles.indexOf(handle), 0)
-		const width = handles.length > 3 ? Math.min(1440, Math.max(252, handles.length * 84)) : 252
+		const width = workflowNodeVisualWidth(node)
 		return {
 			position: {
 				x: node.position.x + ((index + 0.5) / Math.max(handles.length, 1)) * width - 126,

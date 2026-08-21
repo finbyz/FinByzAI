@@ -235,33 +235,99 @@ def capture_email_unsubscribe(doc, method=None) -> None:
 	_signal("email.unsubscribed", doc.get("reference_doctype"), doc.get("reference_name"), payload, payload["event_id"])
 
 
+def _reach_unsubscribe_topic_rows(lead_name: str | None) -> dict[str, str]:
+	"""Return topic -> child-row identity without depending on Reach internals."""
+	if not lead_name or not frappe.db.table_exists("Unsubscribe Topic Multi Select"):
+		return {}
+	return {
+		str(row.subscription_topic): str(row.name)
+		for row in frappe.get_all(
+			"Unsubscribe Topic Multi Select",
+			filters={
+				"parent": lead_name,
+				"parenttype": "Lead",
+				"parentfield": "custom_unsubscribe_topics",
+			},
+			fields=["name", "subscription_topic"],
+			limit_page_length=0,
+		)
+		if row.subscription_topic
+	}
+
+
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+def update_reach_subscription_preferences(*args, **kwargs):
+	"""Keep Reach's signed preference endpoint authoritative and emit new topic opt-outs.
+
+	Finbyz Reach writes its Table MultiSelect rows directly, so normal Lead and
+	child-document hooks do not run. This adapter wraps the public method without
+	changing Reach, preserves its signature/rate-limit checks, and emits only
+	topics newly added by the successful request.
+	"""
+	try:
+		from finbyzreach.email_marketing import update_subscription_preferences
+	except ImportError:
+		frappe.throw("Finbyz Reach is not installed.", frappe.ValidationError)
+
+	campaign_recipient = kwargs.get("campaign_recipient") or (args[0] if args else None)
+	email = kwargs.get("email") or (args[1] if len(args) > 1 else None)
+	lead_name = frappe.db.get_value("Email Campaign", campaign_recipient, "recipient") if campaign_recipient else None
+	before = _reach_unsubscribe_topic_rows(lead_name)
+	result = update_subscription_preferences(*args, **kwargs)
+	after = _reach_unsubscribe_topic_rows(lead_name)
+	for topic in sorted(set(after) - set(before)):
+		row_name = after[topic]
+		payload = {
+			"event_id": f"reach-topic-unsubscribe:{row_name}",
+			"email_id": email,
+			"email_type": "topic",
+			"subscription_topic": topic,
+		}
+		_signal("email.unsubscribed", "Lead", lead_name, payload, payload["event_id"])
+	return result
+
+
 def capture_abandoned_shopping_carts() -> int:
-	"""Emit the product default: an unchanged draft Shopping Cart for 24 hours."""
+	"""Emit Customer Portal carts that remain unchanged for 24 hours."""
 	if not _runtime_ready() or not frappe.db.table_exists("Quotation"):
 		return 0
 	cutoff = add_to_date(now_datetime(), hours=-24)
-	rows = frappe.get_all(
-		"Quotation",
-		filters={"docstatus": 0, "order_type": "Shopping Cart", "modified": ["<=", cutoff]},
-		fields=["name", "quotation_to", "party_name", "contact_person", "modified"],
-		limit=500,
-	)
+	window_start = add_to_date(cutoff, hours=-24)
 	emitted = 0
-	for row in rows:
-		if frappe.db.exists("Sales Order Item", {"prevdoc_docname": row.name}):
-			continue
-		payload = {
-			"event_id": f"shopping-cart:{row.name}:abandoned",
-			"store_id": "ERPNext Shopping Cart",
-			"cart_id": row.name,
-			"abandoned_after_hours": 24,
-		}
-		links = set()
-		if row.quotation_to in {"Customer", "Lead"} and row.party_name:
-			links.add((row.quotation_to, row.party_name))
-		if row.contact_person:
-			links.add(("Contact", row.contact_person))
-		for doctype, name in sorted(links):
-			_signal("commerce.order.abandoned", doctype, name, payload, payload["event_id"])
-			emitted += 1
+	page_size = 500
+	start = 0
+	while True:
+		rows = frappe.get_all(
+			"Quotation",
+			# Emit the transition into "abandoned" during the following day.
+			# The bounded window prevents historical replay; paging prevents a
+			# high-volume hour from starving rows behind the first 500 results.
+			filters={
+				"docstatus": 0,
+				"order_type": "Shopping Cart",
+				"quotation_to": "Customer",
+				"modified": ["between", [window_start, cutoff]],
+			},
+			fields=["name", "quotation_to", "party_name", "contact_person", "modified"],
+			order_by="modified desc, name desc",
+			start=start,
+			limit=page_size,
+		)
+		for row in rows:
+			if frappe.db.exists("Sales Order Item", {"prevdoc_docname": row.name}):
+				continue
+			payload = {
+				"event_id": f"shopping-cart:{row.name}:abandoned",
+				"store_id": "ERPNext Shopping Cart",
+				"cart_id": row.name,
+				"abandoned_after_hours": 24,
+			}
+			# The installed Customer Portal resolves carts through a Customer.
+			# Never guess a Lead/Contact relationship from an ERP quotation.
+			if row.quotation_to == "Customer" and row.party_name:
+				_signal("commerce.order.abandoned", "Customer", row.party_name, payload, payload["event_id"])
+				emitted += 1
+		if len(rows) < page_size:
+			break
+		start += page_size
 	return emitted

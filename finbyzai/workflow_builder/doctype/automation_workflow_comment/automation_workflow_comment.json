@@ -1,0 +1,33 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-08-21 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": ["workflow", "step_id", "content", "mention_users_json", "resolved", "resolved_by", "resolved_at"],
+ "fields": [
+  {"fieldname": "workflow", "fieldtype": "Link", "label": "Workflow", "options": "Automation Workflow", "reqd": 1},
+  {"fieldname": "step_id", "fieldtype": "Data", "label": "Step ID"},
+  {"fieldname": "content", "fieldtype": "Text Editor", "label": "Comment", "reqd": 1},
+  {"fieldname": "mention_users_json", "fieldtype": "JSON", "label": "Mentioned Users"},
+  {"default": "0", "fieldname": "resolved", "fieldtype": "Check", "label": "Resolved"},
+  {"fieldname": "resolved_by", "fieldtype": "Link", "label": "Resolved By", "options": "User"},
+  {"fieldname": "resolved_at", "fieldtype": "Datetime", "label": "Resolved At"}
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-21 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Workflow Builder",
+ "name": "Automation Workflow Comment",
+ "owner": "Administrator",
+ "permissions": [
+  {"create": 1, "read": 1, "write": 1, "delete": 1, "role": "Automation Builder"},
+  {"create": 1, "read": 1, "write": 1, "delete": 1, "role": "Automation Publisher"},
+  {"create": 1, "read": 1, "write": 1, "delete": 1, "role": "System Manager"}
+ ],
+ "sort_field": "creation",
+ "sort_order": "ASC",
+ "states": [],
+ "track_changes": 0
+}

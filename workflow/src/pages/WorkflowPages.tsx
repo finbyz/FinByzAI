@@ -11,6 +11,7 @@ import {
   CircleDot,
   Clock3,
   Copy,
+  Ellipsis,
   FileCheck2,
   FlaskConical,
   Gauge,
@@ -18,7 +19,9 @@ import {
   History,
   Layers3,
   LayoutDashboard,
+  Link2,
   LoaderCircle,
+  MessageSquare,
   Pause,
   Play,
   Plus,
@@ -36,8 +39,8 @@ import {
   X,
   Zap,
 } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
-import { type CSSProperties, type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
+import { type CSSProperties, type FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Controller, useForm } from 'react-hook-form'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { Inspector } from '../components/Inspector'
@@ -52,7 +55,7 @@ import { WorkflowCanvas } from '../components/WorkflowCanvas'
 import { call, fetchFieldCatalog, mutationEnvelope, searchDoctypes, searchLink } from '../lib/api'
 import { projectRunTrace } from '../lib/runTrace'
 import { useWorkflowActions, useWorkflowDocument, useWorkflowEditor, useWorkflowHistory, WorkflowProvider } from '../state/WorkflowContext'
-import type { ConditionExpression, FieldCatalogItem, ManualEnrollmentResult, RunSummary, RuntimeHealth, RuntimePreflight, WorkflowGraph, WorkflowLookup, WorkflowSummary } from '../types'
+import type { CanvasMetricsResponse, ConditionExpression, FieldCatalogItem, ManualEnrollmentResult, RunSummary, RuntimeHealth, RuntimePreflight, WorkflowGraph, WorkflowLookup, WorkflowSummary } from '../types'
 
 const secondary = 'btn-core btn-secondary'
 const primary = 'btn-core btn-primary'
@@ -143,16 +146,16 @@ function safeJsonEvidence(value?: string) {
   }
 }
 
-interface CreateForm { title: string; primary_doctype: string; trigger_type: string; folder: string }
+interface CreateForm { title: string; primary_doctype: string; folder: string }
 
 function CreateDialog({ close, created }: { close(): void; created(id: string): void }) {
   const dialogRef = useDialogA11y(true, close)
-  const { register, control, handleSubmit, formState: { isSubmitting } } = useForm<CreateForm>({ defaultValues: { primary_doctype: '', trigger_type: 'trigger.manual', folder: '' } })
+  const { register, control, handleSubmit, formState: { isSubmitting } } = useForm<CreateForm>({ defaultValues: { primary_doctype: '', folder: '' } })
   const [error, setError] = useState('')
   const loadDoctypes = useCallback((search: string) => searchDoctypes('read', search).then((rows) => rows.map((row) => ({ value: row.name, label: row.label || row.name, description: row.module }))), [])
   const submit = handleSubmit(async (values) => {
     try {
-      const result = await call<{ workflow: string }>('create_workflow', { envelope: { payload: values } }, true)
+      const result = await call<{ workflow: string }>('create_workflow', { envelope: { payload: { ...values, trigger_type: 'trigger.any' } } }, true)
       created(result.workflow)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Unable to create workflow')
@@ -166,7 +169,7 @@ function CreateDialog({ close, created }: { close(): void; created(id: string): 
           <div className="absolute -bottom-20 -left-16 size-48 rounded-full bg-magic-500/25 blur-2xl" />
           <span className="relative grid size-11 place-items-center rounded-xl bg-white/10 ring-1 ring-white/15"><WandSparkles size={21} /></span>
           <h2 className="relative mt-6 text-xl font-bold tracking-tight">Make busywork disappear.</h2>
-          <p className="relative mt-2 text-xs leading-5 text-slate-300">Start with a business record and an enrollment moment. You can shape the rest visually.</p>
+          <p className="relative mt-2 text-xs leading-5 text-slate-300">Start with a business record, then configure enrollment directly on the canvas.</p>
           <div className="relative mt-8 space-y-3 text-[11px] text-slate-300">
             <p className="flex gap-2"><ShieldCheck className="shrink-0 text-emerald-400" size={15} />Frappe permissions stay authoritative</p>
             <p className="flex gap-2"><Layers3 className="shrink-0 text-brand-300" size={15} />Every published version is immutable</p>
@@ -175,13 +178,12 @@ function CreateDialog({ close, created }: { close(): void; created(id: string): 
         </aside>
         <form onSubmit={submit} className="bg-white/40 dark:bg-[#18212b]/40 backdrop-blur-sm p-5 sm:p-7">
           <div className="flex items-start justify-between gap-4">
-            <div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-brand-600">New automation</p><h2 id="create-workflow-title" className="text-heading mt-1 text-xl font-bold tracking-tight">Create a workflow</h2><p className="text-muted mt-1 text-xs">Choose where this automation begins.</p></div>
+            <div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-brand-600">New automation</p><h2 id="create-workflow-title" className="text-heading mt-1 text-xl font-bold tracking-tight">Create a workflow</h2><p className="text-muted mt-1 text-xs">Choose the workflow name and business record.</p></div>
             <button type="button" className="icon-button" onClick={close} aria-label="Close"><X size={18} /></button>
           </div>
           <div className="mt-6 space-y-4">
             <label className="text-heading block text-xs font-semibold">Workflow name<input className={`${field} mt-1.5`} placeholder="e.g. Qualify new enterprise leads" {...register('title', { required: true })} /></label>
             <label className="text-heading block text-xs font-semibold">Business DocType<span className="mt-1.5 block"><Controller control={control} name="primary_doctype" rules={{ required: true }} render={({ field: doctypeField }) => <AsyncCombobox ariaLabel="Business DocType" value={doctypeField.value} onChange={doctypeField.onChange} loadOptions={loadDoctypes} placeholder="Search DocTypes by name or module…" />}/></span><span className="text-muted mt-1.5 block text-[10px] font-normal">Only readable, automation-safe DocTypes appear here.</span></label>
-			<label className="text-heading block text-xs font-semibold">How should records enroll?<select className={`${field} mt-1.5`} {...register('trigger_type')}><option value="trigger.manual">Manually, when an operator chooses</option><option value="trigger.any">When any of multiple triggers match</option><option value="trigger.filter_criteria">When filter criteria is met</option><option value="trigger.event">When an event occurs</option><option value="trigger.document_insert">When a record is created</option><option value="trigger.document_change">When a property value changes</option><option value="trigger.schedule">On a durable schedule</option></select></label>
 			<label className="text-heading block text-xs font-semibold">Folder <span className="text-muted font-normal">(optional)</span><input className={`${field} mt-1.5`} placeholder="e.g. Sales / Lead nurture" {...register('folder', { maxLength: 140 })} /><span className="text-muted mt-1.5 block text-[10px] font-normal">Use slash-separated names to organize workflows.</span></label>
             {error && <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">{error}</p>}
           </div>
@@ -192,8 +194,9 @@ function CreateDialog({ close, created }: { close(): void; created(id: string): 
   )
 }
 
-function DeleteWorkflowDialog({ workflow, close, deleted }: { workflow: WorkflowSummary; close(): void; deleted(): void }) {
+export function DeleteWorkflowDialog({ workflow, close, deleted }: { workflow: WorkflowSummary; close(): void; deleted(): void }) {
   const dialogRef = useDialogA11y(true, close)
+  const permanent = hasRole('System Manager') && (Boolean(workflow.latest_version) || workflow.status !== 'DRAFT')
   const [confirmText, setConfirmText] = useState('')
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState('')
@@ -201,7 +204,7 @@ function DeleteWorkflowDialog({ workflow, close, deleted }: { workflow: Workflow
     setDeleting(true)
     setError('')
     try {
-      await call('delete_workflow', mutationEnvelope(workflow.name, {}), true)
+      await call('delete_workflow', mutationEnvelope(workflow.name, { delete_history: permanent ? 1 : 0 }), true)
       deleted()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Unable to delete this workflow')
@@ -213,11 +216,53 @@ function DeleteWorkflowDialog({ workflow, close, deleted }: { workflow: Workflow
       <div ref={dialogRef} tabIndex={-1} className="dialog-card relative w-full max-w-md rounded-2xl p-5 sm:p-6">
         <button className="icon-button absolute right-4 top-4" onClick={close} aria-label="Close delete dialog"><X size={17} /></button>
         <span className="grid size-10 place-items-center rounded-xl bg-red-50 text-red-600 dark:bg-red-500/10"><Trash2 size={18} /></span>
-        <h2 id="delete-workflow-title" className="text-heading mt-4 text-lg font-bold">Delete this draft?</h2>
-        <p className="text-muted mt-2 text-xs leading-5">Only unpublished drafts with no runs can be deleted. Published history remains immutable. Type <strong className="text-heading">{workflow.name}</strong> to confirm.</p>
+        <h2 id="delete-workflow-title" className="text-heading mt-4 text-lg font-bold">{permanent ? 'Permanently delete workflow?' : 'Delete this draft?'}</h2>
+        <p className="text-muted mt-2 text-xs leading-5">{permanent ? <>This permanently removes the workflow, versions, runs, enrollment history, logs, schedules, and comments. It cannot be undone. Type <strong className="text-heading">{workflow.name}</strong> to confirm.</> : <>Only this unpublished draft and its setup data will be removed. Type <strong className="text-heading">{workflow.name}</strong> to confirm.</>}</p>
         <input className={`${field} mt-4`} value={confirmText} onChange={(event) => setConfirmText(event.target.value)} placeholder={workflow.name} autoFocus />
         {error && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-500/10 dark:text-red-300">{error}</p>}
-        <div className="mt-6 flex justify-end gap-2"><button className={secondary} onClick={close} disabled={deleting}>Keep draft</button><button className="btn-core border border-red-600 bg-red-600 text-white hover:bg-red-700" disabled={confirmText !== workflow.name || deleting} onClick={() => void remove()}>{deleting ? <LoaderCircle className="animate-spin" size={14} /> : <Trash2 size={14} />}Delete draft</button></div>
+        <div className="mt-6 flex justify-end gap-2"><button className={secondary} onClick={close} disabled={deleting}>Cancel</button><button className="btn-core border border-red-600 bg-red-600 text-white hover:bg-red-700" disabled={confirmText !== workflow.name || deleting} onClick={() => void remove()}>{deleting ? <LoaderCircle className="animate-spin" size={14} /> : <Trash2 size={14} />}{permanent ? 'Delete permanently' : 'Delete draft'}</button></div>
+      </div>
+    </div>
+  )
+}
+
+export function MoveWorkflowDialog({ workflow, close, moved }: { workflow: WorkflowSummary; close(): void; moved(folder: string): Promise<void> | void }) {
+  const dialogRef = useDialogA11y(true, close)
+  const [folder, setFolder] = useState(workflow.folder || '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const normalizedFolder = folder.trim()
+  const unchanged = normalizedFolder === (workflow.folder || '')
+  const submit = async (event: FormEvent) => {
+    event.preventDefault()
+    if (unchanged) {
+      close()
+      return
+    }
+    setSaving(true)
+    setError('')
+    try {
+      await moved(normalizedFolder)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Unable to move this workflow')
+      setSaving(false)
+    }
+  }
+  return (
+    <div className="dialog-backdrop fixed inset-0 z-50 grid place-items-center p-4" role="dialog" aria-modal="true" aria-labelledby="move-workflow-title" onClick={(event) => { if (event.target === event.currentTarget) close() }}>
+      <div ref={dialogRef} tabIndex={-1} className="dialog-card relative w-full max-w-md rounded-2xl p-5 sm:p-6">
+       <form onSubmit={(event) => void submit(event)}>
+        <button type="button" className="icon-button absolute right-4 top-4" onClick={close} aria-label="Close move workflow dialog"><X size={17} /></button>
+        <span className="grid size-10 place-items-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-500/10"><Layers3 size={18} /></span>
+        <h2 id="move-workflow-title" className="text-heading mt-4 text-lg font-bold">Move workflow</h2>
+        <p className="text-muted mt-1 text-xs leading-5">Choose a folder for <strong className="text-heading">{workflow.title}</strong>. Leave it empty to show the workflow as Unfiled.</p>
+        <div className="mt-5"><label htmlFor="move-workflow-folder" className="text-heading block text-xs font-semibold">Folder</label>
+          <input id="move-workflow-folder" className={`${field} mt-1.5`} value={folder} onChange={(event) => setFolder(event.target.value)} placeholder="e.g. Sales / Lead nurture" maxLength={140} autoFocus />
+          <span className="text-muted mt-1.5 block text-[10px] font-normal">Slash-separated folder names are supported.</span>
+        </div>
+        {error && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-500/10 dark:text-red-300">{error}</p>}
+        <div className="mt-6 flex justify-end gap-2"><button type="button" className={secondary} onClick={close} disabled={saving}>Cancel</button><button type="submit" className={primary} disabled={saving || unchanged}>{saving ? <LoaderCircle className="animate-spin" size={14} /> : <Layers3 size={14} />}Move</button></div>
+       </form>
       </div>
     </div>
   )
@@ -230,12 +275,12 @@ export function WorkflowListPage() {
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [hasMoreWorkflows, setHasMoreWorkflows] = useState(false)
-  const [workflowTotals, setWorkflowTotals] = useState({ total: 0, active: 0, paused: 0 })
   const [workflowSearch, setWorkflowSearch] = useState('')
   const [appliedWorkflowSearch, setAppliedWorkflowSearch] = useState('')
   const workflowRequestSequence = useRef(0)
   const [error, setError] = useState('')
   const [deleting, setDeleting] = useState<WorkflowSummary>()
+  const [moving, setMoving] = useState<WorkflowSummary>()
   const navigate = useNavigate()
   const load = useCallback(async (start = 0, append = false, signal?: AbortSignal) => {
 	const sequence = ++workflowRequestSequence.current
@@ -244,13 +289,12 @@ export function WorkflowListPage() {
     setError('')
     try {
       const [value, health] = await Promise.all([
-		call<{ rows: WorkflowSummary[]; has_more: boolean; total_count: number; status_counts: { ACTIVE: number; PAUSED: number } }>('list_workflows', { search: appliedWorkflowSearch, start, page_length: 50 }, false, signal),
+		call<{ rows: WorkflowSummary[]; has_more: boolean }>('list_workflows', { search: appliedWorkflowSearch, start, page_length: 50 }, false, signal),
 		call<RuntimeHealth>('get_runtime_health', {}, false, signal),
       ])
 	  if (sequence !== workflowRequestSequence.current) return
 	  setRows((current) => append ? [...current, ...value.rows] : value.rows)
 	  setHasMoreWorkflows(value.has_more)
-	  setWorkflowTotals({ total: value.total_count, active: value.status_counts.ACTIVE, paused: value.status_counts.PAUSED })
       setRuntime(health)
     } catch (reason) {
 	  if (!signal?.aborted && sequence === workflowRequestSequence.current) setError(reason instanceof Error ? reason.message : 'Unable to load workflows')
@@ -269,11 +313,7 @@ export function WorkflowListPage() {
   }, [workflowSearch])
   const canBuild = hasRole('Automation Builder', 'Automation Publisher')
   const canOperate = hasRole('Automation Operator', 'Automation Publisher')
-  const metrics: Array<{ label: string; value: number; icon: LucideIcon; tone: string }> = [
-    { label: 'Workflows', value: workflowTotals.total, icon: Layers3, tone: 'text-magic-500' },
-    { label: 'Active', value: workflowTotals.active, icon: Zap, tone: 'text-emerald-500' },
-    { label: 'Paused', value: workflowTotals.paused, icon: Pause, tone: 'text-amber-500' },
-  ]
+  const isSystemManager = hasRole('System Manager')
   const setWorkflowState = async (workflowId: string, status: 'ACTIVE' | 'PAUSED' | 'DISABLED') => {
     if (status === 'DISABLED' && !window.confirm('Disable this workflow? New enrollments stop and all active runs and timers are cancelled. Published history remains available.')) return
     try {
@@ -291,16 +331,6 @@ export function WorkflowListPage() {
       setError(reason instanceof Error ? reason.message : 'Unable to clone workflow')
     }
   }
-  const moveWorkflow = async (row: WorkflowSummary) => {
-    const folder = window.prompt('Move workflow to folder (leave empty for no folder):', row.folder || '')
-    if (folder === null || folder.trim() === (row.folder || '')) return
-    try {
-      await call('set_workflow_folder', mutationEnvelope(row.name, { folder: folder.trim() }), true)
-      await load()
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Unable to move workflow')
-    }
-  }
   return (
     <div className="app-shell">
       <Header>
@@ -314,36 +344,13 @@ export function WorkflowListPage() {
           {canBuild && <button className={primary} onClick={() => setCreating(true)}><Plus size={15} /><span className="hidden sm:inline">Create workflow</span></button>}
         </div>
       </Header>
-      <main className="mx-auto max-w-7xl px-4 pb-12 pt-6 sm:px-6 lg:px-8">
-        <section className="hero-glow surface animate-enter rounded-2xl px-6 py-7 sm:px-8 sm:py-8">
-          <div className="flex flex-col justify-between gap-6 md:flex-row md:items-center">
-            <div className="max-w-2xl">
-              <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.14em] text-brand-600"><Sparkles size={13} />Automation command center</div>
-              <h1 className="text-heading mt-2 text-2xl font-bold tracking-[-0.025em] sm:text-[30px]">Build reliable journeys for every record.</h1>
-              <p className="text-muted mt-2 max-w-xl text-sm leading-6">Design, test, publish, and operate durable Frappe automations from one visual workspace.</p>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
-              {metrics.map(({ label, value, icon: Icon, tone }) => (
-                <div className="metric-card min-w-24 rounded-xl p-3.5" key={label}><Icon className={tone} size={15} /><strong className="text-heading mt-3 block text-xl leading-none">{value}</strong><span className="text-muted mt-1 block text-[10px] font-medium">{label}</span></div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {runtime && (
-          <section className={`mt-4 grid gap-3 rounded-xl border p-4 shadow-sm md:grid-cols-[minmax(0,1fr)_auto] md:items-center ${runtime.healthy ? 'border-emerald-200 bg-emerald-50/75 dark:border-emerald-900 dark:bg-emerald-500/10' : 'border-amber-200 bg-amber-50/80 dark:border-amber-900 dark:bg-amber-500/10'}`} aria-label="Automation runtime health">
-            <div className="flex min-w-0 items-start gap-3">
-              <span className={`grid size-9 shrink-0 place-items-center rounded-xl ${runtime.healthy ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300'}`}>{runtime.healthy ? <ShieldCheck size={17} /> : <AlertTriangle size={17} />}</span>
-              <div><div className="flex flex-wrap items-center gap-2"><h2 className="text-heading text-xs font-bold">Automation runtime</h2><HelpTooltip label="Runtime health" content="Health includes Redis availability, outbox age and failures, recent failed runs, stale or orphaned active runs, open incidents, and open dead letters." /><Status value={runtime.enabled ? 'ACTIVE' : 'DISABLED'} /></div><p className="text-muted mt-1 text-[10px] leading-4">{runtime.enabled ? `${runtime.active_subscriptions} active event subscription${runtime.active_subscriptions === 1 ? '' : 's'} · durable outbox is authoritative` : 'Execution is safely disabled for rollout. Drafting and simulation remain available.'}{runtime.quarantined ? ` ${runtime.quarantined.toLocaleString()} unsafe legacy events are quarantined.` : ''}{runtime.reasons.length ? ` Attention: ${runtime.reasons.join(', ')}.` : ''}</p></div>
-            </div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-0 sm:divide-x divide-[var(--border-color)] rounded-lg border border-[var(--border-color)] bg-white/40 dark:bg-transparent px-2 py-2.5 text-center shadow-sm">
-              <div className="px-3"><strong className="text-heading block text-sm">{runtime.outbox.PENDING}</strong><span className="text-light text-[8px] font-bold uppercase tracking-wider">Ready</span></div>
-              <div className="px-3"><strong className="text-heading block text-sm">{runtime.outbox.PROCESSING}</strong><span className="text-light text-[8px] font-bold uppercase tracking-wider">Leased</span></div>
-              <div className="px-3"><strong className={`block text-sm ${runtime.outbox.FAILED ? 'text-amber-600' : 'text-heading'}`}>{runtime.outbox.FAILED}</strong><span className="text-light text-[8px] font-bold uppercase tracking-wider">Retry</span></div>
-              <div className="px-3"><strong className={`block text-sm ${runtime.outbox.DEAD ? 'text-red-600' : 'text-heading'}`}>{runtime.outbox.DEAD}</strong><span className="text-light text-[8px] font-bold uppercase tracking-wider">Dead</span></div>
-            </div>
-          </section>
-        )}
+      <main className="mx-auto max-w-7xl px-4 pb-12 pt-4 sm:px-6 lg:px-8">
+        {runtime && <Link className="runtime-summary" data-healthy={runtime.healthy ? 'true' : 'false'} to="/operations" aria-label="Open automation runtime">
+          <span className="runtime-summary__icon">{runtime.healthy ? <ShieldCheck size={16} /> : <AlertTriangle size={16} />}</span>
+          <span className="min-w-0 flex-1"><span className="flex items-center gap-2"><strong className="text-heading text-[11px]">Automation runtime</strong><Status value={runtime.enabled ? 'ACTIVE' : 'DISABLED'} /></span><small>{runtime.healthy ? `${runtime.active_subscriptions} active subscriptions · no operational attention needed` : runtime.reasons.length ? runtime.reasons.join(', ') : 'Runtime needs attention'}</small></span>
+          <span className="runtime-summary__counts"><span>{runtime.outbox.PENDING} ready</span>{runtime.outbox.FAILED > 0 && <span className="text-amber-600">{runtime.outbox.FAILED} retry</span>}{runtime.outbox.DEAD > 0 && <span className="text-red-600">{runtime.outbox.DEAD} dead</span>}</span>
+          <span className="runtime-summary__open">View runtime <ChevronRight size={14} /></span>
+        </Link>}
 
         <section className="mt-7">
           <div className="mb-3 flex items-end justify-between gap-4">
@@ -362,11 +369,11 @@ export function WorkflowListPage() {
                   <tbody>{rows.map((row) => (
                     <tr className="table-row" key={row.name}>
                       <td className="px-5 py-4"><div className="flex items-center gap-3"><span className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-brand-50 text-brand-600 dark:bg-brand-500/10"><Workflow size={16} /></span><div>{canBuild ? <Link className="text-heading font-bold hover:text-brand-600" to={`/${row.name}`}>{row.title}</Link> : <Link className="text-heading font-bold hover:text-brand-600" to={`/${row.name}/runs`}>{row.title}</Link>}<p className="text-light mt-0.5 text-[9px]">{row.name}</p></div></div></td>
-                      <td className="px-5 py-4"><button className="rounded-md border border-[var(--border-color)] bg-[var(--subtle-fg)] px-2 py-1 text-[10px] font-semibold hover:border-brand-300 hover:text-brand-600" disabled={!canBuild} onClick={() => void moveWorkflow(row)} title={canBuild ? 'Move to another folder' : undefined}>{row.folder || 'Unfiled'}</button></td>
+                      <td className="px-5 py-4"><button className="rounded-md border border-[var(--border-color)] bg-[var(--subtle-fg)] px-2 py-1 text-[10px] font-semibold hover:border-brand-300 hover:text-brand-600" disabled={!canBuild} onClick={() => setMoving(row)} title={canBuild ? 'Move to another folder' : undefined}>{row.folder || 'Unfiled'}</button></td>
                       <td className="px-5 py-4"><span className="rounded-md border border-[var(--border-color)] bg-[var(--subtle-fg)] px-2 py-1 text-[10px] font-semibold">{row.primary_doctype}</span></td>
                       <td className="px-5 py-4"><Status value={row.status} /></td>
                       <td className="text-muted px-5 py-4 text-[10px]">{formatDate(row.modified)}</td>
-                      <td className="px-5 py-4"><div className="flex gap-1.5">{canBuild && <button className={secondary} onClick={() => void cloneWorkflow(row)} title="Create an independent draft with fresh node and edge IDs"><Copy size={13} />Clone</button>}{canOperate && row.active_version && <>{row.trigger_type === 'trigger.manual' ? <Link className={secondary} to={`/${row.name}/runs`} title="Enroll a record manually and inspect runs"><Play size={13} />Enroll</Link> : <Link className={secondary} to={`/${row.name}/enrollment`} title={row.trigger_type === 'trigger.schedule' ? 'Manage schedules and backfills' : 'Run version-pinned backfills'}><CalendarClock size={13} />{row.trigger_type === 'trigger.schedule' ? 'Schedules' : 'Backfill'}</Link>}{row.status === 'ACTIVE' ? <button className={secondary} title="Stop new enrollments while preserving resumable runtime state" onClick={() => void setWorkflowState(row.name, 'PAUSED')}><Pause size={13} />Pause</button> : row.status === 'PAUSED' ? <button className={primary} title="Revalidate the pinned version and resume execution" onClick={() => void setWorkflowState(row.name, 'ACTIVE')}><Play size={13} />Resume</button> : null}{row.status !== 'DISABLED' && <button className={ghost} title="Cancel active runs and timers; published history remains" onClick={() => void setWorkflowState(row.name, 'DISABLED')}><Ban size={13} />Disable</button>}</>}{canBuild && row.status === 'DRAFT' && !row.latest_version && (row.owner === window.frappe?.boot?.user || hasRole('System Manager')) && <button className="btn-core btn-ghost text-red-600 hover:!bg-red-50 dark:hover:!bg-red-500/10" title="Delete this never-published, never-executed draft" onClick={() => setDeleting(row)}><Trash2 size={13} />Delete</button>}</div></td>
+                      <td className="px-5 py-4"><div className="flex gap-1.5">{canBuild && <button className={secondary} onClick={() => void cloneWorkflow(row)} title="Create an independent draft with fresh node and edge IDs"><Copy size={13} />Clone</button>}{canOperate && row.active_version && <>{row.trigger_type === 'trigger.manual' ? <Link className={secondary} to={`/${row.name}/runs`} title="Enroll a record manually and inspect runs"><Play size={13} />Enroll</Link> : <Link className={secondary} to={`/${row.name}/enrollment`} title={row.trigger_type === 'trigger.schedule' ? 'Manage schedules and backfills' : 'Run version-pinned backfills'}><CalendarClock size={13} />{row.trigger_type === 'trigger.schedule' ? 'Schedules' : 'Backfill'}</Link>}{row.status === 'ACTIVE' ? <button className={secondary} title="Stop new enrollments while preserving resumable runtime state" onClick={() => void setWorkflowState(row.name, 'PAUSED')}><Pause size={13} />Pause</button> : row.status === 'PAUSED' ? <button className={primary} title="Revalidate the pinned version and resume execution" onClick={() => void setWorkflowState(row.name, 'ACTIVE')}><Play size={13} />Resume</button> : null}{row.status !== 'DISABLED' && <button className={ghost} title="Cancel active runs and timers; published history remains" onClick={() => void setWorkflowState(row.name, 'DISABLED')}><Ban size={13} />Disable</button>}</>}{canBuild && ((row.status === 'DRAFT' && !row.latest_version && (row.owner === window.frappe?.boot?.user || isSystemManager)) || (isSystemManager && row.status === 'DISABLED')) && <button className="btn-core btn-ghost text-red-600 hover:!bg-red-50 dark:hover:!bg-red-500/10" title={row.latest_version ? 'Permanently delete this disabled workflow and all history' : 'Delete this unpublished draft'} onClick={() => setDeleting(row)}><Trash2 size={13} />Delete</button>}</div></td>
                       <td><Link className="icon-button" aria-label={`Open ${row.title}`} to={canBuild ? `/${row.name}` : `/${row.name}/runs`}><ChevronRight size={17} /></Link></td>
                     </tr>
                   ))}</tbody>
@@ -381,11 +388,12 @@ export function WorkflowListPage() {
       </main>
       {creating && <CreateDialog close={() => setCreating(false)} created={(id) => navigate(`/${id}`)} />}
       {deleting && <DeleteWorkflowDialog workflow={deleting} close={() => setDeleting(undefined)} deleted={() => { setDeleting(undefined); void load() }} />}
+      {moving && <MoveWorkflowDialog workflow={moving} close={() => setMoving(undefined)} moved={async (folder) => { await call('set_workflow_folder', mutationEnvelope(moving.name, { folder }), true); setMoving(undefined); await load() }} />}
     </div>
   )
 }
 
-function CommunicationSettingsButton() {
+export function CommunicationSettingsButton({ menuItem = false, onActivated }: { menuItem?: boolean; onActivated?(): void } = {}) {
   const doc = useWorkflowDocument()
   const actions = useWorkflowActions()
   const [open, setOpen] = useState(false)
@@ -395,18 +403,122 @@ function CommunicationSettingsButton() {
     ...doc.settings,
     communication: { ...communication, ...values },
   })
-  return <><button className="btn-core btn-ghost" title="Configure senders and response handling" onClick={() => setOpen(true)}><Send size={14} />Communication</button>{open && <div className="dialog-backdrop fixed inset-0 z-50 grid place-items-center p-4" role="dialog" aria-modal="true" aria-labelledby="communication-settings-title" onClick={(event) => { if (event.target === event.currentTarget) setOpen(false) }}><div className="dialog-card flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl"><div className="hero-glow flex items-start justify-between border-b border-[var(--border-color)] px-5 py-5"><div><p className="text-[10px] font-bold uppercase tracking-[0.12em] text-brand-600">Workflow communication</p><h2 id="communication-settings-title" className="text-heading mt-1 text-xl font-bold">Senders and response handling</h2><p className="text-muted mt-1 text-xs">These settings are saved with the draft and pinned to every published version.</p></div><button className="icon-button" onClick={() => setOpen(false)} aria-label="Close communication settings"><X size={17} /></button></div><div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5"><section className="grid gap-3 rounded-xl border border-[var(--border-color)] p-4 sm:grid-cols-2"><label className="text-heading text-[10px] font-semibold">Default sender name<input className={`${field} mt-1.5`} value={communication.default_sender_name || ''} onChange={(event) => update({ default_sender_name: event.target.value })} placeholder="Finbyz Sales" /></label><label className="text-heading text-[10px] font-semibold">Authorized sender email<input type="email" className={`${field} mt-1.5`} value={communication.default_sender_email || ''} onChange={(event) => update({ default_sender_email: event.target.value })} placeholder="sales@example.com" /></label><label className="text-heading text-[10px] font-semibold sm:col-span-2">Default SMS sender name / number<input className={`${field} mt-1.5`} value={communication.default_sms_sender || ''} onChange={(event) => update({ default_sms_sender: event.target.value })} placeholder="FINBYZ or +41…" /><span className="text-muted mt-1 block font-normal">The configured provider must allow this sender identity.</span></label></section><section className="space-y-2 rounded-xl border border-[var(--border-color)] p-4"><label className="flex items-start gap-3 rounded-lg bg-[var(--subtle-fg)] p-3"><input className="mt-0.5" type="checkbox" checked={Boolean(communication.stop_on_response)} onChange={(event) => update({ stop_on_response: event.target.checked })} /><span><strong className="text-heading block text-[11px]">Stop when this record responds</strong><span className="text-muted mt-0.5 block text-[10px] leading-4">An incoming Frappe Communication linked to the exact enrolled record cancels its active runs.</span></span></label><label className="flex items-start gap-3 rounded-lg bg-[var(--subtle-fg)] p-3"><input className="mt-0.5" type="checkbox" checked={Boolean(communication.mark_responses_read)} onChange={(event) => update({ mark_responses_read: event.target.checked })} /><span><strong className="text-heading block text-[11px]">Mark matching response as read</strong><span className="text-muted mt-0.5 block text-[10px] leading-4">Clear the linked Communication's unread notification when stop-on-response applies.</span></span></label></section></div><div className="flex justify-end border-t border-[var(--border-color)] px-5 py-4"><button className={primary} onClick={() => setOpen(false)}>Done</button></div></div></div>}</>
+  return <><button className={menuItem ? 'editor-more-item' : 'btn-core btn-ghost'} title="Configure senders and response handling" onClick={() => { setOpen(true); onActivated?.() }}><Send size={14} /><span><strong>Communication</strong>{menuItem && <small>Senders and response handling</small>}</span></button>{open && createPortal(<div className="dialog-backdrop fixed inset-0 z-50 grid place-items-center p-4" role="dialog" aria-modal="true" aria-labelledby="communication-settings-title" onClick={(event) => { if (event.target === event.currentTarget) setOpen(false) }}><div className="dialog-card flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl"><div className="hero-glow flex items-start justify-between border-b border-[var(--border-color)] px-5 py-5"><div><p className="text-[10px] font-bold uppercase tracking-[0.12em] text-brand-600">Workflow communication</p><h2 id="communication-settings-title" className="text-heading mt-1 text-xl font-bold">Senders and response handling</h2><p className="text-muted mt-1 text-xs">These settings are saved with the draft and pinned to every published version.</p></div><button className="icon-button" onClick={() => setOpen(false)} aria-label="Close communication settings"><X size={17} /></button></div><div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5"><section className="grid gap-3 rounded-xl border border-[var(--border-color)] p-4 sm:grid-cols-2"><label className="text-heading text-[10px] font-semibold">Default sender name<input className={`${field} mt-1.5`} value={communication.default_sender_name || ''} onChange={(event) => update({ default_sender_name: event.target.value })} placeholder="Finbyz Sales" /></label><div><label className="text-heading text-[10px] font-semibold">Authorized sender email</label><AsyncCombobox ariaLabel="Authorized sender email" value={communication.default_sender_email || ''} onChange={(default_sender_email) => update({ default_sender_email })} loadOptions={(search) => call<{ rows: ComboboxOption[] }>('list_email_senders', { search, page_length: 20 }).then((result) => result.rows)} placeholder="Choose enabled Email Account…" /></div><label className="text-heading text-[10px] font-semibold sm:col-span-2">Default SMS sender name / number<input className={`${field} mt-1.5`} value={communication.default_sms_sender || ''} onChange={(event) => update({ default_sms_sender: event.target.value })} placeholder="FINBYZ or +41…" /><span className="text-muted mt-1 block font-normal">The configured provider must allow this sender identity.</span></label></section><section className="space-y-2 rounded-xl border border-[var(--border-color)] p-4"><label className="flex items-start gap-3 rounded-lg bg-[var(--subtle-fg)] p-3"><input className="mt-0.5" type="checkbox" checked={Boolean(communication.stop_on_response)} onChange={(event) => update({ stop_on_response: event.target.checked })} /><span><strong className="text-heading block text-[11px]">Stop when this record responds</strong><span className="text-muted mt-0.5 block text-[10px] leading-4">An incoming Frappe Communication linked to the exact enrolled record cancels its active runs.</span></span></label><label className="flex items-start gap-3 rounded-lg bg-[var(--subtle-fg)] p-3"><input className="mt-0.5" type="checkbox" checked={Boolean(communication.mark_responses_read)} onChange={(event) => update({ mark_responses_read: event.target.checked })} /><span><strong className="text-heading block text-[11px]">Mark matching response as read</strong><span className="text-muted mt-0.5 block text-[10px] leading-4">Clear the linked Communication's unread notification when stop-on-response applies.</span></span></label></section></div><div className="flex justify-end border-t border-[var(--border-color)] px-5 py-4"><button className={primary} onClick={() => setOpen(false)}>Done</button></div></div></div>, document.body)}</>
+}
+
+interface WorkflowCommentRow {
+  name: string
+  step_id?: string
+  content: string
+  resolved: number
+  resolved_by?: string
+  owner: string
+  creation: string
+}
+
+function WorkflowConnectionsButton({ menuItem = false, onActivated }: { menuItem?: boolean; onActivated?(): void }) {
+  const doc = useWorkflowDocument()
+  const [open, setOpen] = useState(false)
+  const [rows, setRows] = useState<Array<{ kind: string; name: string; detail?: string; node_ids: string[] }>>([])
+  const [loading, setLoading] = useState(false)
+  useDialogA11y(open, () => setOpen(false), 'Workflow connections')
+  useEffect(() => {
+    if (!open) return
+    setLoading(true)
+    void call<{ rows: typeof rows }>('get_workflow_connections', { workflow_id: doc.workflowId }).then((value) => setRows(value.rows)).finally(() => setLoading(false))
+  }, [doc.workflowId, open])
+  return <><button className={menuItem ? 'editor-more-item' : 'btn-core btn-ghost'} onClick={() => { setOpen(true); onActivated?.() }}><Link2 size={14} /><span><strong>Connections</strong>{menuItem && <small>Templates, accounts and integrations</small>}</span></button>{open && createPortal(<div className="dialog-backdrop editor-drawer-backdrop fixed inset-x-0 bottom-0 top-[110px] z-50 flex justify-end" role="dialog" aria-modal="true" onClick={(event) => { if (event.target === event.currentTarget) setOpen(false) }}><div className="dialog-card editor-utility-drawer flex h-full w-full max-w-[420px] flex-col overflow-hidden"><header className="flex items-start justify-between border-b border-[var(--border-color)] px-4 py-3.5"><div><p className="text-[8px] font-bold uppercase tracking-wider text-brand-600">Dependencies</p><h2 className="text-heading mt-0.5 text-sm font-bold">Connections</h2><p className="text-muted mt-1 text-[10px]">Everything this workflow depends on.</p></div><button className="icon-button" onClick={() => setOpen(false)} aria-label="Close workflow connections"><X size={16} /></button></header><div className="min-h-0 flex-1 overflow-y-auto p-3">{loading ? <p className="text-muted p-8 text-center text-xs">Loading connections…</p> : rows.length ? <div className="divide-y divide-[var(--border-color)]">{rows.map((row) => <article className="flex items-start justify-between gap-3 px-1 py-3" key={`${row.kind}:${row.name}`}><div className="min-w-0"><span className="text-light text-[8px] font-bold uppercase tracking-wider">{row.kind}</span><strong className="text-heading mt-0.5 block break-all text-[11px]">{row.name}</strong>{row.detail && <p className="text-muted mt-0.5 text-[9px] leading-4">{row.detail}</p>}</div><span className="status-pill shrink-0">{row.node_ids.length} step{row.node_ids.length === 1 ? '' : 's'}</span></article>)}</div> : <div className="p-8 text-center"><Link2 className="mx-auto text-[var(--text-light)]" size={19} /><p className="text-heading mt-2 text-[11px] font-semibold">No connections yet</p><p className="text-muted mt-1 text-[9px]">Templates and integrations appear here as you add actions.</p></div>}</div></div></div>, document.body)}</>
+}
+
+function WorkflowCommentsButton({ menuItem = false, onActivated }: { menuItem?: boolean; onActivated?(): void }) {
+  const doc = useWorkflowDocument()
+  const editor = useWorkflowEditor()
+  const [open, setOpen] = useState(false)
+  const [rows, setRows] = useState<WorkflowCommentRow[]>([])
+  const [content, setContent] = useState('')
+  const [mentions, setMentions] = useState('')
+  const [busy, setBusy] = useState(false)
+  useDialogA11y(open, () => setOpen(false), 'Workflow comments')
+  const load = useCallback(async () => {
+    const value = await call<{ rows: WorkflowCommentRow[] }>('list_workflow_comments', { workflow_id: doc.workflowId })
+    setRows(value.rows)
+  }, [doc.workflowId])
+  useEffect(() => { if (open) void load() }, [load, open])
+  const submit = async () => {
+    if (!content.trim()) return
+    setBusy(true)
+    try {
+      await call('create_workflow_comment', { workflow_id: doc.workflowId, step_id: editor.selectedNodeId || undefined, content: content.trim(), mention_users: mentions.split(',').map((value) => value.trim()).filter(Boolean) }, true)
+      setContent('')
+      setMentions('')
+      await load()
+    } finally { setBusy(false) }
+  }
+  const resolve = async (row: WorkflowCommentRow) => {
+    await call('set_workflow_comment_resolved', { comment_id: row.name, resolved: row.resolved ? 0 : 1 }, true)
+    await load()
+  }
+  const unresolved = rows.filter((row) => !row.resolved).length
+  return <><button className={menuItem ? 'editor-more-item' : 'btn-core btn-ghost'} onClick={() => { setOpen(true); onActivated?.() }}><MessageSquare size={14} /><span><strong>Comments</strong>{menuItem && <small>Discuss this workflow or selected step</small>}</span>{unresolved ? <span className="status-pill">{unresolved}</span> : null}</button>{open && createPortal(<div className="dialog-backdrop editor-drawer-backdrop fixed inset-x-0 bottom-0 top-[110px] z-50 flex justify-end" role="dialog" aria-modal="true" onClick={(event) => { if (event.target === event.currentTarget) setOpen(false) }}><div className="dialog-card editor-utility-drawer flex h-full w-full max-w-[420px] flex-col overflow-hidden"><header className="flex items-start justify-between border-b border-[var(--border-color)] px-4 py-3.5"><div><p className="text-[8px] font-bold uppercase tracking-wider text-magic-600">Collaboration</p><h2 className="text-heading mt-0.5 text-sm font-bold">Comments</h2><p className="text-muted mt-1 text-[10px]">Adding to {editor.selectedNodeId ? 'the selected step' : 'the whole workflow'}.</p></div><button className="icon-button" onClick={() => setOpen(false)} aria-label="Close workflow comments"><X size={16} /></button></header><div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">{rows.map((row) => <article className={`rounded-lg border p-3 ${row.resolved ? 'border-[var(--border-color)] opacity-60' : 'border-brand-200 dark:border-brand-800'}`} key={row.name}><div className="flex items-center justify-between gap-2"><span className="text-light truncate text-[8px] font-bold">{row.owner} · {formatDate(row.creation)}{row.step_id ? ' · Step comment' : ''}</span><button className={ghost} onClick={() => void resolve(row)}>{row.resolved ? 'Reopen' : 'Resolve'}</button></div><p className="text-heading mt-2 whitespace-pre-wrap text-[11px] leading-4">{row.content}</p></article>)}{!rows.length && <div className="p-8 text-center"><MessageSquare className="mx-auto text-[var(--text-light)]" size={19} /><p className="text-heading mt-2 text-[11px] font-semibold">No comments yet</p><p className="text-muted mt-1 text-[9px]">Start the first discussion below.</p></div>}</div><footer className="space-y-2 border-t border-[var(--border-color)] p-3"><textarea className={`${field} min-h-20 w-full resize-y`} value={content} onChange={(event) => setContent(event.target.value)} placeholder={editor.selectedNodeId ? 'Comment on selected step…' : 'Comment on workflow…'} /><details><summary className="text-muted cursor-pointer text-[9px] font-semibold">Mention teammates</summary><input className={`${field} mt-2 w-full`} value={mentions} onChange={(event) => setMentions(event.target.value)} placeholder="User emails, separated by commas" /></details><div className="flex justify-end"><button className={primary} disabled={busy || !content.trim()} onClick={() => void submit()}><Send size={13} />Comment</button></div></footer></div></div>, document.body)}</>
+}
+
+export function EditorMoreMenu() {
+  const doc = useWorkflowDocument()
+  const actions = useWorkflowActions()
+  const [open, setOpen] = useState(false)
+	const buttonRef = useRef<HTMLButtonElement>(null)
+	const menuRef = useRef<HTMLDivElement>(null)
+	const [position, setPosition] = useState({ top: 0, left: 8 })
+	const triggerType = doc.graph?.nodes.find((node) => node.id === doc.graph?.start_node_id)?.type
+	const showEnrollmentPage = Boolean(doc.publication?.has_published_version && triggerType !== 'trigger.manual')
+	const enrollmentLabel = triggerType === 'trigger.schedule' ? 'Schedules' : triggerType === 'trigger.webhook' ? 'Webhooks' : 'Backfill'
+	  const positionMenu = useCallback(() => {
+		const anchor = buttonRef.current?.getBoundingClientRect()
+		if (!anchor) return
+		const menuWidth = 270
+		const menuHeight = menuRef.current?.offsetHeight || 360
+		const below = anchor.bottom + 7
+		const top = below + menuHeight <= window.innerHeight - 8 ? below : Math.max(8, anchor.top - menuHeight - 7)
+		const left = Math.min(Math.max(8, anchor.left), Math.max(8, window.innerWidth - menuWidth - 8))
+		setPosition({ top, left })
+	}, [])
+	useEffect(() => {
+		if (!open) return
+		positionMenu()
+		const close = (event: PointerEvent) => {
+			const target = event.target as globalThis.Node
+			if (!menuRef.current?.contains(target) && !buttonRef.current?.contains(target)) setOpen(false)
+		}
+		const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false) }
+		const reposition = () => positionMenu()
+		document.addEventListener('pointerdown', close)
+		document.addEventListener('keydown', escape)
+		window.addEventListener('resize', reposition)
+		window.addEventListener('scroll', reposition, true)
+		return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', escape); window.removeEventListener('resize', reposition); window.removeEventListener('scroll', reposition, true) }
+	}, [open, positionMenu])
+  return <div>
+    <button ref={buttonRef} className="btn-core btn-ghost" aria-haspopup="menu" aria-expanded={open} onClick={() => { if (!open) positionMenu(); setOpen((value) => !value) }}><Ellipsis size={15} /><span className="max-xl:hidden">More</span></button>
+    {createPortal(<div ref={menuRef} className="editor-more-menu" data-open={open ? 'true' : 'false'} role="menu" style={position}>
+	  <button className="editor-more-item" onClick={() => { setOpen(false); actions.toggle('policiesOpen', true) }}><Settings2 size={14} /><span><strong>Workflow settings</strong><small>Eligibility, timing, goals and suppressions</small></span></button>
+	  <CommunicationSettingsButton menuItem onActivated={() => setOpen(false)} />
+	  {showEnrollmentPage && <Link className="editor-more-item" to={`/${doc.workflowId}/enrollment`} onClick={() => setOpen(false)}><CalendarClock size={14} /><span><strong>{enrollmentLabel}</strong><small>Manage enrollment operations</small></span></Link>}
+	  <button className="editor-more-item" onClick={() => { setOpen(false); void actions.validate() }}><FileCheck2 size={14} /><span><strong>Check workflow</strong><small>Validate the saved draft and permissions</small></span></button>
+      <WorkflowConnectionsButton menuItem onActivated={() => setOpen(false)} />
+      <WorkflowCommentsButton menuItem onActivated={() => setOpen(false)} />
+      <button className="editor-more-item" onClick={() => { setOpen(false); actions.toggle('versionsOpen', true) }}><GitCompareArrows size={14} /><span><strong>Version history</strong><small>Compare or restore a published version</small></span></button>
+    </div>, document.body)}
+  </div>
 }
 
 function EditorHeader() {
   const doc = useWorkflowDocument()
   const history = useWorkflowHistory()
+	const editor = useWorkflowEditor()
   const actions = useWorkflowActions()
   const canPublish = hasRole('Automation Publisher')
   const publication = doc.publication
   const triggerType = doc.graph?.nodes.find((node) => node.id === doc.graph?.start_node_id)?.type
-  const showEnrollmentPage = triggerType !== 'trigger.manual'
-  const enrollmentLabel = triggerType === 'trigger.schedule' ? 'Schedules' : 'Backfill'
   const publishedAndCurrent = publication.has_published_version && !publication.has_unpublished_changes && publication.state !== 'READY_TO_ACTIVATE'
   const publishLabel = publication.has_published_version
     ? publication.has_unpublished_changes
@@ -420,26 +532,24 @@ function EditorHeader() {
           <ProductBrand subtitle="Visual editor" />
           <span className="hidden h-7 w-px bg-[var(--border-color)] sm:block" />
           <Link to="/" className="icon-button hidden sm:grid" aria-label="Back to workflows"><ArrowLeft size={16} /></Link>
-          <div className="min-w-0"><div className="flex items-center gap-2"><h1 className="text-heading truncate text-[13px] font-bold">{doc.title}</h1><Status value={doc.status} />{publication.has_published_version && <span className="status-pill border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-500/10 dark:text-emerald-300">Published v{publication.latest_version_no}</span>}{publication.has_unpublished_changes && publication.has_published_version && <span className="status-pill border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-500/10 dark:text-amber-300">Draft changes</span>}</div><p className="text-light mt-0.5 truncate text-[9px]">{doc.graph?.primary_doctype} workflow · {doc.workflowId}{publication.has_unpublished_changes ? ` · publish as v${publication.next_version_no}` : publication.active_version_no ? ` · active v${publication.active_version_no}` : ''}</p></div>
+          <div className="min-w-0" title={doc.workflowId}><div className="flex items-center gap-2"><h1 className="text-heading truncate text-[13px] font-bold">{doc.title}</h1>{(!publication.has_published_version || doc.status !== 'ACTIVE') && <Status value={doc.status} />}{publication.has_published_version && <span className="status-pill border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-500/10 dark:text-emerald-300">Published v{publication.latest_version_no}</span>}{publication.has_unpublished_changes && publication.has_published_version && <span className="status-pill border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-500/10 dark:text-amber-300">Draft changes</span>}</div><p className="text-light mt-0.5 truncate text-[9px]">{doc.graph?.primary_doctype} workflow{publication.has_unpublished_changes ? ` · next version v${publication.next_version_no}` : publication.active_version_no ? ` · active version v${publication.active_version_no}` : ''}</p></div>
         </div>
         <div className="flex items-center gap-1"><DeskLink /><ThemeToggle /></div>
       </Header>
-      <nav className="hide-scrollbar relative z-30 flex min-h-[52px] items-center gap-4 overflow-x-auto border-b border-[var(--border-color)] bg-white/50 dark:bg-[#18212b]/50 backdrop-blur-md px-4 shadow-[0_2px_8px_rgb(25_39_51_/_0.035)] sm:px-5">
+      <nav className="hide-scrollbar relative z-30 flex min-h-[52px] items-center gap-2 overflow-x-auto border-b border-[var(--border-color)] bg-white/50 dark:bg-[#18212b]/50 backdrop-blur-md px-3 shadow-[0_2px_8px_rgb(25_39_51_/_0.035)] sm:px-4">
         <div className="flex h-[52px] shrink-0 items-center gap-1">
           <button className="relative flex h-full items-center gap-2 px-3 text-[11px] font-bold text-brand-600 after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-brand-500"><Layers3 size={14} />Build</button>
-          {publication.has_published_version ? <><Link className="btn-core btn-ghost" to={`/${doc.workflowId}/runs`}><History size={14} />{triggerType === 'trigger.manual' ? 'Enroll & runs' : 'Runs'}</Link>{showEnrollmentPage && <Link className="btn-core btn-ghost" to={`/${doc.workflowId}/enrollment`}><CalendarClock size={14} />{enrollmentLabel}</Link>}</> : <span className="ml-1 rounded-lg border border-dashed border-[var(--border-color)] px-2.5 py-1.5 text-[9.5px] font-semibold text-[var(--text-light)]">Publish to operate</span>}
-          <button className="btn-core btn-ghost" title="Configure eligibility, action timing, goals, read semantics, and suppression rules" onClick={() => actions.toggle('policiesOpen', true)}><Settings2 size={14} />Policies</button>
-          <CommunicationSettingsButton />
-          <button className="btn-core btn-ghost" title="Compare immutable published versions or restore one into the draft" onClick={() => actions.toggle('versionsOpen', true)}><GitCompareArrows size={14} />Versions</button>
+          {publication.has_published_version && <><Link className="btn-core btn-ghost" title={triggerType === 'trigger.manual' ? 'Enroll and view history' : 'Enrollment history'} to={`/${doc.workflowId}/runs`}><History size={14} /><span className="max-xl:hidden">{triggerType === 'trigger.manual' ? 'Enroll & history' : 'History'}</span></Link><Link className="btn-core btn-ghost" title="Workflow performance" to={`/${doc.workflowId}/performance`}><Gauge size={14} /><span className="max-xl:hidden">Performance</span></Link></>}
+          <EditorMoreMenu />
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
+		  <button className={secondary} aria-pressed={editor.catalogOpen} title="Open the action catalogue" onClick={() => actions.toggle('catalogOpen')}><Plus size={14} /><span className="max-xl:hidden">Add action</span></button>
           <button className="icon-button" disabled={!history.past.length} onClick={actions.undo} aria-label="Undo"><Undo2 size={15} /></button>
           <button className="icon-button" disabled={!history.future.length} onClick={actions.redo} aria-label="Redo"><Redo2 size={15} /></button>
           <span className="mx-1 h-5 w-px bg-[var(--border-color)]" />
-          <span className={`mr-1 flex items-center gap-1.5 text-[10px] font-medium ${doc.dirty ? 'text-amber-600' : 'text-[var(--text-light)]'}`}><CircleDot size={11} />{doc.saving ? 'Saving…' : doc.dirty ? 'Unsaved changes' : `Saved · r${doc.serverRevision}`}</span>
-          <button className={secondary} title="Persist this draft revision" onClick={() => void actions.save()} disabled={!doc.dirty}><Save size={14} />Save</button>
-          <button className={secondary} title="Save pending edits, then validate that exact server revision" onClick={() => void actions.validate()}><FileCheck2 size={14} />Check</button>
-          <button className={magic} title="Simulate selected nodes without changing live data" onClick={() => actions.toggle('simulationOpen', true)}><FlaskConical size={14} />Test</button>
+          <span className={`mr-1 flex items-center gap-1.5 text-[10px] font-medium ${doc.dirty ? 'text-amber-600' : 'text-[var(--text-light)]'}`} title={`Draft revision ${doc.serverRevision}`}><CircleDot size={11} />{doc.saving ? 'Saving…' : doc.dirty ? 'Unsaved changes' : 'Saved'}</span>
+          <button className={secondary} title="Persist this draft revision" onClick={() => void actions.save()} disabled={!doc.dirty}><Save size={14} /><span className="max-xl:hidden">Save</span></button>
+          <button className={magic} title="Simulate selected nodes without changing live data" onClick={() => actions.toggle('simulationOpen', true)}><FlaskConical size={14} /><span className="max-xl:hidden">Test</span></button>
           {canPublish && <button className={publishedAndCurrent ? secondary : primary} disabled={publishedAndCurrent} title={publishedAndCurrent ? 'The saved draft already matches the latest published version' : publication.state === 'READY_TO_ACTIVATE' ? `Review and activate published version ${publication.latest_version_no}` : `Review and publish this draft as version ${publication.next_version_no}`} onClick={() => actions.toggle('publishOpen', true)}>{publishedAndCurrent ? <CheckCircle2 size={14} /> : <Send size={14} />}{publishLabel}</button>}
         </div>
       </nav>
@@ -608,6 +718,7 @@ function EditorPanels() {
 
 function Editor() {
   const doc = useWorkflowDocument()
+	const editor = useWorkflowEditor()
   const actions = useWorkflowActions()
   const [inspectorMaximum, setInspectorMaximum] = useState(availableInspectorWidth)
   const [inspectorWidth, setInspectorWidth] = useState(storedInspectorWidth)
@@ -639,7 +750,7 @@ function Editor() {
   if (doc.loading) return <div className="app-shell grid h-screen place-items-center"><div className="text-center"><span className="magic-orb mx-auto"><LoaderCircle className="animate-spin" size={20} /></span><p className="text-muted mt-3 text-xs">Opening workflow canvas…</p></div></div>
   if (!doc.graph) return <div className="app-shell grid h-screen place-items-center p-6"><div className="surface max-w-md rounded-2xl p-7 text-center"><span className="mx-auto grid size-11 place-items-center rounded-xl bg-red-50 text-red-600 dark:bg-red-500/10"><AlertTriangle size={20} /></span><h1 className="text-heading mt-4 text-lg font-bold">Unable to open this workflow</h1><p className="text-muted mt-2 text-xs leading-5">{doc.error || 'The workflow draft could not be loaded.'}</p><div className="mt-5 flex justify-center gap-2"><Link className={secondary} to="/"><ArrowLeft size={14} />All workflows</Link><button className={primary} onClick={() => void actions.reload()}><Play size={14} />Try again</button></div></div></div>
   const editorStyle = { '--inspector-width': `${inspectorWidth}px` } as CSSProperties
-  return <div className="app-shell relative flex h-screen flex-col overflow-hidden" style={editorStyle}><EditorHeader />{primaryDoctypeIssue && <div className="relative z-20 flex items-center justify-between gap-4 border-b border-amber-200 bg-amber-50 px-5 py-2.5 text-[11px] text-amber-900 dark:border-amber-900 dark:bg-amber-500/10 dark:text-amber-200"><span className="flex min-w-0 items-center gap-2"><AlertTriangle className="shrink-0" size={15} /><span><strong>This workflow needs a supported business object.</strong> {primaryDoctypeIssue.message} Its existing draft stays available for inspection, but it cannot be published.</span></span><Link className={`${secondary} shrink-0`} to="/"><Plus size={13} />Create replacement</Link></div>}{doc.error && <div className="absolute left-1/2 top-[122px] z-50 flex max-w-lg -translate-x-1/2 items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[10.5px] font-medium text-red-700 shadow-lg dark:border-red-900 dark:bg-red-500/10 dark:text-red-300"><AlertTriangle size={13} />{doc.error}</div>}<div className="workflow-editor-grid relative grid min-h-0 flex-1 max-lg:overflow-hidden"><NodeCatalog /><WorkflowCanvas /><Inspector width={inspectorWidth} minWidth={INSPECTOR_MIN_WIDTH} maxWidth={inspectorMaximum} expanded={inspectorExpanded} onWidthChange={updateInspectorWidth} onToggleExpanded={toggleInspectorWidth} /></div><EditorPanels /></div>
+	return <div className="app-shell relative flex h-screen flex-col overflow-hidden" style={editorStyle}><EditorHeader />{primaryDoctypeIssue && <div className="relative z-20 flex items-center justify-between gap-4 border-b border-amber-200 bg-amber-50 px-5 py-2.5 text-[11px] text-amber-900 dark:border-amber-900 dark:bg-amber-500/10 dark:text-amber-200"><span className="flex min-w-0 items-center gap-2"><AlertTriangle className="shrink-0" size={15} /><span><strong>This workflow needs a supported business object.</strong> {primaryDoctypeIssue.message} Its existing draft stays available for inspection, but it cannot be published.</span></span><Link className={`${secondary} shrink-0`} to="/"><Plus size={13} />Create replacement</Link></div>}{doc.error && <div className="absolute left-1/2 top-[122px] z-50 flex max-w-lg -translate-x-1/2 items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[10.5px] font-medium text-red-700 shadow-lg dark:border-red-900 dark:bg-red-500/10 dark:text-red-300"><AlertTriangle size={13} />{doc.error}</div>}<div className="workflow-editor-grid relative grid min-h-0 flex-1 max-lg:overflow-hidden" data-catalog-open={editor.catalogOpen ? 'true' : 'false'} data-inspector-open={editor.selectedNodeId ? 'true' : 'false'}><NodeCatalog /><WorkflowCanvas />{editor.selectedNodeId && <Inspector width={inspectorWidth} minWidth={INSPECTOR_MIN_WIDTH} maxWidth={inspectorMaximum} expanded={inspectorExpanded} onWidthChange={updateInspectorWidth} onToggleExpanded={toggleInspectorWidth} />}</div><EditorPanels /></div>
 }
 
 export function WorkflowEditorPage() {
@@ -836,6 +947,29 @@ interface OperationsSnapshot {
 interface IncidentRow { name: string; status: string; severity: string; workflow?: string; run?: string; node_id?: string; error_code: string; occurrence_count: number; last_seen_at: string; last_message?: string }
 interface DeadLetterRow { name: string; source_type: string; source_name: string; workflow?: string; run?: string; status: string; error_code: string; message?: string; attempts: number; created_at: string }
 interface AnalyticsTotals { enrollments: number; suppressed: number; duplicates: number; completed_runs: number; failed_runs: number; cancelled_runs: number; retries: number }
+
+export function WorkflowPerformancePage() {
+  const { workflowId = '' } = useParams()
+  const [metrics, setMetrics] = useState<CanvasMetricsResponse>()
+  const [totals, setTotals] = useState<AnalyticsTotals>()
+  const [title, setTitle] = useState(workflowId)
+  const [error, setError] = useState('')
+  const load = useCallback(async () => {
+    try {
+      const draft = await call<{ workflow: { title: string }; publication: { active_version?: string } }>('get_draft', { workflow_id: workflowId })
+      setTitle(draft.workflow.title)
+      const [canvas, analytics] = await Promise.all([
+        call<CanvasMetricsResponse>('get_canvas_metrics', { workflow_id: workflowId, workflow_version: draft.publication.active_version }),
+        call<{ totals: AnalyticsTotals }>('get_automation_analytics', { workflow_id: workflowId, days: 30 }),
+      ])
+      setMetrics(canvas)
+      setTotals(analytics.totals)
+      setError('')
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Unable to load workflow performance') }
+  }, [workflowId])
+  useEffect(() => { void load() }, [load])
+  return <div className="app-shell min-h-screen"><Header><div className="flex items-center gap-3"><ProductBrand subtitle="Workflow performance" /><Link className="icon-button" to={`/${workflowId}`} aria-label="Back to editor"><ArrowLeft size={16} /></Link><div><h1 className="text-heading text-xs font-bold">{title}</h1><p className="text-light text-[9px]">Published execution metrics</p></div></div><ThemeToggle /></Header><main className="mx-auto max-w-6xl px-4 py-7 sm:px-6"><div className="flex items-end justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-wider text-brand-600">Performance</p><h1 className="text-heading mt-1 text-2xl font-bold">Workflow outcomes</h1><p className="text-muted mt-1 text-xs">30-day totals plus idempotent per-step and branch reach from the active version.</p></div><button className={secondary} onClick={() => void load()}><Activity size={13} />Refresh</button></div>{error && <p className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">{error}</p>}{totals && <section className="mt-5 grid gap-3 sm:grid-cols-3 lg:grid-cols-6">{[['Enrollments', totals.enrollments], ['Completed', totals.completed_runs], ['Failed', totals.failed_runs], ['Cancelled', totals.cancelled_runs], ['Suppressed', totals.suppressed], ['Retries', totals.retries]].map(([label, value]) => <div className="metric-card rounded-xl p-4" key={String(label)}><p className="text-light text-[9px] font-bold uppercase tracking-wider">{label}</p><strong className="text-heading mt-2 block text-2xl">{Number(value).toLocaleString()}</strong></div>)}</section>}<section className="surface-flat mt-5 overflow-hidden rounded-xl"><header className="border-b border-[var(--border-color)] p-4"><h2 className="text-heading text-sm font-bold">Action performance</h2><p className="text-muted mt-1 text-[10px]">One reach count per durable node occurrence. Branch percentages are also shown directly on the canvas.</p></header>{metrics?.nodes.length ? <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-xs"><thead className="bg-[var(--subtle-fg)] text-[9px] font-bold uppercase text-[var(--text-light)]"><tr><th className="px-4 py-3">Step</th><th className="px-4 py-3">Reached</th><th className="px-4 py-3">Completed</th><th className="px-4 py-3">Waiting</th><th className="px-4 py-3">Failed</th><th className="px-4 py-3">Branch outcomes</th></tr></thead><tbody>{metrics.nodes.map((row) => <tr className="table-row" key={row.node_id}><td className="text-heading px-4 py-3 font-semibold">{row.node_id}</td><td className="px-4 py-3">{row.reached.toLocaleString()}</td><td className="px-4 py-3 text-emerald-600">{row.completed.toLocaleString()}</td><td className="px-4 py-3">{row.waiting.toLocaleString()}</td><td className="px-4 py-3 text-red-600">{row.failed.toLocaleString()}</td><td className="text-muted px-4 py-3 text-[10px]">{Object.entries(row.branches).map(([name, count]) => `${name}: ${count}`).join(' · ') || '—'}</td></tr>)}</tbody></table></div> : <p className="text-muted p-12 text-center text-xs">No published executions yet.</p>}</section></main></div>
+}
 
 export function OperationsPage() {
   const [snapshot, setSnapshot] = useState<OperationsSnapshot>()

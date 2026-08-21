@@ -11,7 +11,8 @@ export interface BackfillSettings {
 }
 
 export interface ScheduleSettings extends BackfillSettings {
-  frequency: 'HOURLY' | 'DAILY' | 'WEEKLY'
+  frequency: 'ONCE' | 'HOURLY' | 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'ANNUAL' | 'DATE_FIELD'
+  recurrence?: { monthly_mode?: 'DAY' | 'FIRST_WEEKDAY' | 'LAST_WEEKDAY'; day?: number; weekday?: number; month?: number; date_field?: string; date_field_type?: 'Date' | 'Datetime' }
   nextRunAt: string
   timezone: string
   versionPolicy: 'ACTIVE_AT_RUN' | 'PINNED'
@@ -56,6 +57,7 @@ export function schedulePayload(settings: ScheduleSettings) {
     records_per_minute: settings.recordsPerMinute,
     max_records: settings.maxRecords,
     frequency: settings.frequency,
+    recurrence: settings.recurrence,
     next_run_at: settings.nextRunAt,
     timezone: settings.timezone,
     version_policy: settings.versionPolicy,

@@ -49,4 +49,39 @@ describe('AsyncCombobox', () => {
     expect(container).not.toContainElement(listbox)
     expect(screen.getByRole('option', { name: /Visible lead/ })).toBeVisible()
   })
+
+  it('keeps the committed value while searching and only clears through the clear button', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    const { rerender } = render(
+      <AsyncCombobox
+        ariaLabel="Target DocType"
+        value="Lead"
+        onChange={onChange}
+        loadOptions={() => Promise.resolve([{ value: 'Customer', label: 'Customer' }])}
+        debounceMs={0}
+      />,
+    )
+
+    const input = screen.getByRole('combobox', { name: 'Target DocType' })
+    await user.click(input)
+    await user.clear(input)
+    await user.type(input, 'Cus')
+    expect(onChange).not.toHaveBeenCalled()
+
+    await user.keyboard('{Escape}')
+    expect(input).toHaveValue('Lead')
+
+    rerender(
+      <AsyncCombobox
+        ariaLabel="Target DocType"
+        value="Lead"
+        onChange={onChange}
+        loadOptions={() => Promise.resolve([])}
+        debounceMs={0}
+      />,
+    )
+    await user.click(screen.getByRole('button', { name: 'Clear selection' }))
+    expect(onChange).toHaveBeenCalledWith('')
+  })
 })

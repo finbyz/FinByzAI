@@ -122,6 +122,60 @@ def _require_consent(run, *, channel: str, purpose: str, recipient: str | None, 
 		raise AutomationError(_("No current consent grant exists for this external action."))
 
 
+def _native_email_recipient_exclusion(run, recipient: str) -> str | None:
+	"""Apply Frappe and CRM-wide opt-outs before an email is queued.
+
+	This check deliberately lives in FinbyzAI.  Finbyz Reach owns campaign-topic
+	preferences, while global/reference Email Unsubscribe rows and the standard
+	Lead/Contact opt-out fields remain authoritative for every workflow email.
+	"""
+	email = str(recipient or "").strip().lower()
+	if frappe.db.exists("Email Unsubscribe", {"email": email, "global_unsubscribe": 1}):
+		return str(_("Globally unsubscribed"))
+	if frappe.db.exists(
+		"Email Unsubscribe",
+		{
+			"email": email,
+			"reference_doctype": run.record_doctype,
+			"reference_name": run.record_name,
+		},
+	):
+		return str(_("Unsubscribed from this record"))
+
+	leads = frappe.get_all(
+		"Lead",
+		filters={"email_id": email},
+		fields=["disabled", "unsubscribed", "status"],
+		limit_page_length=0,
+	) if frappe.db.table_exists("Lead") else []
+	if any(cint(row.disabled) for row in leads):
+		return str(_("Lead disabled"))
+	if any(cint(row.unsubscribed) for row in leads):
+		return str(_("Lead unsubscribed"))
+	if any(row.status == "Do Not Contact" for row in leads):
+		return str(_("Do Not Contact"))
+
+	contact_names = frappe.get_all(
+		"Contact Email",
+		filters={"email_id": email},
+		pluck="parent",
+		limit_page_length=0,
+	) if frappe.db.table_exists("Contact Email") else []
+	if contact_names and frappe.db.exists(
+		"Contact", {"name": ["in", list(set(contact_names))], "unsubscribed": 1}
+	):
+		return str(_("Contact unsubscribed"))
+	return None
+
+
+def _reach_recipient_exclusion(recipient: str, subscription_topic: str | None = None) -> str | None:
+	"""Apply the optional campaign-topic preference maintained by Finbyz Reach."""
+	if "finbyzreach" not in frappe.get_installed_apps():
+		return None
+	checker = frappe.get_attr("finbyzreach.email_marketing.test_recipient_exclusion")
+	return checker(recipient, subscription_topic or None)
+
+
 def queue_email(run, config: dict, *, record, outputs: dict[str, Any], workflow_settings: dict | None = None) -> dict:
 	if not external_actions_enabled():
 		raise AutomationError(_("External workflow actions are disabled in Automation Settings."))
@@ -146,6 +200,27 @@ def queue_email(run, config: dict, *, record, outputs: dict[str, Any], workflow_
 	reply_to = str(config.get("reply_to") or "").strip()
 	if reply_to and not validate_email_address(reply_to, throw=False):
 		raise AutomationError(_("Email Reply-To address is invalid."))
+	subscription_topic = str(config.get("subscription_topic") or "").strip()
+	if subscription_topic:
+		if "finbyzreach" not in frappe.get_installed_apps():
+			raise AutomationError(_("Finbyz Reach is required for topic-based email preferences."))
+		if not frappe.db.exists("Subscription Topic", {"name": subscription_topic, "disabled": 0}):
+			raise AutomationError(_("Choose an enabled Subscription Topic."))
+	suppression_reason = _native_email_recipient_exclusion(run, recipient)
+	if not suppression_reason and subscription_topic:
+		suppression_reason = _reach_recipient_exclusion(recipient, subscription_topic)
+	if suppression_reason:
+		return {
+			"email_queue": None,
+			"recipient": recipient,
+			"sender": sender or None,
+			"reply_to": reply_to or None,
+			"email_template": content.get("email_template"),
+			"content_hash": content.get("content_hash"),
+			"subscription_topic": subscription_topic or None,
+			"suppressed": True,
+			"suppression_reason": str(suppression_reason),
+		}
 	queue = frappe.sendmail(
 		recipients=[recipient],
 		sender=sender,
@@ -156,6 +231,7 @@ def queue_email(run, config: dict, *, record, outputs: dict[str, Any], workflow_
 		reference_doctype=run.record_doctype,
 		reference_name=run.record_name,
 		add_unsubscribe_link=1,
+		unsubscribe_message=_("Unsubscribe"),
 		raw_html=bool(content["raw_html"]),
 		add_css=not bool(content["raw_html"]),
 	)
@@ -168,6 +244,9 @@ def queue_email(run, config: dict, *, record, outputs: dict[str, Any], workflow_
 		"reply_to": reply_to or None,
 		"email_template": content.get("email_template"),
 		"content_hash": content.get("content_hash"),
+		"subscription_topic": subscription_topic or None,
+		"suppressed": False,
+		"suppression_reason": None,
 	}
 
 

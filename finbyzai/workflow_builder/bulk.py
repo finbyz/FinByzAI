@@ -4,7 +4,8 @@ import json
 import hashlib
 import hmac
 import math
-from datetime import timedelta
+import calendar
+from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -23,7 +24,7 @@ from .registry import field_catalog
 BACKFILL_OPERATORS = {"=", "!=", ">", ">=", "<", "<=", "in", "not in", "like", "not like", "is"}
 BACKFILL_TERMINAL_STATUSES = {"COMPLETED", "FAILED", "CANCELLED"}
 BACKFILL_ACTIVE_STATUSES = {"QUEUED", "RUNNING", "PAUSED"}
-SCHEDULE_FREQUENCIES = {"HOURLY", "DAILY", "WEEKLY"}
+SCHEDULE_FREQUENCIES = {"ONCE", "HOURLY", "DAILY", "WEEKLY", "MONTHLY", "ANNUAL", "DATE_FIELD"}
 BACKFILL_PREVIEW_TTL_MINUTES = 15
 
 
@@ -434,23 +435,80 @@ def _zone(timezone: str) -> ZoneInfo:
 		raise AutomationError(_("Choose a valid IANA timezone."))
 
 
+def _localized(value, timezone: str, *, shift_nonexistent_forward: bool = False):
+	"""Attach a timezone while rejecting spring-forward wall times.
+
+	Ambiguous fall-back values consistently use fold=0 (the earlier instant).
+	"""
+	zone = _zone(timezone)
+	naive = get_datetime(value).replace(tzinfo=None)
+	local = naive.replace(tzinfo=zone, fold=0)
+	round_trip = local.astimezone(ZoneInfo("UTC")).astimezone(zone).replace(tzinfo=None)
+	if round_trip != naive:
+		if shift_nonexistent_forward and round_trip > naive:
+			return round_trip.replace(tzinfo=zone, fold=0)
+		raise AutomationError(_("The selected local time does not exist because of daylight-saving time. Choose another time."))
+	return local
+
+
 def _local_to_system(value, timezone: str):
-	local = get_datetime(value).replace(tzinfo=_zone(timezone))
-	return local.astimezone(_zone(get_system_timezone())).replace(tzinfo=None)
+	return _localized(value, timezone).astimezone(_zone(get_system_timezone())).replace(tzinfo=None)
 
 
-def _next_occurrence(value, frequency: str, timezone: str):
+def _recurrence(value: Any) -> dict:
+	parsed = frappe.parse_json(value) if isinstance(value, str) else value
+	return parsed if isinstance(parsed, dict) else {}
+
+
+def _month_target(year: int, month: int, rule: dict, fallback_day: int) -> int:
+	last_day = calendar.monthrange(year, month)[1]
+	mode = str(rule.get("monthly_mode") or "DAY").upper()
+	if mode == "FIRST_WEEKDAY":
+		weekday = min(max(cint(rule.get("weekday")), 0), 6)
+		return 1 + (weekday - datetime(year, month, 1).weekday()) % 7
+	if mode == "LAST_WEEKDAY":
+		weekday = min(max(cint(rule.get("weekday")), 0), 6)
+		return last_day - (datetime(year, month, last_day).weekday() - weekday) % 7
+	return min(max(cint(rule.get("day")) or fallback_day, 1), last_day)
+
+
+def _next_occurrence(value, frequency: str, timezone: str, recurrence: Any = None):
 	current = get_datetime(value).replace(tzinfo=_zone(get_system_timezone())).astimezone(_zone(timezone))
-	delta = {"HOURLY": timedelta(hours=1), "DAILY": timedelta(days=1), "WEEKLY": timedelta(weeks=1)}[frequency]
-	return (current + delta).astimezone(_zone(get_system_timezone())).replace(tzinfo=None)
+	frequency = str(frequency or "").upper()
+	if frequency == "ONCE":
+		return None
+	rule = _recurrence(recurrence)
+	if frequency == "HOURLY":
+		return (current + timedelta(hours=1)).astimezone(_zone(get_system_timezone())).replace(tzinfo=None)
+	local = current.replace(tzinfo=None)
+	if frequency in {"DAILY", "DATE_FIELD"}:
+		next_local = local + timedelta(days=1)
+	elif frequency == "WEEKLY":
+		next_local = local + timedelta(weeks=1)
+	elif frequency == "MONTHLY":
+		year, month = (local.year + 1, 1) if local.month == 12 else (local.year, local.month + 1)
+		next_local = local.replace(year=year, month=month, day=_month_target(year, month, rule, local.day))
+	elif frequency == "ANNUAL":
+		year = local.year + 1
+		month = min(max(cint(rule.get("month")) or local.month, 1), 12)
+		day = min(max(cint(rule.get("day")) or local.day, 1), calendar.monthrange(year, month)[1])
+		next_local = local.replace(year=year, month=month, day=day)
+	else:
+		raise AutomationError(_("Unsupported schedule frequency."))
+	# A recurrence configured on an ordinary day can later land inside a DST
+	# spring-forward gap. Run it at the corresponding first valid wall time;
+	# direct user-entered timestamps remain strictly rejected by _local_to_system.
+	return _localized(next_local, timezone, shift_nonexistent_forward=True).astimezone(_zone(get_system_timezone())).replace(tzinfo=None)
 
 
-def _advance_after_now(value, frequency: str, timezone: str, now) -> Any:
+def _advance_after_now(value, frequency: str, timezone: str, now, recurrence: Any = None) -> Any:
 	next_value = get_datetime(value)
 	for _iteration in range(10000):
 		if next_value > now:
 			return next_value
-		next_value = _next_occurrence(next_value, frequency, timezone)
+		next_value = _next_occurrence(next_value, frequency, timezone, recurrence)
+		if next_value is None:
+			return None
 	raise AutomationError(_("The schedule is too far behind to recover automatically."))
 
 
@@ -468,6 +526,7 @@ def create_schedule(
 	overlap_policy: str = "SKIP",
 	max_records: int = 0,
 	records_per_minute: int = 500,
+	recurrence: Any = None,
 ) -> dict:
 	workflow = frappe.get_doc("Automation Workflow", workflow_name)
 	workflow.check_permission("read")
@@ -476,11 +535,18 @@ def create_schedule(
 		raise AutomationConflictError(_("Only workflows published with a scheduled trigger can create schedules."))
 	frequency = str(frequency or "").upper()
 	if frequency not in SCHEDULE_FREQUENCIES:
-		raise AutomationError(_("Schedule frequency must be hourly, daily, or weekly."))
+		raise AutomationError(_("Choose once, hourly, daily, weekly, monthly, annual, or Date-field scheduling."))
 	timezone = str(timezone or get_system_timezone())
 	_zone(timezone)
 	parsed_filters = _parse_filters(filters)
+	parsed_recurrence = _recurrence(recurrence)
 	_validate_filters(workflow.primary_doctype, parsed_filters, version.execution_user)
+	if frequency == "DATE_FIELD":
+		date_field = str(parsed_recurrence.get("date_field") or "").strip()
+		field = next((row for row in field_catalog(workflow.primary_doctype, user=version.execution_user) if row.get("fieldname") == date_field), None)
+		if not field or field.get("fieldtype") not in {"Date", "Datetime"}:
+			raise AutomationError(_("Choose a readable Date or Datetime field for this schedule."))
+		parsed_recurrence["date_field_type"] = field.get("fieldtype")
 	schedule = frappe.get_doc(
 		{
 			"doctype": "Automation Schedule",
@@ -489,6 +555,7 @@ def create_schedule(
 			"workflow_version": version.name if str(version_policy).upper() == "PINNED" else None,
 			"enabled": 0,
 			"frequency": frequency,
+			"recurrence_json": json.dumps(parsed_recurrence),
 			"timezone": timezone,
 			"catch_up_policy": str(catch_up_policy or "RUN_ONCE").upper(),
 			"overlap_policy": str(overlap_policy or "SKIP").upper(),
@@ -524,7 +591,10 @@ def set_schedule_enabled(schedule_name: str, enabled: bool) -> dict:
 			schedule.frequency,
 			schedule.timezone,
 			now_datetime(),
+			schedule.recurrence_json,
 		) if get_datetime(schedule.next_run_at) < now_datetime() and schedule.catch_up_policy == "SKIP" else schedule.next_run_at
+		if schedule.next_run_at is None:
+			raise AutomationConflictError(_("This one-time occurrence has already passed. Choose a new date and time."))
 	schedule.enabled = bool(enabled)
 	schedule.save()
 	create_audit(schedule.workflow, "SCHEDULE_ENABLED" if enabled else "SCHEDULE_DISABLED", {"schedule": schedule.name})
@@ -565,7 +635,8 @@ def dispatch_due_schedules() -> int:
 		schedule = frappe.get_doc("Automation Schedule", row.name, for_update=True)
 		if not workflow_runtime_allowed(schedule.workflow):
 			continue
-		missed_cycle = _next_occurrence(schedule.next_run_at, schedule.frequency, schedule.timezone) <= now
+		next_cycle = _next_occurrence(schedule.next_run_at, schedule.frequency, schedule.timezone, schedule.recurrence_json)
+		missed_cycle = bool(next_cycle and next_cycle <= now)
 		active_job = frappe.db.exists(
 			"Automation Backfill Job",
 			{"schedule": schedule.name, "status": ["in", list(BACKFILL_ACTIVE_STATUSES)]},
@@ -576,9 +647,20 @@ def dispatch_due_schedules() -> int:
 		if should_run:
 			workflow = frappe.get_doc("Automation Workflow", schedule.workflow)
 			version_name = schedule.workflow_version if schedule.version_policy == "PINNED" else workflow.active_version
+			filters = _parse_filters(schedule.filters_json)
+			if schedule.frequency == "DATE_FIELD":
+				rule = _recurrence(schedule.recurrence_json)
+				fieldname = str(rule.get("date_field") or "")
+				local_due = get_datetime(schedule.next_run_at).replace(tzinfo=_zone(get_system_timezone())).astimezone(_zone(schedule.timezone))
+				if rule.get("date_field_type") == "Datetime":
+					start = _localized(datetime.combine(local_due.date(), datetime.min.time()), schedule.timezone, shift_nonexistent_forward=True).astimezone(_zone(get_system_timezone())).replace(tzinfo=None)
+					end = _localized(datetime.combine(local_due.date() + timedelta(days=1), datetime.min.time()), schedule.timezone, shift_nonexistent_forward=True).astimezone(_zone(get_system_timezone())).replace(tzinfo=None)
+					filters.extend([[fieldname, ">=", start], [fieldname, "<", end]])
+				else:
+					filters.append([fieldname, "=", local_due.date().isoformat()])
 			result = create_backfill(
 				schedule.workflow,
-				schedule.filters_json,
+				filters,
 				schedule.batch_size,
 				source="SCHEDULE",
 				workflow_version=version_name,
@@ -589,11 +671,15 @@ def dispatch_due_schedules() -> int:
 			schedule.last_backfill_job = result["backfill_id"]
 			schedule.last_run_at = now
 			created += 1
-		schedule.next_run_at = _advance_after_now(
-			_next_occurrence(schedule.next_run_at, schedule.frequency, schedule.timezone),
-			schedule.frequency,
-			schedule.timezone,
-			now,
-		)
+		if schedule.frequency == "ONCE":
+			schedule.enabled = 0
+		else:
+			schedule.next_run_at = _advance_after_now(
+				next_cycle,
+				schedule.frequency,
+				schedule.timezone,
+				now,
+				schedule.recurrence_json,
+			)
 		schedule.save(ignore_permissions=True)
 	return created

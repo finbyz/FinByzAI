@@ -258,3 +258,30 @@ class TestLoadAndRecovery(IntegrationTestCase):
 		self._delete_test_run(run.name)
 		self.test_runs.remove(run.name)
 		frappe.db.commit()
+
+	def test_tokenless_orphaned_run_is_recovered_by_scheduler(self):
+		run = frappe.get_doc(
+			{
+				"doctype": "Automation Run",
+				"workflow": f"missing-{frappe.generate_hash(length=10)}",
+				"workflow_version": "missing-version",
+				"record_doctype": "Lead",
+				"record_name": "Test",
+				"record_key": "Lead:Test",
+				"source": "MANUAL",
+				"status": "RUNNING",
+			}
+		).insert(ignore_permissions=True, ignore_links=True)
+		self.test_runs.append(run.name)
+
+		self.assertGreaterEqual(engine.recover_orphaned_active_runs(), 1)
+		self.assertEqual(frappe.db.get_value("Automation Run", run.name, "status"), "FAILED")
+		self.assertEqual(frappe.db.get_value("Automation Run", run.name, "error_code"), "MISSING_WORKFLOW")
+		self.assertTrue(
+			frappe.db.exists(
+				"Automation Dead Letter", {"source_type": "RUN", "source_name": run.name, "status": "OPEN"}
+			)
+		)
+		self._delete_test_run(run.name)
+		self.test_runs.remove(run.name)
+		frappe.db.commit()

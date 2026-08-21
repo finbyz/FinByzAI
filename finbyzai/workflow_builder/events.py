@@ -466,6 +466,44 @@ def _process_event(event) -> int:
 	except frappe.DoesNotExistError:
 		_complete_event(event.name, error_message="Source document no longer exists")
 		return 0
+	if event.event_type == "WEBHOOK":
+		target = _json_object(event.decision_json).get("webhook") or {}
+		definition = frappe.db.get_value(
+			"Automation Inbound Webhook",
+			target.get("definition"),
+			["enabled", "workflow", "workflow_version"],
+			as_dict=True,
+		)
+		workflow_state = frappe.db.get_value(
+			"Automation Workflow",
+			target.get("workflow"),
+			["status", "active_version"],
+			as_dict=True,
+		)
+		if (
+			not definition
+			or not cint(definition.enabled)
+			or definition.workflow != target.get("workflow")
+			or definition.workflow_version != target.get("workflow_version")
+			or not workflow_state
+			or workflow_state.status != "ACTIVE"
+			or workflow_state.active_version != target.get("workflow_version")
+		):
+			_complete_event(event.name, decisions=[{"decision": "SKIPPED", "reason": "INACTIVE_WEBHOOK_VERSION"}])
+			return 0
+		run_name = enroll(
+			target["workflow"],
+			record.doctype,
+			record.name,
+			source="WEBHOOK",
+			occurrence_key=event.event_id,
+			workflow_version=target["workflow_version"],
+			require_active_version=True,
+			causation_id=event.trace_id,
+			recursion_depth=cint(event.recursion_depth),
+		)
+		_complete_event(event.name, decisions=[{"workflow": target["workflow"], "decision": "ENROLLED" if run_name else "SKIPPED", "run": run_name}])
+		return int(bool(run_name))
 	changed = set(_json_list(event.changed_fields_json))
 	subscriptions = _matching_subscriptions(event.object_doctype, event.event_type)
 	enrolled = 0
@@ -976,6 +1014,9 @@ def runtime_health(workflow_id: str | None = None) -> dict:
 	)
 	stale_cutoff = add_to_date(now_datetime(), minutes=-stale_after_minutes)
 	stale_active = sum(1 for row in active_rows if row.modified and row.modified <= stale_cutoff)
+	stale_external_effects = frappe.db.count(
+		"Automation Effect Ledger", {"status": "STARTED", "modified": ["<=", stale_cutoff]}
+	)
 	orphaned_active = sum(
 		1
 		for row in active_rows
@@ -1000,6 +1041,8 @@ def runtime_health(workflow_id: str | None = None) -> dict:
 		reasons.append("RECENT_FAILED_RUNS")
 	if stale_active:
 		reasons.append("STALE_ACTIVE_RUNS")
+	if stale_external_effects:
+		reasons.append("STALE_EXTERNAL_EFFECTS")
 	if orphaned_active:
 		reasons.append("ORPHANED_ACTIVE_RUNS")
 	if open_incidents:
@@ -1023,6 +1066,7 @@ def runtime_health(workflow_id: str | None = None) -> dict:
 			"orphaned_active": orphaned_active,
 			"failure_window_hours": failure_window_hours,
 		},
+		"stale_external_effects": stale_external_effects,
 		"open_incidents": open_incidents,
 		"open_dead_letters": open_dead_letters,
 		"reasons": reasons,

@@ -24,10 +24,12 @@ from .constants import (
 from .errors import AutomationError
 from .registry import (
 	NODE_OUTPUT_PATHS,
+	business_event_catalog,
 	business_event_available,
 	get_business_event_context,
 	get_business_event_definition,
 	get_node_definition,
+	round_robin_assignment,
 )
 
 ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,139}$")
@@ -77,11 +79,21 @@ def event_wait_timeout_mode(config: dict | None) -> str:
 	return str(config.get("timeout_mode") or "duration")
 
 
-def _validate_event_filter(expression: Any, topic: str, path: str) -> list[dict]:
+def _validate_event_filter(
+	expression: Any,
+	topic: str,
+	path: str,
+	primary_doctype: str | None = None,
+	usage: str = "all",
+) -> list[dict]:
 	issues = validate_expression(expression, path)
 	if not expression:
 		return issues
-	definition = get_business_event_definition(topic)
+	definition = (
+		next((row for row in business_event_catalog(primary_doctype, usage) if row["topic"] == topic), None)
+		if primary_doctype
+		else get_business_event_definition(topic)
+	)
 	if not definition:
 		return issues
 	allowed_fields = {
@@ -228,7 +240,12 @@ def validate_expression(expression: Any, path: str = "expression", depth: int = 
 		return validate_expression(children[0], f"{path}.children.0", depth + 1)
 	if kind != "predicate":
 		return [_issue("INVALID_CONDITION_KIND", "Unsupported condition kind", path)]
-	if not expression.get("field"):
+	source = expression.get("source") if isinstance(expression.get("source"), dict) else None
+	if source:
+		source_issues = validate_value_spec(source, f"{path}.source")
+		if source_issues:
+			return source_issues
+	if not expression.get("field") and not source:
 		return [_issue("MISSING_CONDITION_FIELD", "Choose a field", f"{path}.field")]
 	if expression.get("operator") not in {
 		"eq",
@@ -297,15 +314,28 @@ def _nested_value_specs(value: Any, path: str):
 			yield from _nested_value_specs(item, f"{path}.{index}")
 
 
+def _condition_value_specs(value: Any, path: str):
+	if not isinstance(value, dict):
+		return
+	if value.get("kind") == "predicate" and isinstance(value.get("source"), dict):
+		yield value.get("source"), f"{path}.source"
+	for index, child in enumerate(value.get("children") or []):
+		yield from _condition_value_specs(child, f"{path}.children.{index}")
+
+
 def _node_value_specs(node: dict, index: int):
 	config = node.get("config") or {}
 	base = f"nodes.{index}.config"
 	for assignment_index, assignment in enumerate(config.get("assignments") or []):
-		if isinstance(assignment, dict):
+		if isinstance(assignment, dict) and str(assignment.get("operation") or "set") != "clear":
 			yield assignment.get("value"), f"{base}.assignments.{assignment_index}.value"
 	if node.get("type") == "transform.value":
 		for value_index, value in enumerate(config.get("values") or []):
 			yield value, f"{base}.values.{value_index}"
+	if node.get("type") == "condition.if_else":
+		for branch_index, branch in enumerate(config.get("branches") or []):
+			if isinstance(branch, dict):
+				yield from _condition_value_specs(branch.get("condition"), f"{base}.branches.{branch_index}.condition")
 	if node.get("type") == "action.send_email":
 		yield config.get("recipient"), f"{base}.recipient"
 		content_mode = str(config.get("content_mode") or ("template" if config.get("email_template") else "inline"))
@@ -399,6 +429,7 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 				"condition.deduplicate",
 				"transform.value",
 				"trigger.event",
+				"trigger.any",
 				"delay.until_event",
 			}
 			else {1}
@@ -444,15 +475,20 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 							node_id,
 						)
 					)
-				issues.extend(_validate_event_filter(entry.get("event_filter"), topic, f"{entry_path}.event_filter"))
+				issues.extend(_validate_event_filter(entry.get("event_filter"), topic, f"{entry_path}.event_filter", workflow_doctype, "trigger"))
 			issues.extend(validate_expression(config.get("condition"), f"{path}.config.condition"))
 		if node.get("type") == "trigger.any":
 			triggers = config.get("triggers")
-			allowed_trigger_types = {"trigger.document_insert", "trigger.document_change", "trigger.filter_criteria", "trigger.event"}
-			if not isinstance(triggers, list) or len(triggers) < 2 or len(triggers) > 20:
-				issues.append(_issue("INVALID_TRIGGER_GROUP_COUNT", "Add between two and twenty enrollment triggers", f"{path}.config.triggers", node_id))
+			legacy_mixed_mode = node_version < 2
+			allowed_trigger_types = {"trigger.document_insert", "trigger.document_change", "trigger.event"}
+			if legacy_mixed_mode:
+				allowed_trigger_types.add("trigger.filter_criteria")
+			minimum_groups = 2 if legacy_mixed_mode else 1
+			if not isinstance(triggers, list) or len(triggers) < minimum_groups or len(triggers) > 20:
+				issues.append(_issue("INVALID_TRIGGER_GROUP_COUNT", f"Add between {minimum_groups} and twenty enrollment triggers", f"{path}.config.triggers", node_id))
 			else:
 				seen_trigger_ids: set[str] = set()
+				seen_trigger_signatures: set[str] = set()
 				for trigger_index, trigger_entry in enumerate(triggers):
 					trigger_path = f"{path}.config.triggers.{trigger_index}"
 					if not isinstance(trigger_entry, dict):
@@ -464,8 +500,12 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 					if not entry_id or not ID_PATTERN.match(entry_id) or entry_id in seen_trigger_ids:
 						issues.append(_issue("INVALID_TRIGGER_GROUP_ID", "Each trigger needs a unique safe id", f"{trigger_path}.id", node_id))
 					seen_trigger_ids.add(entry_id)
+					signature = canonical_json({"type": entry_type, "config": entry_config})
+					if signature in seen_trigger_signatures:
+						issues.append(_issue("DUPLICATE_TRIGGER_GROUP", "This trigger is identical to an earlier OR trigger; change its filters or remove it", trigger_path, node_id))
+					seen_trigger_signatures.add(signature)
 					if entry_type not in allowed_trigger_types:
-						issues.append(_issue("INVALID_TRIGGER_GROUP_TYPE", "Choose created, changed, criteria, or business event", f"{trigger_path}.type", node_id))
+						issues.append(_issue("INVALID_TRIGGER_GROUP_TYPE", "Event mode supports record-created, record-changed, or installed business events; use Filter mode for criteria enrollment", f"{trigger_path}.type", node_id))
 						continue
 					issues.extend(validate_expression(entry_config.get("condition"), f"{trigger_path}.config.condition"))
 					if entry_type == "trigger.filter_criteria" and not entry_config.get("condition"):
@@ -480,7 +520,7 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 							issues.append(_issue("MISSING_EVENT_TOPIC", "Choose a business event", f"{trigger_path}.config.event_topic", node_id))
 						elif not business_event_available(topic, workflow_doctype, "trigger"):
 							issues.append(_issue("EVENT_NOT_AVAILABLE_FOR_WORKFLOW_OBJECT", f"{topic} is not an enrollment event for {workflow_doctype}", f"{trigger_path}.config.event_topic", node_id))
-						issues.extend(_validate_event_filter(entry_config.get("event_filter"), topic, f"{trigger_path}.config.event_filter"))
+						issues.extend(_validate_event_filter(entry_config.get("event_filter"), topic, f"{trigger_path}.config.event_filter", workflow_doctype, "trigger"))
 		if node.get("type") == "condition.if_else":
 			if node_version == 1:
 				issues.extend(validate_expression(config.get("condition"), f"{path}.config.condition"))
@@ -620,6 +660,8 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 					config.get("event_filter"),
 					event_topic,
 					f"{path}.config.event_filter",
+					workflow_doctype,
+					"wait",
 				)
 			)
 			if data_source not in {"enrolled_record", "action_output"}:
@@ -684,10 +726,15 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 						issues.append(_issue("INVALID_ASSIGNMENT", "Every assignment requires a field", assignment_path, node_id))
 						continue
 					fieldname = assignment["field"]
+					operation = str(assignment.get("operation") or "set")
+					allowed_operations = {"set"} if node_type == "action.create_record" else {"set", "clear", "append", "remove"}
+					if operation not in allowed_operations:
+						issues.append(_issue("INVALID_ASSIGNMENT_OPERATION", "Choose a supported field operation", f"{assignment_path}.operation", node_id))
 					if fieldname in seen_fields:
 						issues.append(_issue("DUPLICATE_ASSIGNMENT", "A field can be assigned only once per action", f"{assignment_path}.field", node_id))
 					seen_fields.add(fieldname)
-					issues.extend(validate_value_spec(assignment.get("value"), f"{assignment_path}.value"))
+					if operation != "clear":
+						issues.extend(validate_value_spec(assignment.get("value"), f"{assignment_path}.value"))
 		if node.get("type") == "action.create_record" and not str(config.get("target_doctype") or "").strip():
 			issues.append(_issue("MISSING_TARGET_DOCTYPE", "Choose a target DocType", f"{path}.config.target_doctype", node_id))
 		if node.get("type") == "action.create_todo":
@@ -745,8 +792,14 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 					issues.append(_issue("MISSING_ASSOCIATION_VALUE", "Complete the association configuration", f"{path}.config.{key}", node_id))
 			if config.get("operation", "link") not in {"link", "unlink"}:
 				issues.append(_issue("INVALID_ASSOCIATION_OPERATION", "Choose link or unlink", f"{path}.config.operation", node_id))
-		if node.get("type") == "action.round_robin" and not str(config.get("group") or "").strip():
-			issues.append(_issue("MISSING_ROUND_ROBIN_GROUP", "Choose an assignment group", f"{path}.config.group", node_id))
+		if node.get("type") == "action.round_robin":
+			assignment = round_robin_assignment(config)
+			if assignment["assignment_type"] not in {"legacy", "group", "users"}:
+				issues.append(_issue("INVALID_ROUND_ROBIN_TYPE", "Choose User Group or Specific Users", f"{path}.config.assignment_type", node_id))
+			elif assignment["assignment_type"] in {"legacy", "group"} and not assignment["group"]:
+				issues.append(_issue("MISSING_ROUND_ROBIN_GROUP", "Choose a User Group", f"{path}.config.group", node_id))
+			elif assignment["assignment_type"] == "users" and not assignment["users"]:
+				issues.append(_issue("MISSING_ROUND_ROBIN_USERS", "Choose at least one user", f"{path}.config.users", node_id))
 		if node.get("type") in {"action.send_email", "action.send_sms"}:
 			keys = ("recipient", "message") if node.get("type") == "action.send_sms" else ("recipient",)
 			for key in keys:
@@ -1069,22 +1122,31 @@ def _condition_value_is_set(record: Any, fieldname: str, value: Any) -> bool:
 	return True
 
 
-def evaluate_expression(expression: Any, record: Any) -> bool:
+def evaluate_expression(expression: Any, record: Any, outputs: dict[str, Any] | None = None) -> bool:
 	if not expression:
 		return True
 	expression = parse_object(expression, "condition")
 	kind = expression.get("kind")
 	children = expression.get("children") or []
 	if kind == "all":
-		return all(evaluate_expression(child, record) for child in children)
+		return all(evaluate_expression(child, record, outputs) for child in children)
 	if kind == "any":
-		return any(evaluate_expression(child, record) for child in children)
+		return any(evaluate_expression(child, record, outputs) for child in children)
 	if kind == "not":
-		return not evaluate_expression(children[0], record)
+		return not evaluate_expression(children[0], record, outputs)
 	if kind != "predicate":
 		return False
 	fieldname = expression.get("field")
-	left = record.get(fieldname)
+	source = expression.get("source") if isinstance(expression.get("source"), dict) else None
+	if source and source.get("kind") == "node_output":
+		left = (outputs or {}).get(str(source.get("node_id") or ""), {})
+		for segment in str(source.get("path") or "").split("."):
+			left = left.get(segment) if isinstance(left, dict) else None
+	elif source and source.get("kind") == "literal":
+		left = source.get("value")
+	else:
+		fieldname = str(source.get("field") or fieldname) if source and source.get("kind") == "record_field" else fieldname
+		left = record.get(fieldname)
 	operator = expression.get("operator")
 	right = expression.get("value")
 	if operator == "is_set":

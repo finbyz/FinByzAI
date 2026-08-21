@@ -48,7 +48,9 @@ export interface DocumentState {
 
 export interface EditorState {
   selectedNodeId?: string
+  selectedTriggerGroupId?: string
   insertion?: NodePlacement & { label?: string }
+  catalogOpen: boolean
   validationOpen: boolean
   simulationOpen: boolean
   publishOpen: boolean
@@ -80,10 +82,10 @@ type DocumentAction =
   | { type: 'SET_STATUS'; status: string }
 
 type EditorAction =
-  | { type: 'SELECT'; nodeId?: string }
+  | { type: 'SELECT'; nodeId?: string; triggerGroupId?: string }
   | { type: 'BEGIN_INSERT'; placement: NodePlacement & { label?: string } }
   | { type: 'CANCEL_INSERT' }
-  | { type: 'TOGGLE'; panel: 'validationOpen' | 'simulationOpen' | 'publishOpen' | 'runsOpen' | 'policiesOpen' | 'versionsOpen'; open?: boolean }
+  | { type: 'TOGGLE'; panel: 'catalogOpen' | 'validationOpen' | 'simulationOpen' | 'publishOpen' | 'runsOpen' | 'policiesOpen' | 'versionsOpen'; open?: boolean }
   | { type: 'SIMULATION'; result: SimulationResult }
   | { type: 'VERSION_DIFF'; diff?: EditorState['versionDiff'] }
   | { type: 'CONFLICT' }
@@ -121,6 +123,7 @@ const initialDocument: DocumentState = {
 }
 
 const initialEditor: EditorState = {
+  catalogOpen: false,
   validationOpen: false,
   simulationOpen: false,
   publishOpen: false,
@@ -153,21 +156,56 @@ export function hasExecutionChanges(
     || canonicalValue(savedSettings) !== canonicalValue(settings)
 }
 
+function reachableNodeIds(graph: WorkflowGraph, roots: string[], excludedEdgeIds = new Set<string>()): Set<string> {
+  const reached = new Set<string>()
+  const pending = [...roots]
+  while (pending.length) {
+    const nodeId = pending.pop()
+    if (!nodeId || reached.has(nodeId)) continue
+    reached.add(nodeId)
+    for (const edge of graph.edges) {
+      if (edge.source === nodeId && !excludedEdgeIds.has(edge.id) && !reached.has(edge.target)) pending.push(edge.target)
+    }
+  }
+  return reached
+}
+
+/** Remove one guided branch without deleting steps shared after a later join. */
+export function removeExclusiveOutputBranch(graph: WorkflowGraph, sourceId: string, sourceHandle: string): WorkflowGraph {
+  const branchEdges = graph.edges.filter((edge) => edge.source === sourceId && edge.source_handle === sourceHandle)
+  if (!branchEdges.length) return graph
+  const removedEdgeIds = new Set(branchEdges.map((edge) => edge.id))
+  const protectedNodes = reachableNodeIds(graph, [graph.start_node_id], removedEdgeIds)
+  const branchNodes = reachableNodeIds(graph, branchEdges.map((edge) => edge.target))
+  const exclusiveNodes = new Set([...branchNodes].filter((nodeId) => !protectedNodes.has(nodeId)))
+  return {
+    ...graph,
+    nodes: graph.nodes.filter((node) => !exclusiveNodes.has(node.id)),
+    edges: graph.edges.filter((edge) => !removedEdgeIds.has(edge.id) && !exclusiveNodes.has(edge.source) && !exclusiveNodes.has(edge.target)),
+  }
+}
+
 export function applyNodeConfig(graph: WorkflowGraph, nodeId: string, config: Record<string, unknown>): WorkflowGraph {
 	const source = graph.nodes.find((node) => node.id === nodeId)
-	let edges = graph.edges
+	let nextGraph = graph
 	if (source?.type === 'delay.until_event' && source.type_version >= 2) {
 		const wasBranched = Boolean(source.config.branch_on_timeout)
-		const isBranched = Boolean(config.branch_on_timeout)
-		const timeoutConnected = edges.some((edge) => edge.source === nodeId && edge.source_handle === 'timeout')
-		if ((wasBranched && !isBranched && timeoutConnected) || (String(config.timeout_mode) === 'indefinite' && timeoutConnected)) return graph
+		let isBranched = Boolean(config.branch_on_timeout)
+		const removeTimeoutPath = (wasBranched && !isBranched) || String(config.timeout_mode) === 'indefinite'
+		if (removeTimeoutPath) {
+			nextGraph = removeExclusiveOutputBranch(nextGraph, nodeId, 'timeout')
+			config = { ...config, branch_on_timeout: 0 }
+			isBranched = false
+		}
+		let edges = nextGraph.edges
 		if (!wasBranched && isBranched) {
 			edges = edges.map((edge) => edge.source === nodeId && edge.source_handle === 'default' ? { ...edge, source_handle: 'event' } : edge)
 		} else if (wasBranched && !isBranched) {
 			edges = edges.map((edge) => edge.source === nodeId && edge.source_handle === 'event' ? { ...edge, source_handle: 'default' } : edge)
 		}
+		nextGraph = { ...nextGraph, edges }
 	}
-	return { ...graph, nodes: graph.nodes.map((node) => node.id === nodeId ? { ...node, config } : node), edges }
+	return { ...nextGraph, nodes: nextGraph.nodes.map((node) => node.id === nodeId ? { ...node, config } : node) }
 }
 
 export function workflowDocumentReducer(state: DocumentState, action: DocumentAction): DocumentState {
@@ -272,12 +310,18 @@ export function workflowDocumentReducer(state: DocumentState, action: DocumentAc
 export function workflowEditorReducer(state: EditorState, action: EditorAction): EditorState {
   switch (action.type) {
     case 'SELECT':
-      return { ...state, selectedNodeId: action.nodeId, insertion: undefined }
+      return { ...state, selectedNodeId: action.nodeId, selectedTriggerGroupId: action.triggerGroupId, insertion: undefined, catalogOpen: false }
     case 'BEGIN_INSERT':
-      return { ...state, insertion: action.placement }
+	  return { ...state, selectedNodeId: undefined, selectedTriggerGroupId: undefined, insertion: action.placement, catalogOpen: true }
     case 'CANCEL_INSERT':
       return { ...state, insertion: undefined }
     case 'TOGGLE':
+	  if (action.panel === 'catalogOpen') {
+		const catalogOpen = action.open ?? !state.catalogOpen
+		return catalogOpen
+		  ? { ...state, catalogOpen, selectedNodeId: undefined, selectedTriggerGroupId: undefined }
+		  : { ...state, catalogOpen }
+	  }
       return { ...state, [action.panel]: action.open ?? !state[action.panel] }
     case 'SIMULATION':
       return { ...state, simulation: action.result, simulationOpen: true }
@@ -347,7 +391,8 @@ interface WorkflowActions {
   removeEdge(edgeId: string): void
   removeEdges(edgeIds: string[]): void
   select(nodeId?: string): void
-  toggle(panel: 'validationOpen' | 'simulationOpen' | 'publishOpen' | 'runsOpen' | 'policiesOpen' | 'versionsOpen', open?: boolean): void
+  selectTrigger(nodeId: string, triggerGroupId: string): void
+  toggle(panel: 'catalogOpen' | 'validationOpen' | 'simulationOpen' | 'publishOpen' | 'runsOpen' | 'policiesOpen' | 'versionsOpen', open?: boolean): void
   undo: () => void
   redo: () => void
   resolveConflict: (strategy: 'reload' | 'download') => Promise<void>
@@ -623,7 +668,7 @@ export function WorkflowProvider({ workflowId, children }: { workflowId: string;
     },
     addNode(item, placement = {}) {
       const current = documentRef.current.graph
-      if (!current || item.type.startsWith('trigger.') || item.authoring_hidden) return
+      if (!current || item.type.startsWith('trigger.') || item.authoring_hidden || item.available === false) return
 	  const automatic = editor.insertion || suggestedNodePlacement(current, editor.selectedNodeId)
 	  const requested = placement.edgeId || placement.afterNodeId
 		? placement
@@ -636,6 +681,7 @@ export function WorkflowProvider({ workflowId, children }: { workflowId: string;
       if (next === current) return
       mutate(arrangeWorkflowGraph(next), 'add-node')
       editorDispatch({ type: 'SELECT', nodeId: id })
+	  editorDispatch({ type: 'TOGGLE', panel: 'catalogOpen', open: false })
     },
     beginInsert(placement) {
       editorDispatch({ type: 'BEGIN_INSERT', placement })
@@ -793,6 +839,9 @@ export function WorkflowProvider({ workflowId, children }: { workflowId: string;
     },
     select(nodeId) {
       editorDispatch({ type: 'SELECT', nodeId })
+    },
+    selectTrigger(nodeId, triggerGroupId) {
+      editorDispatch({ type: 'SELECT', nodeId, triggerGroupId })
     },
     toggle(panel, open) {
       editorDispatch({ type: 'TOGGLE', panel, open })

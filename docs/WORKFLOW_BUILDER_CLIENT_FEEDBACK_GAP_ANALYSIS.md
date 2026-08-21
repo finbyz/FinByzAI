@@ -6,7 +6,7 @@
 | Review status | Implementation complete for the supplied requirements and client feedback batch 1; provider UAT remains an operational release gate |
 | Project | `megasol` |
 | Owning app | `finbyzai` |
-| Assessment date | 2026-08-20 |
+| Assessment date | 2026-08-21 |
 | Code baseline | Local `apps/finbyzai` worktree on branch `version-16`, including the complete workflow-builder implementation and test pass recorded below |
 | Feedback batch | Initial requirements plus client feedback batch 1 |
 | Audience | Client stakeholders and engineering |
@@ -22,7 +22,7 @@ The document itself does not define a technical contract. Statuses describe veri
 
 ### Completion statement
 
-All 100 visible requirements in this feedback batch now have an implemented FinbyzAI contract. “Implemented” means the UI, validation, runtime/integration boundary, and automated tests exist. It does not mean third-party accounts have been configured or live-delivery UAT has been performed; Aircall, email tracking, Meta/Instagram, SMS, webhook, and Asana still require valid site credentials and a controlled acceptance test.
+All 100 visible requirements in this feedback batch now have an implemented FinbyzAI contract. “Implemented” means the UI, validation, runtime/integration boundary, and automated tests exist. It does not mean third-party accounts have been configured or live-delivery UAT has been performed; Aircall, email tracking, Meta/Instagram, SMS, webhook, and Asana still require valid site credentials and a controlled acceptance test. The 2026-08-21 fit audit additionally separates normal, advanced, destructive, and context-unavailable actions so capability breadth no longer makes the normal authoring path unnecessarily complex.
 
 ## HubSpot reference behavior
 
@@ -83,6 +83,28 @@ The schemas behind this mapping are code-reviewed ERPNext/Frappe fields, not inf
 
 The implementation now follows the HubSpot authoring semantics requested by the client while preserving Frappe's DocType and permission model. It includes mixed OR enrollment triggers, object-aware native event producers, ordered named multi-criteria branches with permanent None, readable/durable waits and drip batches, rich transforms, automatic completion, drag/drop insertion and rewiring, connected-section copy/paste, a resizable and independently scrollable inspector, lifecycle/testing/history controls, folders, six-month retention, communication policies, Contact/data actions, Instagram, and Asana actions.
 
+The latest whole-feature fit review keeps everyday steps visible by default, places uncommon operational tools behind one **Show advanced actions** control, marks permanent deletion as destructive, and disables actions that cannot work for the selected workflow object or execution user. Trigger configuration remains exclusively on the enrollment boundary and all delay implementations remain behind one plain-language **Delay** entry. The canvas now opens full width: the action catalogue appears only after **Add action** or a canvas `+`, the step inspector appears only after selecting a step, and opening either closes the other. This removes the permanent two-sidebar layout while retaining the independently scrolling, resizable inspector for complex steps.
+
+### Final fit-and-impact audit
+
+The 2026-08-21 completion pass reconciled user-visible options with their persisted schema and runtime behavior, then exercised the result on the live site. It corrected these cross-layer defects:
+
+- operation-dependent fields no longer invalidate valid Random number transforms or assigned/all-user notifications;
+- Update record preserves explicit clear operations but blocks clearing a static mandatory Frappe field in both authoring validation and the UI;
+- node summaries now describe actual delay, drip, deduplication, record, communication, subflow, Asana, and terminal behavior rather than generic or misleading fallbacks;
+- Send email selects only enabled outgoing Email Accounts and the Connections view derives current template, sender, Reach topic, secret, SMS, Asana, subflow, DocType, and field dependencies from the draft;
+- every workflow email first enforces native Frappe/CRM global suppression; an optional FinbyzReach Subscription Topic adds topic-wise Lead suppression without changing FinbyzReach or its `/manage_subscriptions` page; and
+- stale external effects are never blindly resent. A scheduled recovery marks an ambiguous delivery `UNKNOWN_COMMIT`, pauses the run, and creates operator reconciliation evidence. Tokenless runs whose immutable workflow/version was removed are non-destructively quarantined as failed instead of remaining falsely active forever.
+
+### Authoring fit strategy
+
+| Tier | Purpose | Examples | Presentation rule |
+|---|---|---|---|
+| Core | Common journey-building work | If/else, deduplicate, update/create record, ToDo, comment, notifications, email/SMS, standard delays | Visible immediately and recommended for normal authoring. |
+| Advanced | Valid but uncommon, technical, or operational work | Random split, drip batching, transforms, associations, round robin, copy/merge, subflow control, outgoing webhook, Instagram, Asana | Hidden behind one explicit advanced control, but included in search. |
+| Destructive | Irreversible record mutation | Delete record | Shown only with advanced actions, labeled destructive, permission checked, terminal, and blocked from insertion between two steps. |
+| Unavailable | Cannot work in the current workflow context | Merge Contact in a Lead workflow, Asana without its app, copy/delete without execution-user permission | Visible only when advanced/search reveals it, disabled with the exact reason; runtime compatibility for existing graphs is unchanged. |
+
 ### Coverage totals
 
 The client-requirement matrices below contain 100 independently assessed requirements. The broader HubSpot feature-family comparison is intentionally reported separately and is not added to these totals, so future HubSpot product changes cannot silently change the original client acceptance baseline.
@@ -124,17 +146,17 @@ Matrix rows reference these evidence IDs. Line anchors identify the reviewed bas
 | **E05** | [Step inspector](../workflow/src/components/Inspector.tsx#L65) | Configures named criteria branches through plain AND groups separated by OR, duration/date waits, and a HubSpot-style event-wait sequence: data source, compatible event, exact earlier action when applicable, event filters, finite/indefinite maximum, and optional timeout path. |
 | **E06** | [Condition expression editor](../workflow/src/components/InspectorHelpers.tsx#L179) | Supports nested AND/OR/NOT rules for one condition expression. |
 | **E07** | [Workflow canvas](../workflow/src/components/WorkflowCanvas.tsx#L105) | Provides compact visible `+` insertion points on connections and exact branch-output endpoints, color-separated branch paths, automatic lane layout, explicit legacy-unconnected-node treatment, placement-aware catalogue selection, atomic rewiring, structural action relocation, opt-in advanced manual links, clipboard commands, and per-output derived END markers. |
-| **E08** | [Step catalogue](../workflow/src/components/NodeCatalog.tsx#L43) | Exposes accessible click-to-add and native drag sources while hiding legacy-only nodes from new authoring. |
+| **E08** | [Step catalogue](../workflow/src/components/NodeCatalog.tsx#L43) | Exposes accessible click-to-add and native drag sources, hides enrollment/legacy nodes, provides one Delay entry, keeps advanced/destructive actions progressive, and explains context-unavailable actions before insertion. |
 | **E09** | [Editor state and commands](../workflow/src/state/WorkflowContext.tsx#L421) | Implements save, autosave, simulation, atomic insert/relocate, node and connected-section copy/paste/duplicate, undo/redo, and conflict recovery. |
 | **E10** | [Workflow pages](../workflow/src/pages/WorkflowPages.tsx#L203) | Implements folder-aware list/create/move, clone, lifecycle state, action timing, authorized sender/response settings, test dialog, publish flow, version compare/restore, run history, and detailed execution paths. |
-| **E11** | [Enrollment operations](../workflow/src/pages/EnrollmentPage.tsx#L109) | Provides permission-aware backfill filters and hourly/daily/weekly schedules with timezone and execution limits. |
+| **E11** | [Enrollment operations](../workflow/src/pages/EnrollmentPage.tsx#L109), [schedule engine](../finbyzai/workflow_builder/bulk.py#L1), and [incoming webhooks](../finbyzai/workflow_builder/webhooks.py#L1) | Provides permission-aware backfill; once/hourly/daily/weekly/monthly/annual/date-field calendar schedules with timezone, DST, overlap, and execution limits; and managed authenticated, rate-limited, idempotent inbound-webhook enrollment. |
 | **E12** | [Workflow API](../finbyzai/workflow_builder/api.py#L91) and [run retrieval](../finbyzai/workflow_builder/engine.py#L2130) | Exposes event catalogues filtered by primary DocType and trigger/wait usage, idempotent correlated event enrollment, durable wait release, and detailed run/enrollment evidence. |
 | **E13** | [Automation Workflow DocType](../finbyzai/workflow_builder/doctype/automation_workflow/automation_workflow.json#L1), [Automation Settings](../finbyzai/workflow_builder/doctype/automation_settings/automation_settings.json#L1), and [history maintenance](../finbyzai/workflow_builder/maintenance.py#L1) | Stores folder metadata, enforces a minimum 180-day execution-history window, and purges eligible details daily without breaking enrollment ledgers or aggregates. |
 | **E14** | [Asana integration guide](../../asana_integration/docs/ASANA_TECHNICAL_GUIDE.md#L1) and [external action execution](../finbyzai/workflow_builder/external.py#L1) | A first-class Workflow Builder action uses the installed Asana client for task create/update, subtask creation, and project creation with resolved payload fields and observable output. |
 | **E15** | [External action execution](../finbyzai/workflow_builder/external.py#L1) | Implements Frappe email, SMS, signed webhook, consent-aware Instagram/Meta delivery, and Asana effects with bounded I/O and stable engine result contracts. |
 | **E16** | [Workflow authoring service](../finbyzai/workflow_builder/authoring.py#L1) | Implements immutable publication, one subscription per mixed trigger, folders, sender validation, whole-workflow cloning, version comparison, and restore-to-draft. |
 | **E17** | [ERPNext Lead schema](../../erpnext/erpnext/crm/doctype/lead/lead.json), [Opportunity schema](../../erpnext/erpnext/crm/doctype/opportunity/opportunity.json), [Customer schema](../../erpnext/erpnext/selling/doctype/customer/customer.json), [Sales Order schema](../../erpnext/erpnext/selling/doctype/sales_order/sales_order.json), and [Frappe Contact schema](../../frappe/frappe/contacts/doctype/contact/contact.json) | Confirms the real object-specific lifecycle, party, contact, email, phone, qualification, and order fields used for the mapping above. |
-| **E18** | [Workflow email service](../finbyzai/workflow_builder/emailing.py), [email authoring APIs](../finbyzai/workflow_builder/api.py#L91), [Send email inspector](../workflow/src/components/Inspector.tsx#L134), and [visual Email Template Builder](../../finbyzreach/finbyzreach/email_template_builder/api.py#L299) | Selects primary-DocType-compatible templates, renders saved personalization, preserves HTML mode, supports record preview and controlled test delivery, creates/opens visual templates, and returns template/content identifiers for later event correlation and audit. |
+| **E18** | [Workflow email service](../finbyzai/workflow_builder/emailing.py), [external email execution](../finbyzai/workflow_builder/external.py), [Send email inspector](../workflow/src/components/Inspector.tsx#L134), [Reach suppression rules](../../finbyzreach/finbyzreach/email_marketing.py), and [visual Email Template Builder](../../finbyzreach/finbyzreach/email_template_builder/api.py#L299) | Selects primary-DocType-compatible templates and enabled outgoing senders, renders saved personalization, supports preview/test delivery and visual authoring, always checks native Frappe/CRM global suppression, optionally reads a Reach topic after resolving a Lead, keeps workflow unsubscribe links on Frappe's standard endpoint, and records suppression/content identifiers for audit and later event correlation. Reach's preference page and source remain topic-only and unchanged. |
 
 ## Detailed gap matrix
 
@@ -243,7 +265,7 @@ Matrix rows reference these evidence IDs. Line anchors identify the reviewed bas
 
 | ID | Requirement | Status | Current implementation | Gap and recommendation | Priority |
 |---|---|---|---|---|---|
-| CM-01 | Send email | **Implemented** | Authors can select a compatible standard or visual Email Template, create/open the installed visual builder, personalize against a real enrolled record, preview desktop/mobile output, send a rate-limited test, override subject/sender/reply-to, or retain quick inline content. The requested **Require current email consent** option and runtime gate have been removed. Live execution still requires an authorized outgoing account, records template/content identifiers, adds Frappe's unsubscribe link, queues through Frappe, and respects the action window. E01, E04, E05, E10, E15, E18 | The saved template is the reusable source of truth. Provider engagement status is normalized through Communication and still requires provider UAT. | P1 |
+| CM-01 | Send email | **Implemented** | Authors can select a compatible standard or visual Email Template, create/open the installed visual builder, personalize against a real enrolled record, preview desktop/mobile output, send a rate-limited test, select an enabled outgoing Email Account, override subject/reply-to, optionally select a Reach Subscription Topic, or retain quick inline content. The requested **Require current email consent** option and runtime gate remain removed. Live execution always enforces native Frappe global and applicable Lead/Contact opt-outs; when the recipient resolves to a Lead, the optional Reach topic adds topic-wise suppression. A suppressed action completes with an auditable reason, keeps unsubscribe links on Frappe's standard endpoint, and never mutates Reach's topic preference page. E01, E04, E05, E10, E15, E18 | The saved template is the reusable source of truth. Provider engagement status is normalized through Communication and still requires provider UAT. | P1 |
 | CM-02 | Send SMS | **Implemented** | Consent-aware SMS uses configured Frappe SMS Settings and respects the version-pinned workflow action window. E01, E04, E10, E15 | Add provider-approved sender selection and delivery-event producers. | P1 |
 | CM-03 | Send Instagram direct message | **Implemented** | A consent-aware Instagram action resolves recipient/message values and sends the Meta messaging payload through the existing allowlisted HTTPS, rate-limit, idempotency, and secret boundary. E01, E02, E05, E15 | Meta account credentials and allowed host must be configured and UAT-approved. | P2 |
 | CM-04 | Internal notification to assigned users | **Implemented** | Notify user offers an Assigned users audience, resolves open ToDo assignees, removes disabled/duplicate users, and reports recipients. E01, E04, E05 | An empty audience fails visibly. | P1 |
@@ -280,15 +302,15 @@ Matrix rows reference these evidence IDs. Line anchors identify the reviewed bas
 
 ## Broader HubSpot workflow feature-family comparison
 
-This matrix covers every functional family presented by the current public HubSpot workflow enrollment, action, settings, movement, testing, and history documentation reviewed on 2026-08-20. HubSpot editions and connected apps expose many subscription-specific individual actions; those are grouped by behavior instead of pretending each vendor-branded action belongs in FinbyzAI core. Sources: [enrollment triggers](https://knowledge.hubspot.com/workflows/set-your-workflow-enrollment-triggers), [workflow actions](https://knowledge.hubspot.com/workflows/choose-your-workflow-actions), [workflow settings](https://knowledge.hubspot.com/workflows/manage-your-workflow-settings), [clone and move](https://knowledge.hubspot.com/workflows/clone-and-move-workflow-actions), [testing](https://knowledge.hubspot.com/workflows/test-your-workflow), and [details/history](https://knowledge.hubspot.com/workflows/understand-your-workflow-details-page).
+This matrix covers every functional family presented by the current public HubSpot workflow enrollment, action, settings, movement, testing, and history documentation reviewed through 2026-08-21. HubSpot editions and connected apps expose many subscription-specific individual actions; those are grouped by behavior instead of pretending each vendor-branded action belongs in FinbyzAI core. Sources: [enrollment triggers](https://knowledge.hubspot.com/workflows/set-your-workflow-enrollment-triggers), [workflow actions](https://knowledge.hubspot.com/workflows/choose-your-workflow-actions), [workflow settings](https://knowledge.hubspot.com/workflows/manage-your-workflow-settings), [clone and move](https://knowledge.hubspot.com/workflows/clone-and-move-workflow-actions), [testing](https://knowledge.hubspot.com/workflows/test-your-workflow), and [details/history](https://knowledge.hubspot.com/workflows/understand-your-workflow-details-page).
 
 | ID | HubSpot feature family | FinbyzAI status | Fit and implementation decision |
 |---|---|---|---|
 | HP-01 | Manual enrollment | **Implemented** | Manual trigger plus permission-aware record enrollment. |
 | HP-02 | Filter-criteria enrollment | **Partial** | Nested field criteria work on the primary DocType; HubSpot's broader activity, association-label, marketing, consent, and commerce filter universe depends on local DocTypes/adapters. |
 | HP-03 | Event-occurrence enrollment | **Implemented** | Typed OR/mixed trigger groups, event filters, record filters, correlation, idempotency, and native producers cover the requested Frappe/Aircall/email/commerce events. |
-| HP-04 | Incoming-webhook enrollment | **Missing** | Outgoing webhooks exist, but there is no managed inbound webhook definition, authentication, payload schema, and record-identity mapping UI. |
-| HP-05 | Scheduled enrollment | **Partial** | Durable hourly/daily/weekly schedules, timezone, filters, limits, and backfill exist; one-time, monthly, annual, and date-property recurrence presets are not all exposed. |
+| HP-04 | Incoming-webhook enrollment | **Implemented** | Managed endpoints support generated keys, bearer or HMAC-SHA256 authentication, exact record-name or permitted unique-field mapping, payload filters, request/rate limits, idempotency, durable outbox receipt, secret rotation, and non-sensitive receipt history. |
+| HP-05 | Scheduled enrollment | **Implemented** | Durable once, hourly ERP Advanced, daily, weekly, monthly day/weekday, annual fixed-date, and annual Date-field schedules use timezone-aware calendar arithmetic, DST checks, audience filters, overlap/catch-up policies, limits, and automatic one-time disablement. |
 | HP-06 | Re-enrollment controls | **Implemented** | Never, after completion, and every distinct occurrence are versioned and idempotently enforced. |
 | HP-07 | Unenroll when no longer eligible | **Implemented** | Optional policy reevaluates eligibility before each node and cancels the active path with evidence. |
 | HP-08 | Suppression/exclusion lists | **Implemented** | Central version-aware suppression rules reject enrollment before effects are created. |
@@ -300,11 +322,11 @@ This matrix covers every functional family presented by the current public HubSp
 | HP-14 | Delay until event occurrence with maximum wait | **Implemented** | Enrolled-object and earlier-action-output sources, compatible typed events, event filters, exact message/record correlation, set or indefinite maximum wait, and optional timeout paths are wired. Only events occurring while the timer is active count, and a matching event received after its due time follows timeout. |
 | HP-15 | Delay until day/time or working window | **Implemented** | Business-hours delay supports weekdays, times, timezone, and Holiday List exclusions. |
 | HP-16 | Named AND/OR if/then branches with None | **Implemented** | Up to twenty ordered first-match criteria paths, independent nested filters, reordering, and permanent None. |
-| HP-17 | Branch on one property or prior action output | **Partial** | Legacy exact-value branching and record-field criteria exist; a first-class multi-value output-property branch is not offered for new authoring. |
+| HP-17 | Branch on one property or prior action output | **Implemented** | The normal named If/else predicate can choose either a permitted enrolled-record field or a compatible guaranteed earlier-step output, without restoring the confusing separate Value Branch. |
 | HP-18 | Random percentage branch | **Implemented** | Two to twenty named paths total 100; deterministic allocation prevents retry drift. |
 | HP-19 | Go to another workflow | **Implemented** | Compatible active subflows can run asynchronously or block until completion, with cycle protection. |
 | HP-20 | Go to another action | **Implemented** | A plain-language Go To action selects an existing destination, participates in reachability validation, and remains acyclic. |
-| HP-21 | Edit/copy/clear CRM properties and numeric adjustment | **Partial** | Permission-aware update and atomic numeric operations exist; cross-object copy/clear presets and the full HubSpot property-action catalogue do not. |
+| HP-21 | Edit/copy/clear CRM properties and numeric adjustment | **Implemented** | Update record supports set, clear, record-field copy, compatible earlier-output copy, and collection append/remove where the Frappe field permits it; numeric adjustment is atomic. Explicit linked-record reads supply controlled cross-object values without guessing relationships. |
 | HP-22 | Create CRM records, tasks, notes, line items, quotes, invoices | **Implemented** | Generic permission-aware DocType creation covers supported ERPNext records and child mappings, with dedicated ToDo, comment, Note, copy, and Asana actions where their semantics differ. |
 | HP-23 | Delete records | **Implemented** | Permission-checked delete is terminal and audited, with explicit destructive semantics. |
 | HP-24 | Associations, labels, ownership rotation, skills | **Partial** | Link/unlink association and atomic user/group round robin exist; association labels and skills-based routing are not core capabilities. |
@@ -320,10 +342,10 @@ This matrix covers every functional family presented by the current public HubSp
 | HP-34 | Clone complete workflow | **Implemented** | Whole-workflow clone remaps node/edge identities safely. |
 | HP-35 | Revision history, comparison, restore | **Implemented** | Immutable published versions can be compared and any selected version restored into the editable draft without mutating history. |
 | HP-36 | Workflow folders and saved organizational views | **Implemented** | Slash-separated folder metadata supports create, list filtering/search, and audited move-to-folder behavior alongside status views. |
-| HP-37 | Record-based criteria/path testing | **Implemented** | Non-mutating simulation selects a real record, evaluates the graph, and reports the predicted path. |
+| HP-37 | Record-based criteria/path testing | **Implemented** | Non-mutating simulation selects a real record, evaluates the graph, reports observed/predicted/skipped confidence and timestamps, exposes trigger/path evidence, and now returns the same public output keys used by runtime so output-based branches can be tested accurately. |
 | HP-38 | Review, publish, pause, resume, disable | **Implemented** | Draft validation, immutable publication, health preflight, activation, pause/resume, and disable are explicit. |
 | HP-39 | Enrollment history, action logs, path, errors, export | **Implemented** | Run detail includes decisions, path, attempts, errors, event timeline, pagination/export support, and a configurable minimum 180-day retention window. |
-| HP-40 | Workflow health/performance notifications | **Partial** | Metrics, incidents, dead letters, preflight, and operator recovery exist; configurable recipient notifications and HubSpot-style performance reports are not complete. |
+| HP-40 | Workflow health/performance notifications | **Partial** | Canvas node/branch counts, aggregate performance, incidents, dead letters, preflight, and operator recovery are implemented. Configurable proactive performance-summary recipients remain a separate administration enhancement. |
 
 ### Deliberate platform adaptations
 
@@ -363,7 +385,7 @@ Choose **Email Template** in the Send email step and select any enabled template
 
 The template is a live reusable reference, matching the useful HubSpot behavior: editing and saving that Email Template changes the content used by future workflow executions without republishing every workflow that references it. Each actual send stores the selected template name and a content hash in the step output, so the execution remains traceable. Published workflow settings still pin the workflow-level sender and timing policy.
 
-Before publishing, an author can optionally select a real record of the workflow's primary DocType, render its personalization, and switch the isolated preview between desktop and mobile widths. **Send test** queues one explicit recipient with a `[TEST]` prefix, never enrolls or contacts the selected record automatically, omits the unsubscribe link, and is limited to ten tests per user per ten minutes. Real workflow delivery uses an authorized outgoing Email Account, adds the unsubscribe link, and records the Frappe Email Queue identity used by later email-event waits. The former **Require current email consent** field and email runtime consent gate have been removed as requested; SMS and Instagram consent controls are unchanged.
+Before publishing, an author can optionally select a real record of the workflow's primary DocType, render its personalization, and switch the isolated preview between desktop and mobile widths. **Send test** queues one explicit recipient with a `[TEST]` prefix, never enrolls or contacts the selected record automatically, omits the unsubscribe link, and is limited to ten tests per user per ten minutes. Real workflow delivery selects an enabled outgoing Email Account and records the Frappe Email Queue identity used by later email-event waits. Every workflow email first checks Frappe's global `Email Unsubscribe` records, record-specific unsubscribe, and applicable standard Lead/Contact opt-out fields. When an optional Reach Subscription Topic is selected, FinbyzReach is consulted read-only for topic-wise suppression after the recipient is resolved to a Lead. Suppression completes the action without sending and leaves an auditable reason. Workflow email unsubscribe links use Frappe's standard endpoint; Reach's `/manage_subscriptions` page remains exclusively owned by campaign recipients and topic preferences, and no FinbyzReach source file was changed by this implementation. The former **Require current email consent** field and email runtime consent gate remain removed as requested; SMS and Instagram consent controls are unchanged.
 
 ### How does Wait until event work now?
 
@@ -406,7 +428,7 @@ There are no remaining implementation rows in the supplied 100-requirement clien
 
 ### P0 — Controlled acceptance before enabling external actions
 
-1. Configure the outgoing Email Account and SMS provider, keep the independent external-action kill switch off, then verify one email delivery and one consented SMS delivery.
+1. Select and verify one of the site's enabled outgoing Email Accounts, configure the currently missing SMS provider, and then verify one email delivery and one consented SMS delivery under controlled UAT.
 2. Confirm the email provider writes the expected Frappe Communication delivery statuses for bounce, open, click, complaint, and unsubscribe; verify finite, indefinite, same-record, and preceding-email waits end to end.
 3. Verify one terminal inbound Aircall Call Log resolves to each CRM object type actually used by the client.
 4. Verify one Customer Portal login, Shopping Cart conversion, and 24-hour abandoned-cart sample in UAT.
@@ -424,7 +446,7 @@ There are no remaining implementation rows in the supplied 100-requirement clien
 
 ### Future features outside this feedback baseline
 
-Incoming-webhook workflow definitions, HubSpot-specific AI/marketing actions, WhatsApp, marketplace connectors not installed on this bench, and bounded loop semantics remain separate future requirements rather than gaps in the supplied client scope.
+HubSpot-specific AI/marketing actions, WhatsApp, marketplace connectors not installed on this bench, proactive performance-summary recipients, and bounded loop semantics remain separate future requirements rather than gaps in the supplied client scope.
 
 ## Implementation sequencing and compatibility notes
 
@@ -443,6 +465,10 @@ Incoming-webhook workflow definitions, HubSpot-specific AI/marketing actions, Wh
 - Keep integration-specific behavior behind adapters/plugins or stable service boundaries rather than embedding provider logic directly into the generic workflow engine.
 - Detailed terminal execution history is retained for at least 180 days; durable enrollment identity and aggregates survive detail cleanup.
 - Contact merge uses Frappe's native merge path, exact matching, ambiguity rejection, and normal permissions. It must still be treated as destructive during publish review.
+- New authoring uses server-supplied `core`, `advanced`, and `danger` presentation tiers plus context availability. These hints never disable execution of an already published compatible graph.
+- Round robin creates normal Frappe ToDo assignments. Authoring now validates the same record-read and ToDo-create permissions used by runtime instead of incorrectly requiring a writable owner field.
+- Exact duplicate OR trigger groups are rejected at validation; two triggers of the same type remain valid when their event or record filters differ.
+- Simulation outputs now match stable runtime output names for data checks, record operations, notifications, integrations, and terminal controls. Values that cannot exist before an external mutation remain explicitly predicted rather than fabricated as observed facts.
 
 ## Acceptance criteria for closing this gap analysis
 
@@ -456,18 +482,18 @@ A future implementation can mark a row **Implemented** only when:
 
 ## Verification record
 
-The final implementation/document baseline was checked on 2026-08-20 with:
+The final implementation/document baseline was checked on 2026-08-21 with:
 
-- 171 FinbyzAI integration tests, including workflow schema, email-template authoring/rendering/test delivery, authoring/runtime, event producers, external actions, safety, load/recovery, bulk operations, and deadlocks;
-- 16 additional legacy-category FinbyzAI tests;
-- 78 frontend tests;
-- TypeScript type checking and frontend lint;
+- 198 focused FinbyzAI workflow/backend integration tests plus 16 existing FinbyzAI tests (214 total), covering schema/output contracts, authoring/runtime, exact event producers, external/email actions, inbound webhooks, schedules/backfills, collaboration, safety, recovery, and real Opportunity certification;
+- 98 frontend tests, including multi-trigger cards, guided insertion, mutually exclusive on-demand workspaces, Delay disclosure, context-unavailable/advanced catalogue behavior, inspector resize, email authoring, and editor overlays;
+- TypeScript type checking, frontend lint, unstaged/staged `git diff --check`, and complete backend execution through Frappe's test runner;
 - a successful Vite production frontend build;
-- a successful site migration with the event-wait source columns and exact-match indexes present;
-- a clean bench restart with web, Socket.IO, scheduler, and both workers running, plus HTTP 200 responses for the site and workflow builder;
-- `git diff --check`;
-- recalculation of the 100 client-requirement statuses from the matrix rows; and
-- verification that every local Markdown evidence link resolves on disk.
+- a successful site migration with the managed webhook/comment/schedule schema present;
+- a clean bench restart with web, Socket.IO, scheduler, and both workers running;
+- an authenticated-route redirect to the Frappe login page and an HTTP 200 response for the exact newly built workflow JavaScript asset;
+- live site calls confirming context-aware catalogue tiers and canvas metrics for `AWF-04525` (one enrollment and five reached nodes); and
+- live recovery confirming zero queued/running orphan runs, zero stale external effects, zero pending/retrying/dead outbox rows, two available workers, and no new Error Log rows after the final deployment; existing operator-owned incidents/dead letters remain visible rather than being silently deleted; and
+- recalculation of the 100 client-requirement statuses from the matrix rows.
 
 The original client matrix contains exactly 100 requirements. The separate 40-row HubSpot feature-family comparison is contextual and intentionally excluded from the client coverage totals.
 
@@ -487,3 +513,6 @@ The original client matrix contains exactly 100 requirements. The separate 40-ro
 | 2026-08-20 | Guided editor insertion and visual hierarchy | Matched the client's HubSpot-style authoring flow with compact insertion controls, color-separated branch paths, automatic lane layout, explicit legacy-orphan treatment, placement-aware catalogue selection, atomic rewiring, orphan prevention, and manual link editing disabled by default behind an advanced toggle. |
 | 2026-08-20 | Workflow email authoring | Expanded Send email into a HubSpot-aligned authoring flow using the installed visual Email Template Builder: compatible saved-template selection, in-place visual-template creation, real-record personalization, desktop/mobile preview, controlled test sends, subject/sender/reply-to controls, live saved-template reuse, traceable content hashes, and backward-compatible inline email. |
 | 2026-08-20 | Event-wait and email-consent alignment | Removed the Require current email consent UI/runtime gate; implemented HubSpot-style enrolled-record versus earlier-action data sources, compatible source actions, event filters, finite/indefinite waits, exact indexed source matching, after-commit Record updated/ToDo completed producers, timeout-race protection, safe timeout-edge UI transitions, and backend/frontend regression coverage. |
+| 2026-08-21 | Folder and unsubscribe correction | Replaced the workflow-list browser prompt with an accessible themed move dialog. Made FinbyzAI enforce native Frappe/CRM global suppression for every workflow email, added optional read-only Reach topic suppression and an auditable suppressed outcome, retained Frappe's standard workflow unsubscribe link, and explicitly preserved Reach's topic-only preference-page boundary without modifying FinbyzReach. |
+| 2026-08-21 | Whole-feature fit, simplicity, and parity audit | Reclassified uncommon operations as advanced and deletion as destructive, added context-aware availability reasons, kept trigger setup out of the step catalogue and delays behind one entry, rejected identical OR triggers, corrected round-robin permissions to match Frappe ToDo runtime behavior, aligned simulation output keys with runtime for reliable output-based branches, reconciled webhook/schedule gap statuses, ran the full focused verification set, migrated, rebuilt, restarted, and smoke-tested the live site. |
+| 2026-08-21 | Final cross-layer and UI completion audit | Made catalogue and inspector on-demand and mutually exclusive, corrected conditional action contracts, mandatory-field clear handling, node summaries, email sender selection, and derived Connections; added duplicate-safe stale external-effect reconciliation and orphan-run quarantine; passed 214 backend tests and 98 frontend tests, rebuilt, migrated, restarted, and verified the deployed asset and live runtime state. |

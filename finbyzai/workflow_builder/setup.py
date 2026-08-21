@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import frappe
+from frappe.utils import cint
 
 from .constants import AUTOMATION_ROLES
 
@@ -16,10 +17,12 @@ INDEXES = {
 	"Automation Outbox Event": [
 		(["status", "available_at", "creation"], "idx_automation_outbox_pending"),
 		(["status", "lease_until", "creation"], "idx_automation_outbox_lease"),
+		(["status", "processed_at"], "idx_automation_outbox_cleanup"),
 		(["object_doctype", "object_name"], "idx_automation_outbox_record"),
 	],
 	"Automation Run": [
 		(["workflow", "status", "creation"], "idx_automation_run_workflow_status"),
+		(["status", "completed_at"], "idx_automation_run_cleanup"),
 		(["record_doctype", "record_name", "creation"], "idx_automation_run_record"),
 		(["record_doctype", "record_name", "status", "creation"], "idx_automation_run_active_record"),
 	],
@@ -43,9 +46,16 @@ INDEXES = {
 		(["status", "modified"], "idx_automation_backfill_status"),
 		(["workflow", "status", "creation"], "idx_automation_backfill_workflow_status"),
 		(["status", "next_batch_at"], "idx_automation_backfill_due"),
+		(["status", "completed_at"], "idx_automation_backfill_cleanup"),
 	],
 	"Automation Schedule": [
 		(["enabled", "next_run_at"], "idx_automation_schedule_due"),
+	],
+	"Automation Inbound Webhook": [
+		(["workflow", "enabled", "modified"], "idx_automation_inbound_webhook_workflow"),
+	],
+	"Automation Workflow Comment": [
+		(["workflow", "step_id", "resolved", "creation"], "idx_automation_workflow_comment_step"),
 	],
 	"Automation Consent Record": [
 		(["record_doctype", "record_name", "channel", "purpose", "recipient", "effective_at"], "idx_automation_consent_lookup"),
@@ -58,10 +68,15 @@ INDEXES = {
 	"Automation Incident": [
 		(["status", "severity", "last_seen_at"], "idx_automation_incident_open"),
 		(["workflow", "status", "last_seen_at"], "idx_automation_incident_workflow"),
+		(["status", "resolved_at"], "idx_automation_incident_cleanup"),
 	],
 	"Automation Dead Letter": [
 		(["status", "source_type", "creation"], "idx_automation_dead_letter_open"),
 		(["workflow", "status", "creation"], "idx_automation_dead_letter_workflow"),
+		(["status", "resolved_at"], "idx_automation_dead_letter_cleanup"),
+	],
+	"Automation Audit Event": [
+		(["occurred_at"], "idx_automation_audit_cleanup"),
 	],
 	"Automation Suppression Rule": [
 		(["workflow", "enabled", "priority"], "idx_automation_suppression_match"),
@@ -89,6 +104,7 @@ UNIQUES = {
 	"Automation Metric Daily": [(["metric_date", "workflow", "workflow_version"], "uq_automation_metric_day")],
 	"Automation Policy Evaluation": [(["run", "event_id"], "uq_automation_policy_run_event")],
 	"Automation Round Robin Cursor": [(["cursor_key"], "uq_automation_round_robin_cursor")],
+	"Automation Inbound Webhook": [(["endpoint_key"], "uq_automation_inbound_webhook_endpoint")],
 }
 
 
@@ -119,6 +135,22 @@ def ensure_automation_indexes() -> None:
 		for fields, name in definitions:
 			if not frappe.db.has_index(f"tab{doctype}", name):
 				frappe.db.add_index(doctype, fields, name)
+
+
+def ensure_automation_settings_defaults() -> None:
+	"""Backfill defaults that Frappe does not add to an existing Single DocType."""
+	if not frappe.db.exists("DocType", "Automation Settings"):
+		return
+	defaults = {
+		"history_retention_days": 180,
+		"log_cleanup_interval_hours": 24,
+		"log_cleanup_batch_size": 500,
+	}
+	for fieldname, default in defaults.items():
+		if not cint(frappe.db.get_single_value("Automation Settings", fieldname, cache=False)):
+			frappe.db.set_single_value(
+				"Automation Settings", fieldname, default, update_modified=False
+			)
 
 
 def quarantine_invalid_active_versions() -> None:
@@ -158,11 +190,13 @@ def quarantine_invalid_active_versions() -> None:
 def after_install() -> None:
 	ensure_module_ownership()
 	ensure_automation_roles()
+	ensure_automation_settings_defaults()
 	ensure_automation_indexes()
 
 
 def after_migrate() -> None:
 	ensure_module_ownership()
 	ensure_automation_roles()
+	ensure_automation_settings_defaults()
 	ensure_automation_indexes()
 	quarantine_invalid_active_versions()

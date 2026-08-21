@@ -4,12 +4,28 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from finbyzai.workflow_builder.api import send_workflow_test_email
+from finbyzai.workflow_builder.api import list_email_senders, send_workflow_test_email
 from finbyzai.workflow_builder.emailing import get_email_template, resolve_email_content
 from finbyzai.workflow_builder.errors import AutomationError
 
 
 class TestWorkflowEmailAuthoring(IntegrationTestCase):
+	def test_sender_catalog_exposes_only_enabled_account_email_identities(self):
+		accounts = [
+			frappe._dict(name="Primary account", email_id="sales@example.com", default_outgoing=1),
+			frappe._dict(name="Support account", email_id="support@example.com", default_outgoing=0),
+		]
+		with (
+			patch("finbyzai.workflow_builder.api.registry.require_builder"),
+			patch.object(frappe, "get_all", return_value=accounts) as get_all,
+		):
+			result = list_email_senders("example", 10)
+
+		self.assertEqual([row["value"] for row in result["rows"]], ["sales@example.com", "support@example.com"])
+		self.assertIn("Default outgoing", result["rows"][0]["description"])
+		email_account_call = next(call for call in get_all.call_args_list if call.args[0] == "Email Account")
+		self.assertEqual(email_account_call.kwargs["filters"], {"enable_outgoing": 1})
+
 	def _template(self, *, reference_doctype="Lead", enabled=1):
 		name = f"Workflow email {frappe.generate_hash(length=8)}"
 		values = {

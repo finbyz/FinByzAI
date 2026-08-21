@@ -6,7 +6,7 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from finbyzai.workflow_builder import engine, maintenance
-from finbyzai.workflow_builder.api import simulate
+from finbyzai.workflow_builder.api import get_canvas_metrics, simulate
 
 from finbyzai.workflow_builder.authoring import (
 	change_workflow_state,
@@ -32,16 +32,22 @@ from finbyzai.workflow_builder.engine import (
 	_execution_identity,
 	_hold_for_execution_window,
 	_reserve_drip_slot,
+	_round_robin_users,
 	_transform_output,
 	enroll,
 	execute_token,
 	release_due_timers,
 	release_event_waiters,
+	recover_stale_external_effects,
 )
 from finbyzai.workflow_builder.errors import AutomationConflictError, AutomationError, AutomationPermissionError
 from finbyzai.workflow_builder.registry import field_catalog_result
 from finbyzai.workflow_builder.schema import empty_graph
-from finbyzai.workflow_builder.setup import ensure_automation_roles, quarantine_invalid_active_versions
+from finbyzai.workflow_builder.setup import (
+	ensure_automation_roles,
+	ensure_automation_settings_defaults,
+	quarantine_invalid_active_versions,
+)
 
 
 class TestAutomationAuthoring(IntegrationTestCase):
@@ -67,8 +73,8 @@ class TestAutomationAuthoring(IntegrationTestCase):
 
 	def test_workflow_search_and_pagination_contract(self):
 		rows = [frappe._dict(name="WF-1"), frappe._dict(name="WF-2")]
-		counts = [[frappe._dict(count=2)], [frappe._dict(count=1)], [frappe._dict(count=0)]]
-		with patch.object(frappe, "get_list", side_effect=[rows, *counts]) as get_list:
+		counts = [frappe._dict(status="ACTIVE", count=1), frappe._dict(status="DRAFT", count=1)]
+		with patch.object(frappe, "get_list", side_effect=[rows, counts]) as get_list:
 			result = list_workflow_records(start=0, page_length=1, search="invoice")
 
 		self.assertEqual(result["rows"], [{"name": "WF-1", "trigger_type": None}])
@@ -80,6 +86,8 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		self.assertEqual(kwargs["or_filters"]["title"], ["like", "%invoice%"])
 		self.assertEqual(kwargs["or_filters"]["folder"], ["like", "%invoice%"])
 		self.assertEqual(kwargs["or_filters"]["primary_doctype"], ["like", "%invoice%"])
+		self.assertEqual(get_list.call_count, 2)
+		self.assertEqual(get_list.call_args_list[1].kwargs["group_by"], "status")
 
 	def test_workflow_folder_is_created_moved_and_filterable(self):
 		created = create_workflow_record("Folder contract", "Lead", folder="Sales/Nurture")
@@ -89,6 +97,30 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		self.assertIn(created["workflow"], {row.name for row in rows})
 		with self.assertRaisesRegex(AutomationError, "dot path"):
 			set_workflow_folder(created["workflow"], "../Unsafe")
+
+	def test_workflow_list_bulk_loads_published_graphs(self):
+		graph = empty_graph("Lead", "trigger.record_created")
+		rows = [
+			frappe._dict(name=f"WF-{index}", active_version=f"AWV-{index}")
+			for index in range(1, 21)
+		]
+		versions = [
+			frappe._dict(name=f"AWV-{index}", graph_json=frappe.as_json(graph))
+			for index in range(1, 21)
+		]
+		with (
+			patch.object(
+				frappe,
+				"get_list",
+				side_effect=[rows, [frappe._dict(status="ACTIVE", count=20)]],
+			),
+			patch.object(frappe, "get_all", return_value=versions) as get_all,
+		):
+			result = list_workflow_records(page_length=20)
+
+		self.assertEqual(len(result["rows"]), 20)
+		self.assertEqual({row.trigger_type for row in result["rows"]}, {"trigger.record_created"})
+		get_all.assert_called_once()
 
 	def test_create_record_requires_mandatory_fields_without_defaults(self):
 		graph = empty_graph("Lead")
@@ -105,6 +137,36 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		unsupported = [issue for issue in issues if issue["code"] == "UNSUPPORTED_MANDATORY_CREATE_FIELD"]
 		self.assertTrue(any("Items" in issue["message"] for issue in unsupported))
 
+	def test_update_record_blocks_clearing_a_mandatory_frappe_field(self):
+		for assignment in (
+			{"field": "status", "operation": "clear"},
+			{"field": "status", "operation": "set", "value": {"kind": "literal", "value": ""}},
+		):
+			graph = empty_graph("Lead")
+			graph["nodes"].append({
+				"id": "update",
+				"type": "action.update_record",
+				"type_version": 1,
+				"config": {"assignments": [assignment]},
+			})
+			graph["edges"] = [{"id": "edge-1", "source": "trigger-1", "source_handle": "default", "target": "update"}]
+			with self.subTest(assignment=assignment):
+				issues = validate_bindings(graph, "Administrator")
+				self.assertIn("MANDATORY_FIELD_CLEAR", {issue["code"] for issue in issues})
+
+		graph = empty_graph("Lead")
+		graph["nodes"].append({
+			"id": "update",
+			"type": "action.update_record",
+			"type_version": 1,
+			"config": {"assignments": [{"field": "company_name", "operation": "clear"}]},
+		})
+		graph["edges"] = [{"id": "edge-1", "source": "trigger-1", "source_handle": "default", "target": "update"}]
+		self.assertNotIn(
+			"MANDATORY_FIELD_CLEAR",
+			{issue["code"] for issue in validate_bindings(graph, "Administrator")},
+		)
+
 	def test_literal_date_wait_does_not_require_record_field_access(self):
 		graph = empty_graph("Lead")
 		graph["nodes"].append({
@@ -116,6 +178,30 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		graph["edges"] = [{"id": "edge-1", "source": "trigger-1", "source_handle": "default", "target": "wait"}]
 		issues = validate_bindings(graph, "Administrator")
 		self.assertNotIn("DELAY_FIELD_PERMISSION", {issue["code"] for issue in issues})
+
+	def test_email_subscription_topic_must_be_an_enabled_reach_topic(self):
+		graph = empty_graph("Lead")
+		graph["nodes"].append({
+			"id": "email",
+			"type": "action.send_email",
+			"type_version": 2,
+			"config": {
+				"content_mode": "inline",
+				"recipient": {"kind": "record_field", "field": "email_id"},
+				"subject": {"kind": "literal", "value": "Hello"},
+				"message": {"kind": "literal", "value": "Body"},
+				"subscription_topic": "Disabled topic",
+			},
+		})
+		graph["edges"] = [{"id": "edge-1", "source": "trigger-1", "source_handle": "default", "target": "email"}]
+		with (
+			patch.object(frappe, "get_installed_apps", return_value=["finbyzreach"]),
+			patch.object(frappe.db, "exists", return_value=False),
+		):
+			issues = validate_bindings(graph, "Administrator")
+
+		self.assertIn("INVALID_SUBSCRIPTION_TOPIC", {issue["code"] for issue in issues})
+		self.assertIn("nodes.email.config.subscription_topic", {issue["path"] for issue in issues})
 
 	def test_branch_field_permissions_skip_blank_rows_and_point_to_the_affected_path(self):
 		graph = empty_graph("Lead")
@@ -217,8 +303,7 @@ class TestAutomationAuthoring(IntegrationTestCase):
 			frappe.utils.add_days(frappe.utils.now_datetime(), -181),
 			update_modified=False,
 		)
-		with patch.object(maintenance, "automation_enabled", return_value=True):
-			self.assertEqual(maintenance.purge_expired_execution_history(), 1)
+		self.assertEqual(maintenance.purge_expired_execution_history(), 1)
 		self.assertFalse(frappe.db.exists("Automation Run", run_name))
 		self.assertIsNone(
 			frappe.db.get_value(
@@ -226,6 +311,94 @@ class TestAutomationAuthoring(IntegrationTestCase):
 				{"workflow": created["workflow"], "record_name": lead.name, "occurrence_key": "retention"},
 				"run",
 			)
+		)
+
+	def test_log_cleanup_removes_only_expired_terminal_operational_logs(self):
+		lead = frappe.get_doc({"doctype": "Lead", "first_name": "Cleanup Log Contract"}).insert()
+		created = create_workflow_record("Cleanup log contract", "Lead")
+		audit_name = frappe.db.get_value(
+			"Automation Audit Event", {"workflow": created["workflow"]}, "name", order_by="creation asc"
+		)
+		old_at = frappe.utils.add_days(frappe.utils.now_datetime(), -181)
+		frappe.db.set_value("Automation Audit Event", audit_name, "occurred_at", old_at, update_modified=False)
+		processed = frappe.get_doc(
+			{
+				"doctype": "Automation Outbox Event",
+				"event_id": frappe.generate_hash(length=20),
+				"event_type": "ON_UPDATE",
+				"object_doctype": "Lead",
+				"object_name": lead.name,
+				"status": "PROCESSED",
+				"processed_at": old_at,
+			}
+		).insert(ignore_permissions=True)
+		pending = frappe.get_doc(
+			{
+				"doctype": "Automation Outbox Event",
+				"event_id": frappe.generate_hash(length=20),
+				"event_type": "ON_UPDATE",
+				"object_doctype": "Lead",
+				"object_name": lead.name,
+				"status": "PENDING",
+				"available_at": old_at,
+			}
+		).insert(ignore_permissions=True)
+
+		counts = maintenance.purge_expired_automation_logs(limit=100)
+
+		self.assertEqual(counts["audit_events"], 1)
+		self.assertEqual(counts["outbox_events"], 1)
+		self.assertFalse(frappe.db.exists("Automation Audit Event", audit_name))
+		self.assertFalse(frappe.db.exists("Automation Outbox Event", processed.name))
+		self.assertTrue(frappe.db.exists("Automation Outbox Event", pending.name))
+
+	def test_scheduled_log_cleanup_honors_the_configured_interval(self):
+		now = datetime(2026, 8, 21, 12, 0, 0)
+		with (
+			patch.object(maintenance, "now_datetime", return_value=now),
+			patch.object(
+				frappe.db,
+				"get_single_value",
+				side_effect=lambda _doctype, field, **_kwargs: {
+					"last_log_cleanup_at": datetime(2026, 8, 21, 10, 0, 0),
+					"log_cleanup_interval_hours": 4,
+				}.get(field),
+			),
+			patch.object(maintenance, "purge_expired_automation_logs") as purge,
+		):
+			result = maintenance.run_scheduled_log_cleanup()
+		self.assertFalse(result["ran"])
+		purge.assert_not_called()
+
+	def test_log_cleanup_settings_reject_unsafe_ranges(self):
+		settings = frappe.get_single("Automation Settings")
+		settings.history_retention_days = 179
+		settings.log_cleanup_interval_hours = 24
+		settings.log_cleanup_batch_size = 500
+		with self.assertRaisesRegex(frappe.ValidationError, "retention"):
+			settings.validate()
+		settings.history_retention_days = 180
+		settings.log_cleanup_interval_hours = 0
+		with self.assertRaisesRegex(frappe.ValidationError, "interval"):
+			settings.validate()
+		settings.log_cleanup_interval_hours = 24
+		settings.log_cleanup_batch_size = 99
+		with self.assertRaisesRegex(frappe.ValidationError, "batch size"):
+			settings.validate()
+
+	def test_existing_single_settings_receive_cleanup_defaults_during_migrate(self):
+		with (
+			patch.object(frappe.db, "get_single_value", return_value=0),
+			patch.object(frappe.db, "set_single_value") as set_value,
+		):
+			ensure_automation_settings_defaults()
+		self.assertEqual(
+			{call.args[1:3] for call in set_value.call_args_list},
+			{
+				("history_retention_days", 180),
+				("log_cleanup_interval_hours", 24),
+				("log_cleanup_batch_size", 500),
+			},
 		)
 
 	def test_publication_state_ignores_layout_but_versions_execution_changes(self):
@@ -404,8 +577,28 @@ class TestAutomationAuthoring(IntegrationTestCase):
 
 		published = create_workflow_record("Permanent history", "Lead")
 		publish_workflow(published["workflow"], 0)
-		with self.assertRaises(AutomationError):
+		lead = frappe.get_doc({"doctype": "Lead", "first_name": "Disposable History"}).insert()
+		run_name = enroll(
+			published["workflow"], "Lead", lead.name, source="MANUAL", occurrence_key="delete-history"
+		)
+		execute_token(frappe.db.get_value("Automation Run Token", {"run": run_name, "status": "READY"}, "name"))
+		with (
+			patch.object(frappe, "get_roles", return_value=["Automation Builder"]),
+			self.assertRaisesRegex(AutomationPermissionError, "System Manager"),
+		):
+			delete_workflow_record(published["workflow"], delete_history=True)
+		with self.assertRaisesRegex(AutomationError, "Confirm permanent deletion"):
 			delete_workflow_record(published["workflow"])
+		with self.assertRaisesRegex(AutomationError, "Disable this workflow"):
+			delete_workflow_record(published["workflow"], delete_history=True)
+		change_workflow_state(published["workflow"], "DISABLED")
+		result = delete_workflow_record(published["workflow"], delete_history=True)
+		self.assertTrue(result["deleted"])
+		self.assertTrue(result["history_deleted"])
+		self.assertFalse(frappe.db.exists("Automation Workflow", published["workflow"]))
+		self.assertFalse(frappe.db.exists("Automation Workflow Version", {"workflow": published["workflow"]}))
+		self.assertFalse(frappe.db.exists("Automation Run", run_name))
+		self.assertFalse(frappe.db.exists("Automation Enrollment Ledger", {"workflow": published["workflow"]}))
 
 	def test_manual_enrollment_deduplication_and_terminal_run(self):
 		lead = frappe.get_doc({"doctype": "Lead", "first_name": "Automation Test"}).insert()
@@ -416,8 +609,23 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		self.assertIsNone(enroll(created["workflow"], "Lead", lead.name, source="MANUAL", occurrence_key="two"))
 		token_name = frappe.db.get_value("Automation Run Token", {"run": run_name}, "name")
 		execute_token(token_name)
+		frappe.get_doc({
+			"doctype": "Automation Run Token",
+			"run": run_name,
+			"node_id": "branch-metric",
+			"occurrence": 1,
+			"status": "COMPLETED",
+			"output_json": frappe.as_json({"selected_handle": "qualified"}),
+		}).insert(ignore_permissions=True)
 		self.assertEqual(frappe.db.get_value("Automation Run", run_name, "status"), "COMPLETED")
 		self.assertEqual(frappe.db.get_value("Automation Run", run_name, "workflow_version"), published["version"])
+		metrics = get_canvas_metrics(created["workflow"], published["version"])
+		self.assertEqual(metrics["total_enrollments"], 1)
+		trigger_metric = next(row for row in metrics["nodes"] if row["node_id"] == "trigger-1")
+		self.assertEqual(trigger_metric["reached"], 1)
+		self.assertEqual(trigger_metric["completed"], 1)
+		branch_metric = next(row for row in metrics["nodes"] if row["node_id"] == "branch-metric")
+		self.assertEqual(branch_metric["branches"], {"qualified": 1})
 
 	def test_enrollment_rejects_initially_ineligible_record(self):
 		lead = frappe.get_doc({"doctype": "Lead", "first_name": "Not eligible"}).insert()
@@ -575,6 +783,31 @@ class TestAutomationAuthoring(IntegrationTestCase):
 	def test_round_robin_resolves_email_to_user_identity(self):
 		email = frappe.db.get_value("User", "Administrator", "email")
 		self.assertEqual(_enabled_user_names([email]), ["Administrator"])
+
+	def test_round_robin_explicit_user_mode_never_guesses_a_user_group(self):
+		with (
+			patch.object(engine.frappe.db, "exists", return_value=True),
+			patch.object(engine, "_enabled_user_names", return_value=["Administrator"]) as enabled_users,
+			patch.object(engine.frappe, "get_list") as get_list,
+		):
+			users, assignment = _round_robin_users({"assignment_type": "users", "users": ["Administrator"], "group": "Administrator"})
+		self.assertEqual(users, ["Administrator"])
+		self.assertEqual(assignment["assignment_type"], "users")
+		enabled_users.assert_called_once_with(["Administrator"])
+		get_list.assert_not_called()
+
+	def test_round_robin_validates_frappe_assignment_permissions_not_owner_field(self):
+		graph = empty_graph("Lead")
+		graph["nodes"].append({
+			"id": "round-robin",
+			"type": "action.round_robin",
+			"type_version": 2,
+			"config": {"group": "Administrator"},
+		})
+		graph["edges"] = [{"id": "edge-1", "source": "trigger-1", "source_handle": "default", "target": "round-robin"}]
+		codes = {issue["code"] for issue in validate_bindings(graph, "Administrator")}
+		self.assertNotIn("FIELD_PERMISSION", codes)
+		self.assertNotIn("TODO_PERMISSION", codes)
 
 	def test_sms_and_webhook_record_bindings_are_permission_checked(self):
 		graph = empty_graph("Lead")
@@ -746,6 +979,73 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		self.assertEqual(frappe.db.count("Notification Log", notification_filters), 1)
 		self.assertEqual(frappe.db.count("Automation Effect Ledger", {"run": run_name, "status": "COMPLETED"}), 5)
 		self.assertEqual(frappe.db.get_value("Automation Run", run_name, "status"), "COMPLETED")
+
+	def test_stale_external_effect_requires_operator_reconciliation_without_resending(self):
+		lead = frappe.get_doc(
+			{"doctype": "Lead", "first_name": "External Recovery", "email_id": "recovery@example.com"}
+		).insert()
+		created = create_workflow_record("External recovery", "Lead")
+		graph = created["graph"]
+		graph["nodes"].append(
+			{
+				"id": "email",
+				"type": "action.send_email",
+				"type_version": 2,
+				"config": {
+					"content_mode": "inline",
+					"recipient": {"kind": "record_field", "field": "email_id"},
+					"subject": {"kind": "literal", "value": "Recovery check"},
+					"message": {
+						"kind": "literal",
+						"value": "This job must not be resent automatically.",
+					},
+				},
+			}
+		)
+		graph["edges"] = [
+			{"id": "edge-email", "source": "trigger-1", "source_handle": "default", "target": "email"}
+		]
+		save_workflow_draft(created["workflow"], 0, graph)
+		publish_workflow(created["workflow"], 1)
+		with patch.object(frappe, "enqueue") as enqueue:
+			run_name = enroll(
+				created["workflow"], "Lead", lead.name, source="MANUAL", occurrence_key="external-recovery"
+			)
+			while token_name := frappe.db.get_value(
+				"Automation Run Token", {"run": run_name, "status": "READY"}, "name"
+			):
+				execute_token(token_name)
+			enqueue.reset_mock()
+			ledger_name = frappe.db.get_value(
+				"Automation Effect Ledger", {"run": run_name, "status": "STARTED"}, "name"
+			)
+			frappe.db.set_value(
+				"Automation Effect Ledger",
+				ledger_name,
+				"modified",
+				frappe.utils.add_to_date(frappe.utils.now_datetime(), minutes=-60),
+				update_modified=False,
+			)
+			self.assertGreaterEqual(recover_stale_external_effects(), 1)
+			enqueue.assert_not_called()
+
+		self.assertEqual(
+			frappe.db.get_value("Automation Effect Ledger", ledger_name, "status"), "UNKNOWN_COMMIT"
+		)
+		self.assertEqual(frappe.db.get_value("Automation Run", run_name, "status"), "WAITING")
+		self.assertEqual(
+			frappe.db.get_value(
+				"Automation Action Attempt", {"run": run_name, "node_id": "email"}, "status"
+			),
+			"UNKNOWN_COMMIT",
+		)
+		self.assertTrue(
+			frappe.db.exists(
+				"Automation Dead Letter",
+				{"source_type": "EXTERNAL", "source_name": ledger_name, "status": "OPEN"},
+			)
+		)
+		self.assertEqual(recover_stale_external_effects(), 0)
 
 	def test_fixed_delay_uses_durable_timer(self):
 		lead = frappe.get_doc({"doctype": "Lead", "first_name": "Timer Test"}).insert()

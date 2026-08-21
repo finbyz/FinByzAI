@@ -1,5 +1,6 @@
 export type NodeType =
   | 'trigger.schedule'
+  | 'trigger.webhook'
   | 'condition.switch'
 	| 'condition.random_split'
   | 'condition.deduplicate'
@@ -50,6 +51,7 @@ export type NodeConfig = Record<string, unknown>
 export interface ConditionPredicate {
   kind: 'predicate'
   field: string
+  source?: WorkflowValueSpec
   operator: string
   value?: unknown
 }
@@ -91,6 +93,7 @@ export type WorkflowValueSpec =
 
 export interface WorkflowAssignment {
   field: string
+  operation?: 'set' | 'clear' | 'append' | 'remove'
   value: WorkflowValueSpec
 }
 
@@ -153,6 +156,25 @@ export interface WorkflowPublication {
   next_version_no: number
 }
 
+export interface CanvasMetric {
+  node_id: string
+  reached: number
+  ready: number
+  running: number
+  waiting: number
+  completed: number
+  failed: number
+  cancelled: number
+  branches: Record<string, number>
+}
+
+export interface CanvasMetricsResponse {
+  workflow_id: string
+  workflow_version?: string
+  total_enrollments: number
+  nodes: CanvasMetric[]
+}
+
 export interface NodeCatalogItem {
   type: NodeType
   label: string
@@ -163,6 +185,9 @@ export interface NodeCatalogItem {
   legacy_runtime_enabled?: boolean
   legacy_disabled_reason?: string
   authoring_hidden?: boolean | number
+  authoring_tier?: 'core' | 'advanced' | 'danger'
+  available?: boolean
+  unavailable_reason?: string | null
   authoring_schema?: { required: Array<{ path: string; label: string }> }
   output_paths: string[]
 }
@@ -384,6 +409,26 @@ export interface ScheduleMutationResult {
   next_run_at: string
 }
 
+export interface InboundWebhookRow {
+  name: string
+  title: string
+  workflow_version: string
+  enabled: 0 | 1
+  auth_type: 'HMAC SHA256' | 'Bearer'
+  record_doctype: string
+  record_identity_field: string
+  payload_record_path: string
+  payload_fields_json?: string | unknown[]
+  payload_filters_json?: string | unknown
+  idempotency_path: string
+  max_request_bytes: number
+  requests_per_minute: number
+  endpoint: string
+  last_received_at?: string
+  last_result?: string
+  modified: string
+}
+
 export interface ManualEnrollmentResult {
   workflow_id: string
   run_id?: string
@@ -416,7 +461,8 @@ export interface BackfillRow {
 export interface ScheduleRow {
   name: string
   enabled: 0 | 1
-  frequency: 'HOURLY' | 'DAILY' | 'WEEKLY'
+  frequency: 'ONCE' | 'HOURLY' | 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'ANNUAL' | 'DATE_FIELD'
+  recurrence_json?: string | { monthly_mode?: 'DAY' | 'FIRST_WEEKDAY' | 'LAST_WEEKDAY'; day?: number; weekday?: number; month?: number; date_field?: string; date_field_type?: 'Date' | 'Datetime' }
   timezone: string
   version_policy: 'ACTIVE_AT_RUN' | 'PINNED'
   workflow_version?: string

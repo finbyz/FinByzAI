@@ -28,6 +28,24 @@ describe('Create Record field mapping', () => {
   })
 })
 
+describe('Update Record field mapping', () => {
+  it('keeps a legacy clear operation visible but disables it for a mandatory field', () => {
+    render(<AssignmentEditor
+      config={{ assignments: [{ field: 'customer', operation: 'clear' }] }}
+      fields={fields}
+      sourceFields={[]}
+      outputNodes={[]}
+      outputPaths={{}}
+      update={vi.fn()}
+      referenceDoctype="Sales Order"
+    />)
+
+    expect(screen.getByLabelText('Field operation 1')).toHaveValue('clear')
+    expect(screen.getByRole('option', { name: 'Clear value (mandatory field)' })).toBeDisabled()
+    expect(screen.getByText('A mandatory field cannot be cleared.')).toBeInTheDocument()
+  })
+})
+
 describe('Condition editor unary operators', () => {
   it('does not request a comparison value and explains blank numeric semantics', () => {
     const annualRevenue: FieldCatalogItem = {

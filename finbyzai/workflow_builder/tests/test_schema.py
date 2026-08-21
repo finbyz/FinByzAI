@@ -10,7 +10,10 @@ from finbyzai.workflow_builder.constants import MAX_CONDITION_DEPTH
 from finbyzai.workflow_builder.engine import (
 	_calculate_numeric_adjustment,
 	_coerce_assignment_value,
+	_fixed_delay_due_at,
 	_multiselect_names,
+	simulate_graph,
+	_update_assignments,
 )
 from finbyzai.workflow_builder.errors import AutomationError
 from finbyzai.workflow_builder.registry import (
@@ -56,14 +59,37 @@ class TestAutomationSchema(IntegrationTestCase):
 		self.assertIn("crm.call.inbound", contact_trigger_topics)
 		self.assertNotIn("commerce.store.login", lead_trigger_topics)
 		self.assertNotIn("commerce.order.created", lead_trigger_topics)
+		self.assertNotIn("commerce.order.abandoned", lead_trigger_topics)
+		self.assertNotIn("commerce.order.abandoned", contact_trigger_topics)
 		self.assertIn("commerce.store.login", customer_trigger_topics)
 		self.assertIn("commerce.order.created", customer_trigger_topics)
+		self.assertIn("commerce.order.abandoned", customer_trigger_topics)
 		self.assertNotIn("commerce.order.created", sales_order_trigger_topics)
 		self.assertIn("email.clicked", sales_order_wait_topics)
 		self.assertEqual(workflow_object_profile("Opportunity")["primary_doctype"], "Opportunity")
 		lead_list = next(row for row in business_event_catalog("Lead", "trigger") if row["topic"] == "crm.contact.list.joined")
 		self.assertEqual(lead_list["label"], "Joined a list")
 		self.assertEqual(lead_list["category"], "CRM events")
+		lead_reply = next(row for row in business_event_catalog("Lead", "trigger") if row["topic"] == "communication.responded")
+		customer_reply = next(row for row in business_event_catalog("Customer", "trigger") if row["topic"] == "communication.responded")
+		self.assertEqual(lead_reply["label"], "Lead replied")
+		self.assertEqual(customer_reply["label"], "Customer replied")
+		unsubscribe = next(row for row in business_event_catalog("Lead", "trigger") if row["topic"] == "email.unsubscribed")
+		self.assertIn("subscription_topic", {field["fieldname"] for field in unsubscribe["filter_fields"]})
+		customer_unsubscribe = next(row for row in business_event_catalog("Customer", "trigger") if row["topic"] == "email.unsubscribed")
+		self.assertNotIn("subscription_topic", {field["fieldname"] for field in customer_unsubscribe["filter_fields"]})
+
+		customer_graph = empty_graph("Customer", "trigger.event")
+		customer_graph["nodes"][0]["config"] = {
+			"events": [{
+				"id": "customer-unsubscribe",
+				"event_topic": "email.unsubscribed",
+				"event_filter": predicate("subscription_topic", "eq", "Product news"),
+			}],
+			"condition": None,
+		}
+		codes = {issue["code"] for issue in validate_graph(customer_graph, primary_doctype="Customer", publish=True)["issues"]}
+		self.assertIn("UNKNOWN_EVENT_FILTER_FIELD", codes)
 
 	def test_business_event_catalog_explains_event_producers_and_record_resolution(self):
 		rows = business_event_catalog("Lead", "trigger")
@@ -97,6 +123,16 @@ class TestAutomationSchema(IntegrationTestCase):
 		self.assertTrue(validate_graph(graph, primary_doctype="Lead", publish=True)["valid"])
 		graph["nodes"][0]["config"]["triggers"][1]["id"] = "created"
 		self.assertIn("INVALID_TRIGGER_GROUP_ID", {issue["code"] for issue in validate_graph(graph)["issues"]})
+
+	def test_identical_or_trigger_groups_are_rejected_but_different_filters_are_allowed(self):
+		graph = empty_graph("Lead", "trigger.any")
+		graph["nodes"][0]["config"] = {"triggers": [
+			{"id": "created-1", "type": "trigger.document_insert", "config": {"condition": None}},
+			{"id": "created-2", "type": "trigger.document_insert", "config": {"condition": None}},
+		]}
+		self.assertIn("DUPLICATE_TRIGGER_GROUP", {issue["code"] for issue in validate_graph(graph)["issues"]})
+		graph["nodes"][0]["config"]["triggers"][1]["config"]["condition"] = predicate("status", "eq", "Lead")
+		self.assertNotIn("DUPLICATE_TRIGGER_GROUP", {issue["code"] for issue in validate_graph(graph)["issues"]})
 
 	def test_drip_go_to_and_integration_nodes_have_strict_contracts(self):
 		graph = empty_graph("Lead")
@@ -133,6 +169,58 @@ class TestAutomationSchema(IntegrationTestCase):
 			with self.subTest(node_type=node_type):
 				self.assertEqual(catalog[node_type]["output_paths"], paths)
 				self.assertIsInstance(catalog[node_type]["output_paths"], list)
+
+	def test_node_catalog_separates_common_advanced_and_context_unavailable_actions(self):
+		catalog = {
+			item["type"]: item
+			for item in node_catalog(primary_doctype="Lead", execution_user="Administrator")
+		}
+		self.assertEqual(catalog["action.update_record"]["authoring_tier"], "core")
+		self.assertEqual(catalog["transform.value"]["authoring_tier"], "advanced")
+		self.assertEqual(catalog["action.delete_record"]["authoring_tier"], "danger")
+		self.assertFalse(catalog["action.merge_contact"]["available"])
+		self.assertIn("Contact", catalog["action.merge_contact"]["unavailable_reason"])
+
+		contact_catalog = {
+			item["type"]: item
+			for item in node_catalog(primary_doctype="Contact", execution_user="Administrator")
+		}
+		self.assertTrue(contact_catalog["action.merge_contact"]["available"])
+
+	def test_simulation_uses_runtime_email_validation_output_for_branching(self):
+		graph = empty_graph("Lead")
+		graph["nodes"].extend([
+			{
+				"id": "check-email",
+				"type": "action.verify_email",
+				"type_version": 1,
+				"config": {"email": {"kind": "record_field", "field": "email_id"}},
+			},
+			{
+				"id": "branch",
+				"type": "condition.if_else",
+				"type_version": 2,
+				"config": {"branches": [{
+					"handle": "valid",
+					"name": "Valid email",
+					"condition": {
+						"kind": "predicate",
+						"field": "valid",
+						"source": {"kind": "node_output", "node_id": "check-email", "path": "valid"},
+						"operator": "eq",
+						"value": True,
+					},
+				}]},
+			},
+		])
+		graph["edges"] = [
+			{"id": "edge-1", "source": "trigger-1", "source_handle": "default", "target": "check-email"},
+			{"id": "edge-2", "source": "check-email", "source_handle": "default", "target": "branch"},
+		]
+		result = simulate_graph(graph, frappe._dict(doctype="Lead", name="LEAD-SIMULATION", email_id="valid@example.com"))
+		check, branch = result["path"][1:]
+		self.assertEqual(check["output"], {"email": "valid@example.com", "valid": True, "reason": None})
+		self.assertEqual(branch["output"]["selected_handle"], "valid")
 
 	def test_transfer_patch_covers_every_workflow_doctype(self):
 		doctype_root = Path(frappe.get_app_path("finbyzai", "workflow_builder", "doctype"))
@@ -184,6 +272,16 @@ class TestAutomationSchema(IntegrationTestCase):
 		graph["nodes"][1]["type_version"] = 3
 		result = validate_graph(graph, primary_doctype="Lead")
 		self.assertIn("UNKNOWN_NODE_VERSION", {issue["code"] for issue in result["issues"]})
+
+	def test_round_robin_v2_requires_the_pool_selected_by_assignment_type(self):
+		graph = empty_graph("Lead")
+		graph["nodes"].append({"id": "assign", "type": "action.round_robin", "type_version": 2, "config": {"assignment_type": "users", "users": []}})
+		graph["edges"] = [{"id": "e1", "source": "trigger-1", "source_handle": "default", "target": "assign"}]
+		self.assertIn("MISSING_ROUND_ROBIN_USERS", {issue["code"] for issue in validate_graph(graph)["issues"]})
+		graph["nodes"][1]["config"] = {"assignment_type": "users", "users": ["Administrator"]}
+		self.assertNotIn("MISSING_ROUND_ROBIN_USERS", {issue["code"] for issue in validate_graph(graph)["issues"]})
+		graph["nodes"][1]["config"] = {"assignment_type": "group", "group": ""}
+		self.assertIn("MISSING_ROUND_ROBIN_GROUP", {issue["code"] for issue in validate_graph(graph)["issues"]})
 
 	def test_named_criteria_branches_have_independent_conditions_and_none_output(self):
 		graph = empty_graph("Lead")
@@ -587,6 +685,17 @@ class TestAutomationSchema(IntegrationTestCase):
 		self.assertEqual(resolve_value({"kind": "record_field", "field": "company_name"}, record=record, outputs=outputs), "Megasol")
 		self.assertEqual(resolve_value({"kind": "node_output", "node_id": "create", "path": "name"}, record=record, outputs=outputs), "TASK-1")
 
+	def test_condition_can_compare_an_earlier_action_output(self):
+		expression = {
+			"kind": "predicate",
+			"source": {"kind": "node_output", "node_id": "send-email", "path": "recipient"},
+			"operator": "eq",
+			"value": "person@example.com",
+		}
+		outputs = {"send-email": {"recipient": "person@example.com"}}
+		self.assertTrue(evaluate_expression(expression, frappe._dict(doctype="Lead"), outputs))
+		self.assertFalse(evaluate_expression(expression, frappe._dict(doctype="Lead"), {}))
+
 	def test_condition_depth_is_bounded_without_crashing(self):
 		expression = predicate("status", "eq", "Open")
 		for _index in range(MAX_CONDITION_DEPTH + 1):
@@ -666,6 +775,35 @@ class TestAutomationSchema(IntegrationTestCase):
 		graph["edges"] = [{"id": "e1", "source": "trigger-1", "source_handle": "default", "target": "email"}]
 		issues = validate_graph(graph)["issues"]
 		self.assertTrue(any(issue["code"] == "MISSING_REQUIRED_CONFIG" and issue["path"].endswith("recipient") for issue in issues))
+
+	def test_operation_dependent_requirements_do_not_block_valid_actions(self):
+		for node_type, config in (
+			(
+				"action.notify_user",
+				{"audience": "assigned", "for_user": "", "subject": "Follow up", "message": "Please review this record."},
+			),
+			(
+				"action.notify_user",
+				{"audience": "all", "for_user": "", "subject": "Status changed", "message": "A record changed."},
+			),
+			(
+				"transform.value",
+				{"operation": "random_number", "values": [], "minimum": 1, "maximum": 10, "integer": 1},
+			),
+		):
+			graph = empty_graph("Lead")
+			graph["nodes"].append({"id": "action", "type": node_type, "type_version": 2, "config": config})
+			graph["edges"] = [{"id": "e1", "source": "trigger-1", "source_handle": "default", "target": "action"}]
+			with self.subTest(node_type=node_type, config=config):
+				issues = validate_graph(graph, primary_doctype="Lead")["issues"]
+				self.assertFalse(
+					any(issue["code"] == "MISSING_REQUIRED_CONFIG" for issue in issues),
+					issues,
+				)
+				self.assertFalse(
+					any(issue["code"] in {"MISSING_NOTIFICATION_VALUE", "MISSING_TRANSFORM_VALUES"} for issue in issues),
+					issues,
+				)
 
 	def test_action_config_and_output_reference_contracts(self):
 		graph = {
@@ -754,6 +892,25 @@ class TestAutomationSchema(IntegrationTestCase):
 		self.assertEqual(_calculate_numeric_adjustment(10, "set", 3), 3)
 		with self.assertRaises(AutomationError):
 			_calculate_numeric_adjustment(10, "divide", 2)
+
+	def test_business_day_delay_skips_the_weekend(self):
+		self.assertEqual(
+			_fixed_delay_due_at({"duration_unit": "business_days", "duration": 1, "seconds": 86400}, datetime(2026, 8, 21, 9, 0)),
+			datetime(2026, 8, 24, 9, 0),
+		)
+
+	def test_update_assignments_support_clear_and_earlier_outputs(self):
+		record = frappe._dict(doctype="Lead", company_name="Old", job_title="Old title")
+		values = _update_assignments(
+			{"assignments": [
+				{"field": "job_title", "operation": "clear"},
+				{"field": "company_name", "operation": "set", "value": {"kind": "node_output", "node_id": "create", "path": "name"}},
+			]},
+			value_record=record,
+			live_record=record,
+			outputs={"create": {"name": "Created record"}},
+		)
+		self.assertEqual(values, {"job_title": None, "company_name": "Created record"})
 
 	def test_non_branch_handle_and_missing_handler_config_are_rejected(self):
 		graph = empty_graph("Lead")

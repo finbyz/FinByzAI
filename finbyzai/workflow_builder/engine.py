@@ -27,7 +27,7 @@ from .constants import (
 from .errors import AutomationCancelledError, AutomationError, AutomationTransientError
 from .notifications import enqueue_notification_for_user
 from .observability import increment_metric, record_enrollment_decision, record_incident
-from .registry import assert_field_access, is_eligible_doctype
+from .registry import assert_field_access, is_eligible_doctype, round_robin_assignment
 from .schema import (
 	canonical_json,
 	condition_fields,
@@ -703,6 +703,32 @@ def _assignments(config: dict, *, record, outputs: dict[str, Any]) -> dict:
 	return values
 
 
+def _update_assignments(config: dict, *, value_record, live_record, outputs: dict[str, Any]) -> dict:
+	values = {}
+	for assignment in config.get("assignments") or []:
+		fieldname = str(assignment.get("field") or "").strip()
+		if not fieldname:
+			raise AutomationError(_("Every assignment needs a field."))
+		operation = str(assignment.get("operation") or "set")
+		if operation == "clear":
+			values[fieldname] = [] if _table_multiselect_definition(live_record.doctype, fieldname) else None
+			continue
+		resolved = resolve_value(assignment.get("value"), record=value_record, outputs=outputs)
+		if operation == "set":
+			values[fieldname] = resolved
+			continue
+		if operation not in {"append", "remove"} or not _table_multiselect_definition(live_record.doctype, fieldname):
+			raise AutomationError(_("Append and remove are available only for Table MultiSelect fields."))
+		current = _multiselect_names(live_record.doctype, fieldname, live_record.get(fieldname))
+		requested = _multiselect_names(live_record.doctype, fieldname, resolved, validate_links=True)
+		if operation == "append":
+			values[fieldname] = [*current, *(name for name in requested if name not in current)]
+		else:
+			removed = set(requested)
+			values[fieldname] = [name for name in current if name not in removed]
+	return values
+
+
 def _coerce_assignment_value(doctype: str, fieldname: str, value: Any) -> Any:
 	definition = _table_multiselect_definition(doctype, fieldname)
 	if not definition:
@@ -725,6 +751,19 @@ def _calculate_numeric_adjustment(current: float, operation: str, amount: float)
 	if operation == "set":
 		return amount
 	raise AutomationError(_("Unsupported numeric adjustment operation."))
+
+
+def _fixed_delay_due_at(config: dict, current=None):
+	current = current or now_datetime()
+	if str(config.get("duration_unit") or "") != "business_days":
+		return add_to_date(current, seconds=cint(config.get("seconds")))
+	days = max(cint(config.get("duration")), 1)
+	due_at = current
+	while days:
+		due_at += timedelta(days=1)
+		if due_at.weekday() < 5:
+			days -= 1
+	return due_at
 
 
 def _next_round_robin_member(run, node: dict, users: list[str]) -> str:
@@ -765,6 +804,54 @@ def _next_round_robin_member(run, node: dict, users: list[str]) -> str:
 	cursor.member_hash = hashlib.sha256(canonical_json(users).encode()).hexdigest()
 	cursor.save(ignore_permissions=True)
 	return users[index]
+
+
+def _round_robin_users(config: dict) -> tuple[list[str], dict]:
+	"""Resolve the configured pool without guessing between usernames and User Groups."""
+	assignment = round_robin_assignment(config)
+	group = assignment["group"]
+	if assignment["assignment_type"] == "group":
+		if not group or not frappe.db.exists("User Group", group):
+			raise AutomationError(_("Choose an existing User Group for round robin assignment."))
+		members = [
+			row.user
+			for row in frappe.get_list(
+				"User Group Member",
+				filters={"parent": group},
+				fields=["user"],
+				ignore_permissions=True,
+				order_by="idx asc",
+				limit=0,
+			)
+			if row.user
+		]
+		users = _enabled_user_names(members)
+	elif assignment["assignment_type"] == "users":
+		users = _enabled_user_names(assignment["users"])
+	elif assignment["assignment_type"] == "legacy":
+		if not group:
+			raise AutomationError(_("Round robin assignment requires a member pool."))
+		if frappe.db.exists("User Group", group):
+			members = [
+				row.user
+				for row in frappe.get_list(
+					"User Group Member",
+					filters={"parent": group},
+					fields=["user"],
+					ignore_permissions=True,
+					order_by="idx asc",
+					limit=0,
+				)
+				if row.user
+			]
+			users = _enabled_user_names(members)
+		else:
+			users = _enabled_user_names([u.strip() for u in group.replace(";", ",").split(",") if u.strip()])
+	else:
+		raise AutomationError(_("Choose User Group or Specific Users for round robin assignment."))
+	if not users:
+		raise AutomationError(_("The round robin member pool has no enabled users."))
+	return users, assignment
 
 
 def _reserve_drip_slot(run, node: dict, config: dict) -> dict:
@@ -868,9 +955,8 @@ def _execute_action(run, token, node, record, value_record, outputs: dict[str, A
 		return json.loads(ledger.result_json or "{}")
 	node_type = node["type"]
 	if node_type == "action.update_record":
-		values = _assignments(config, record=value_record, outputs=outputs)
-		if any(_table_multiselect_definition(record.doctype, fieldname) for fieldname in values):
-			record = frappe.get_doc(record.doctype, record.name, for_update=True)
+		record = frappe.get_doc(record.doctype, record.name, for_update=True)
+		values = _update_assignments(config, value_record=value_record, live_record=record, outputs=outputs)
 		record.check_permission("write")
 		for fieldname, value in values.items():
 			assert_field_access(
@@ -941,31 +1027,8 @@ def _execute_action(run, token, node, record, value_record, outputs: dict[str, A
 		result = {"doctype": record.doctype, "name": record.name, "operation": operation, "target_name": target_name}
 	elif node_type == "action.round_robin":
 		record.check_permission("read")
-		group = str(config.get("group") or "").strip()
-		if not group:
-			raise AutomationError(_("Round robin assignment requires a group to be configured."))
-		# Resolve user pool: try Frappe User Group first, then comma-separated email list
-		users: list[str] = []
-		if frappe.db.exists("User Group", group):
-			members = [
-				row.user
-				for row in frappe.get_list(
-					"User Group Member",
-					filters={"parent": group},
-					fields=["user"],
-					ignore_permissions=True,
-					order_by="idx asc",
-					limit=0,
-				)
-				if row.user
-			]
-			users = _enabled_user_names(members)
-		else:
-			# Treat as comma-separated list of user emails
-			candidates = [u.strip() for u in group.replace(";", ",").split(",") if u.strip()]
-			users = _enabled_user_names(candidates)
-		if not users:
-			raise AutomationError(_("Round robin group '{0}' has no enabled members.").format(group))
+		users, assignment = _round_robin_users(config)
+		group = assignment["group"]
 		if cint(node.get("type_version") or 1) >= 2:
 			assigned_user = _next_round_robin_member(run, node, users)
 		else:
@@ -981,7 +1044,7 @@ def _execute_action(run, token, node, record, value_record, outputs: dict[str, A
 			},
 			ignore_permissions=False,
 		)
-		result = {"doctype": record.doctype, "name": record.name, "assigned_to": assigned_user, "group": group, "assignment_version": cint(node.get("type_version") or 1)}
+		result = {"doctype": record.doctype, "name": record.name, "assigned_to": assigned_user, "group": group or None, "assignment_type": assignment["assignment_type"], "assignment_version": cint(node.get("type_version") or 1)}
 	elif node_type == "action.create_todo":
 		record.check_permission("read")
 		assignments = add_assignment(
@@ -1234,7 +1297,7 @@ def _execute_node(run, token, node, record, value_record, outputs: dict[str, Any
 			matched_handle = "none"
 			branch_name = "None"
 			for branch in config.get("branches") or []:
-				if not isinstance(branch, dict) or not evaluate_expression(branch.get("condition"), value_record):
+				if not isinstance(branch, dict) or not evaluate_expression(branch.get("condition"), value_record, outputs):
 					continue
 				matched_handle = str(branch.get("handle") or "")
 				branch_name = str(branch.get("name") or matched_handle)
@@ -1245,7 +1308,7 @@ def _execute_node(run, token, node, record, value_record, outputs: dict[str, Any
 				"output": {"matched": matched, "selected_handle": matched_handle, "branch_name": branch_name},
 				"handle": matched_handle,
 			}
-		matched = evaluate_expression(config.get("condition"), value_record)
+		matched = evaluate_expression(config.get("condition"), value_record, outputs)
 		handle = "true" if matched else "false"
 		return {
 			"status": "COMPLETE",
@@ -1291,7 +1354,7 @@ def _execute_node(run, token, node, record, value_record, outputs: dict[str, Any
 		current = json.loads(token.output_json or "{}")
 		if current.get("released"):
 			return {"status": "COMPLETE", "output": current}
-		due_at = add_to_date(now_datetime(), seconds=cint(config.get("seconds")))
+		due_at = _fixed_delay_due_at(config)
 		frappe.get_doc(
 			{
 				"doctype": "Automation Timer",
@@ -2237,6 +2300,101 @@ def execute_external_effect(ledger_name: str, token_name: str) -> None:
 	_finish_or_continue(run, token, graph, result)
 
 
+def recover_stale_external_effects() -> int:
+	"""Quarantine external effects whose worker outcome can no longer be proven.
+
+	The ledger is committed before an external worker is queued. If that worker is
+	lost, or dies after provider acceptance but before recording the result, a
+	STARTED row can remain forever. Blindly enqueueing it again could duplicate an
+	email, SMS, or webhook, so stale rows become UNKNOWN_COMMIT and require the
+	existing delivered/not-delivered operator reconciliation flow.
+	"""
+	if not automation_enabled() or not frappe.db.table_exists("Automation Effect Ledger"):
+		return 0
+	stale_after_minutes = min(max(int_setting("alert_queue_age_minutes", 15), 1), 24 * 60)
+	cutoff = add_to_date(now_datetime(), minutes=-stale_after_minutes)
+	limit = min(max(int_setting("token_batch_size", 100), 1), 500)
+	rows = frappe.get_all(
+		"Automation Effect Ledger",
+		filters={"status": "STARTED", "modified": ["<=", cutoff]},
+		fields=["name"],
+		order_by="modified asc",
+		limit=limit,
+	)
+	recovered = 0
+	for row in rows:
+		ledger = frappe.get_doc("Automation Effect Ledger", row.name, for_update=True)
+		if ledger.status != "STARTED" or not ledger.modified or ledger.modified > cutoff:
+			continue
+		message = _(
+			"External action remained in progress beyond {0} minutes. Its delivery state is unknown; reconcile it as delivered or not delivered before continuing."
+		).format(stale_after_minutes)
+		ledger.status = "UNKNOWN_COMMIT"
+		ledger.result_json = json.dumps({"error": message, "recovered_stale_effect": True})
+		ledger.save(ignore_permissions=True)
+		token_name = frappe.db.get_value(
+			"Automation Run Token",
+			{
+				"run": ledger.run,
+				"node_id": ledger.node_id,
+				"status": "WAITING",
+				"output_json": ["like", f'%"{ledger.name}"%'],
+			},
+			"name",
+			order_by="creation desc",
+		)
+		attempts = 0
+		if token_name:
+			token = frappe.get_doc("Automation Run Token", token_name, for_update=True)
+			token.error_message = message
+			token.save(ignore_permissions=True)
+			attempt_name = frappe.db.get_value(
+				"Automation Action Attempt", {"token": token.name}, "name", order_by="attempt_no desc"
+			)
+			if attempt_name:
+				attempt = frappe.get_doc("Automation Action Attempt", attempt_name, for_update=True)
+				attempt.status = "UNKNOWN_COMMIT"
+				attempt.error_message = message
+				attempt.completed_at = now_datetime()
+				attempt.save(ignore_permissions=True)
+				attempts = cint(attempt.attempt_no)
+		workflow_name = None
+		run_name = None
+		if frappe.db.exists("Automation Run", ledger.run):
+			run = frappe.get_doc("Automation Run", ledger.run, for_update=True)
+			run_name = run.name
+			workflow_name = run.workflow if frappe.db.exists("Automation Workflow", run.workflow) else None
+			if run.status not in RUN_TERMINAL_STATUSES:
+				frappe.db.set_value(
+					"Automation Run",
+					run.name,
+					{
+						"status": "WAITING",
+						"error_code": "WF_UNKNOWN_COMMIT",
+						"error_message": message,
+					},
+					update_modified=False,
+				)
+				_append_event(
+					run.name,
+					"EXTERNAL_EFFECT_REQUIRES_RECONCILIATION",
+					node_id=ledger.node_id,
+					payload={"effect": ledger.name},
+				)
+		record_incident(
+			source_type="EXTERNAL",
+			source_name=ledger.name,
+			error_code="WF_UNKNOWN_COMMIT",
+			message=message,
+			workflow=workflow_name,
+			run=run_name,
+			node_id=ledger.node_id,
+			attempts=attempts,
+		)
+		recovered += 1
+	return recovered
+
+
 def release_due_timers() -> int:
 	if not automation_enabled() or not frappe.db.table_exists("Automation Timer"):
 		return 0
@@ -2417,6 +2575,68 @@ def release_event_waiters(
 		_queue_token(token.name)
 		released += 1
 	return released
+
+
+def recover_orphaned_active_runs() -> int:
+	"""Terminally quarantine active runs whose immutable workflow contract is gone."""
+	if not automation_enabled() or not frappe.db.table_exists("Automation Run"):
+		return 0
+	limit = min(max(int_setting("token_batch_size", 100), 1), 500)
+	rows = frappe.get_all(
+		"Automation Run",
+		filters={"status": ["in", ["QUEUED", "RUNNING"]]},
+		fields=["name"],
+		order_by="modified asc",
+		limit=limit,
+	)
+	recovered = 0
+	for row in rows:
+		run = frappe.get_doc("Automation Run", row.name, for_update=True)
+		if run.status not in {"QUEUED", "RUNNING"}:
+			continue
+		workflow_exists = frappe.db.exists("Automation Workflow", run.workflow)
+		version_exists = frappe.db.exists(
+			"Automation Workflow Version", {"name": run.workflow_version, "workflow": run.workflow}
+		)
+		if workflow_exists and version_exists:
+			continue
+		error_code = "MISSING_WORKFLOW" if not workflow_exists else "MISSING_WORKFLOW_VERSION"
+		message = (
+			_("Pinned automation workflow no longer exists.")
+			if not workflow_exists
+			else _("Pinned automation workflow version no longer exists or belongs to another workflow.")
+		)
+		frappe.db.set_value(
+			"Automation Run Token",
+			{"run": run.name, "status": ["not in", list(TOKEN_TERMINAL_STATUSES)]},
+			{"status": "CANCELLED", "lease_owner": None, "lease_until": None, "error_message": message},
+			update_modified=False,
+		)
+		frappe.db.set_value(
+			"Automation Timer", {"run": run.name, "status": "ACTIVE"}, "status", "CANCELLED", update_modified=False
+		)
+		frappe.db.set_value(
+			"Automation Run",
+			run.name,
+			{
+				"status": "FAILED",
+				"completed_at": now_datetime(),
+				"error_code": error_code,
+				"error_message": message,
+			},
+			update_modified=False,
+		)
+		_append_event(run.name, "RUN_QUARANTINED", payload={"error_code": error_code})
+		record_incident(
+			source_type="RUN",
+			source_name=run.name,
+			error_code=error_code,
+			message=message,
+			workflow=run.workflow if workflow_exists else None,
+			run=run.name,
+		)
+		recovered += 1
+	return recovered
 
 
 def dispatch_ready_tokens(token_names: list[str] | None = None) -> int:
@@ -2755,13 +2975,13 @@ def simulate_graph(graph: dict, record, *, start_node_id: str | None = None, exe
 				handle = "none"
 				branch_name = "None"
 				for branch in config.get("branches") or []:
-					if isinstance(branch, dict) and evaluate_expression(branch.get("condition"), record):
+					if isinstance(branch, dict) and evaluate_expression(branch.get("condition"), record, outputs):
 						handle = str(branch.get("handle") or "")
 						branch_name = str(branch.get("name") or handle)
 						break
 				entry["output"] = {"matched": handle != "none", "selected_handle": handle, "branch_name": branch_name}
 			else:
-				matched = evaluate_expression(config.get("condition"), record)
+				matched = evaluate_expression(config.get("condition"), record, outputs)
 				handle = "true" if matched else "false"
 				entry["output"] = {"matched": matched, "selected_handle": handle, "branch_name": "Yes" if matched else "No"}
 		elif node["type"] == "condition.random_split":
@@ -2795,7 +3015,7 @@ def simulate_graph(graph: dict, record, *, start_node_id: str | None = None, exe
 		elif node["type"] == "delay.fixed":
 			entry["status"] = "PREDICTED"
 			entry["confidence"] = "predicted"
-			entry["output"] = {"delay_seconds": cint(config.get("seconds")), "due_at": str(add_to_date(now_datetime(), seconds=cint(config.get("seconds")))), "released": False}
+			entry["output"] = {"delay_seconds": cint(config.get("seconds")), "due_at": str(_fixed_delay_due_at(config)), "released": False}
 		elif node["type"] == "delay.drip":
 			entry["status"] = "PREDICTED"
 			entry["confidence"] = "predicted"
@@ -2881,19 +3101,19 @@ def simulate_graph(graph: dict, record, *, start_node_id: str | None = None, exe
 		elif node["type"] == "action.manage_association":
 			entry["status"] = "PREDICTED"
 			entry["confidence"] = "predicted"
-			entry["output"] = {"operation": config.get("operation") or "link", "target_name": config.get("target_name")}
+			entry["output"] = {"doctype": record.doctype, "name": record.name, "operation": config.get("operation") or "link", "target_name": config.get("target_name")}
 		elif node["type"] == "action.numeric_adjust":
 			entry["status"] = "PREDICTED"
 			entry["confidence"] = "predicted"
 			fieldname = str(config.get("field") or "")
 			previous = frappe.utils.flt(record.get(fieldname))
 			new_value = _calculate_numeric_adjustment(previous, str(config.get("operation") or "add"), frappe.utils.flt(config.get("amount") or 0))
-			entry["output"] = {"field": fieldname, "previous": previous, "new_value": new_value}
+			entry["output"] = {"doctype": record.doctype, "name": record.name, "field": fieldname, "previous": previous, "new_value": new_value}
 		elif node["type"] == "action.round_robin":
 			entry["status"] = "PREDICTED"
 			entry["confidence"] = "predicted"
 			entry["note"] = _("The assignment cursor is not advanced during simulation.")
-			entry["output"] = {"assigned_to": "__simulated__", "group": config.get("group") or ""}
+			entry["output"] = {"doctype": record.doctype, "name": record.name, "assigned_to": "__simulated__", "group": config.get("group") or "", "assignment_version": cint(node.get("type_version") or 1)}
 		elif node["type"] == "action.call_subflow":
 			entry["status"] = "PREDICTED"
 			entry["confidence"] = "predicted"
@@ -2901,7 +3121,7 @@ def simulate_graph(graph: dict, record, *, start_node_id: str | None = None, exe
 		elif node["type"] in {"action.update_record", "action.create_record"}:
 			entry["status"] = "PREDICTED"
 			entry["confidence"] = "predicted"
-			assignments = _assignments(config, record=record, outputs=outputs)
+			assignments = _update_assignments(config, value_record=record, live_record=record, outputs=outputs) if node["type"] == "action.update_record" else _assignments(config, record=record, outputs=outputs)
 			entry["output"] = {
 				"doctype": record.doctype if node["type"] == "action.update_record" else config.get("target_doctype"),
 				"name": "__simulated__",
@@ -2916,18 +3136,58 @@ def simulate_graph(graph: dict, record, *, start_node_id: str | None = None, exe
 			entry["status"] = "PREDICTED"
 			entry["confidence"] = "predicted"
 			entry["output"] = {"comment": "__simulated__"}
-		elif node["type"] in {"action.create_note", "action.copy_record", "action.merge_contact", "action.unassign_record", "action.verify_email", "action.mark_communications_read", "action.remove_from_workflow", "action.complete_goal", "action.go_to"}:
+		elif node["type"] == "action.create_note":
 			entry["status"] = "PREDICTED"
 			entry["confidence"] = "predicted"
-			entry["output"] = {
-				"would_execute": True,
-				**({"target_node_id": config.get("target_node_id")} if node["type"] == "action.go_to" else {}),
-				**({"terminate_path": True} if node["type"] in {"action.merge_contact", "action.complete_goal"} or (node["type"] == "action.remove_from_workflow" and config.get("target_workflow", "current") == "current") else {}),
-			}
+			entry["output"] = {"note": "__simulated__"}
+		elif node["type"] == "action.copy_record":
+			entry["status"] = "PREDICTED"
+			entry["confidence"] = "predicted"
+			entry["output"] = {"doctype": record.doctype, "name": "__simulated__"}
+		elif node["type"] == "action.merge_contact":
+			entry["status"] = "PREDICTED"
+			entry["confidence"] = "predicted"
+			entry["note"] = _("The exact canonical Contact is resolved safely at runtime.")
+			entry["output"] = {"canonical_contact": "__runtime_match__", "merged_contact": record.name, "matched_fields": config.get("match_fields") or [], "deleted": True, "terminate_path": True}
+		elif node["type"] == "action.unassign_record":
+			entry["status"] = "PREDICTED"
+			entry["confidence"] = "predicted"
+			entry["output"] = {"closed_assignments": frappe.db.count("ToDo", {"reference_type": record.doctype, "reference_name": record.name, "status": "Open"})}
+		elif node["type"] == "action.verify_email":
+			entry["status"] = "OBSERVED"
+			entry["confidence"] = "observed"
+			email = str(resolve_value(config.get("email"), record=record, outputs=outputs) or "").strip()
+			valid = bool(validate_email_address(email, throw=False))
+			entry["output"] = {"email": email, "valid": valid, "reason": None if valid else "INVALID_FORMAT"}
+		elif node["type"] == "action.mark_communications_read":
+			entry["status"] = "PREDICTED"
+			entry["confidence"] = "predicted"
+			entry["output"] = {"updated": frappe.db.count("Communication", {"reference_doctype": record.doctype, "reference_name": record.name, "sent_or_received": "Received", "seen": 0})}
+		elif node["type"] == "action.remove_from_workflow":
+			entry["status"] = "PREDICTED"
+			entry["confidence"] = "predicted"
+			target_workflow = str(config.get("target_workflow") or "current")
+			entry["output"] = {"cancelled_runs": None, "target_workflow": target_workflow, "terminate_path": target_workflow == "current"}
+		elif node["type"] == "action.complete_goal":
+			entry["status"] = "PREDICTED"
+			entry["confidence"] = "predicted"
+			entry["output"] = {"goal": str(config.get("goal") or "Goal reached")[:140], "terminate_path": True}
+		elif node["type"] == "action.go_to":
+			entry["status"] = "PREDICTED"
+			entry["confidence"] = "predicted"
+			entry["output"] = {"target_node_id": str(config.get("target_node_id") or "")}
 		elif node["type"] == "action.notify_user":
 			entry["status"] = "PREDICTED"
 			entry["confidence"] = "predicted"
-			entry["output"] = {"for_user": config.get("for_user"), "subject": config.get("subject")}
+			audience = str(config.get("audience") or "specific")
+			if audience == "assigned":
+				recipients = frappe.get_all("ToDo", filters={"reference_type": record.doctype, "reference_name": record.name, "status": "Open"}, pluck="allocated_to", limit=500)
+			elif audience == "all":
+				recipients = frappe.get_all("User", filters={"enabled": 1, "user_type": "System User"}, pluck="name", limit=500)
+			else:
+				recipients = [config.get("for_user")]
+			recipients = _enabled_user_names(recipients)
+			entry["output"] = {"for_user": recipients[0] if len(recipients) == 1 else None, "recipients": recipients, "recipient_count": len(recipients)}
 		elif node["type"] == "action.send_email":
 			entry["status"] = "SKIPPED_EXTERNAL"
 			entry["confidence"] = "skipped"
@@ -2939,12 +3199,15 @@ def simulate_graph(graph: dict, record, *, start_node_id: str | None = None, exe
 				"reply_to": config.get("reply_to") or None,
 				"email_template": config.get("email_template") or None,
 				"content_hash": "__simulated__" if config.get("email_template") else None,
+				"subscription_topic": config.get("subscription_topic") or None,
+				"suppressed": None,
+				"suppression_reason": None,
 			}
 		elif node["type"] == "action.send_sms":
 			entry["status"] = "SKIPPED_EXTERNAL"
 			entry["confidence"] = "skipped"
 			entry["note"] = _("External delivery is never performed during simulation.")
-			entry["output"] = {"recipient": resolve_value(config.get("recipient"), record=record, outputs=outputs), "status": "WOULD_SEND", "consent_check": True}
+			entry["output"] = {"recipient": resolve_value(config.get("recipient"), record=record, outputs=outputs), "status": "WOULD_SEND", "status_code": None, "consent_check": True}
 		elif node["type"] == "action.webhook":
 			entry["status"] = "SKIPPED_EXTERNAL"
 			entry["confidence"] = "skipped"
@@ -2959,7 +3222,7 @@ def simulate_graph(graph: dict, record, *, start_node_id: str | None = None, exe
 			entry["status"] = "SKIPPED_EXTERNAL"
 			entry["confidence"] = "skipped"
 			entry["note"] = _("Asana mutations are never performed during simulation.")
-			entry["output"] = {"gid": "__simulated__", "operation": config.get("operation")}
+			entry["output"] = {"gid": "__simulated__", "name": None, "permalink_url": None, "operation": config.get("operation")}
 		elif node["type"] == "action.delete_record":
 			entry["status"] = "PREDICTED"
 			entry["confidence"] = "predicted"

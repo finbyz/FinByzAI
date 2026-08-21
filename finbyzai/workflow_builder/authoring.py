@@ -13,7 +13,7 @@ from frappe.utils import cint, now_datetime, validate_email_address
 
 from . import emailing
 from .errors import AutomationConflictError, AutomationError, AutomationPermissionError
-from .registry import assert_field_access, doctype_eligibility, field_catalog_result, is_eligible_doctype
+from .registry import assert_field_access, doctype_eligibility, field_catalog_result, is_eligible_doctype, round_robin_assignment
 from .schema import (
 	canonical_json,
 	condition_fields,
@@ -368,6 +368,21 @@ def validate_bindings(graph: dict, execution_user: str, workflow_name: str | Non
 						user=execution_user,
 						capability=("assignment_scalar", "assignment_collection"),
 					)
+					operation = str(assignment.get("operation") or "set")
+					value = assignment.get("value")
+					literal_value = value.get("value") if isinstance(value, dict) and value.get("kind") == "literal" else object()
+					if node_type == "action.update_record" and target_field.get("required") and (
+						operation == "clear" or (operation == "set" and literal_value in (None, "", []))
+					):
+						issues.append({
+							"severity": "error",
+							"code": "MANDATORY_FIELD_CLEAR",
+							"node_id": node_id,
+							"path": f"nodes.{node_id}.config.assignments",
+							"message": _("{0} is mandatory and cannot be cleared.").format(
+								target_field.get("label") or target_field.get("fieldname")
+							),
+						})
 					source_field = _validate_value_binding(assignment.get("value"), primary_doctype, execution_user)
 					_validate_assignment_value_type(assignment.get("value"), target_field, source_field)
 				except (frappe.PermissionError, AutomationError) as exc:
@@ -438,16 +453,22 @@ def validate_bindings(graph: dict, execution_user: str, workflow_name: str | Non
 			except (frappe.PermissionError, AutomationError) as exc:
 				issues.append({"severity": "error", "code": "FIELD_PERMISSION", "node_id": node_id, "path": f"nodes.{node_id}.config.link_field", "message": str(exc)})
 		if node_type == "action.round_robin":
-			try:
-				assignment_field = config.get("assignment_field") or "owner"
-				field = assert_field_access(primary_doctype, assignment_field, permission_type="write", user=execution_user, capability="assignment_scalar")
-				if field.get("fieldtype") != "Link" or field.get("options") != "User":
-					raise AutomationError(_("Round robin requires a Link field targeting User."))
-			except (frappe.PermissionError, AutomationError) as exc:
-				issues.append({"severity": "error", "code": "FIELD_PERMISSION", "node_id": node_id, "path": f"nodes.{node_id}.config.assignment_field", "message": str(exc)})
-			group = str(config.get("group") or "").strip()
-			if group and not frappe.db.exists("User Group", group):
-				for candidate in [item.strip() for item in group.replace(";", ",").split(",") if item.strip()]:
+			# This action creates ordinary Frappe ToDo assignments; it does not
+			# overwrite owner or another field on the enrolled document. Validate
+			# the same permissions the runtime actually uses.
+			if not is_eligible_doctype(primary_doctype, permission_type="read", user=execution_user):
+				issues.append({"severity": "error", "code": "DOCTYPE_PERMISSION", "node_id": node_id, "path": f"nodes.{node_id}.config", "message": _("Execution user cannot read the enrolled DocType.")})
+			if not frappe.has_permission("ToDo", ptype="create", user=execution_user):
+				issues.append({"severity": "error", "code": "TODO_PERMISSION", "node_id": node_id, "path": f"nodes.{node_id}.config", "message": _("Execution user cannot create Frappe assignments.")})
+			assignment = round_robin_assignment(config)
+			group = assignment["group"]
+			if assignment["assignment_type"] == "group" and group and not frappe.db.exists("User Group", group):
+				issues.append({"severity": "error", "code": "INVALID_ROUND_ROBIN_GROUP", "node_id": node_id, "path": f"nodes.{node_id}.config.group", "message": _("Round robin User Group {0} does not exist.").format(group)})
+			elif assignment["assignment_type"] == "legacy" and group and frappe.db.exists("User Group", group):
+				pass
+			else:
+				candidates = assignment["users"] if assignment["assignment_type"] == "users" else [item.strip() for item in group.replace(";", ",").split(",") if item.strip()]
+				for candidate in candidates:
 					user = frappe.db.get_value("User", candidate, ["name", "enabled"], as_dict=True)
 					if not user:
 						user = frappe.db.get_value("User", {"email": candidate}, ["name", "enabled"], as_dict=True)
@@ -480,6 +501,12 @@ def validate_bindings(graph: dict, execution_user: str, workflow_name: str | Non
 			sender_email = str(config.get("sender_email") or "").strip()
 			if sender_email and not frappe.db.exists("Email Account", {"email_id": sender_email, "enable_outgoing": 1}):
 				issues.append({"severity": "error", "code": "UNAUTHORIZED_EMAIL_SENDER", "node_id": node_id, "path": f"nodes.{node_id}.config.sender_email", "message": _("Choose the address of an enabled outgoing Email Account.")})
+			subscription_topic = str(config.get("subscription_topic") or "").strip()
+			if subscription_topic:
+				if "finbyzreach" not in frappe.get_installed_apps():
+					issues.append({"severity": "error", "code": "REACH_NOT_INSTALLED", "node_id": node_id, "path": f"nodes.{node_id}.config.subscription_topic", "message": _("Finbyz Reach is required for topic-based email preferences.")})
+				elif not frappe.db.exists("Subscription Topic", {"name": subscription_topic, "disabled": 0}):
+					issues.append({"severity": "error", "code": "INVALID_SUBSCRIPTION_TOPIC", "node_id": node_id, "path": f"nodes.{node_id}.config.subscription_topic", "message": _("Choose an enabled Subscription Topic.")})
 		if node_type == "action.send_sms":
 			for key in ("recipient", "message"):
 				try:
@@ -715,11 +742,26 @@ def list_workflow_records(
 		start=max(cint(start), 0),
 		limit=limit + 1,
 	)
-	for row in rows[:limit]:
+	visible_rows = rows[:limit]
+	version_names = list({row.get("active_version") for row in visible_rows if row.get("active_version")})
+	version_graphs = (
+		{
+			row.name: row.graph_json
+			for row in frappe.get_all(
+				"Automation Workflow Version",
+				filters={"name": ["in", version_names]},
+				fields=["name", "graph_json"],
+				limit_page_length=0,
+			)
+		}
+		if version_names
+		else {}
+	)
+	for row in visible_rows:
 		row["trigger_type"] = None
 		if row.get("active_version"):
 			graph = parse_object(
-				frappe.db.get_value("Automation Workflow Version", row.get("active_version"), "graph_json") or "{}",
+				version_graphs.get(row.get("active_version")) or "{}",
 				"published workflow graph",
 			)
 			start_node = next(
@@ -728,22 +770,22 @@ def list_workflow_records(
 			)
 			row.trigger_type = start_node.get("type") if start_node else None
 
-	def count_for(extra_filters: dict | None = None) -> int:
-		count_filters = {**filters, **(extra_filters or {})}
-		result = frappe.get_list(
-			"Automation Workflow",
-			filters=count_filters,
-			or_filters=or_filters,
-			fields=[{"COUNT": "name", "as": "count"}],
-			limit=1,
-		)
-		return cint(result[0].get("count")) if result and hasattr(result[0], "get") else 0
+	count_filters = {key: value for key, value in filters.items() if key != "status"}
+	grouped_counts = frappe.get_list(
+		"Automation Workflow",
+		filters=count_filters,
+		or_filters=or_filters,
+		fields=["status", {"COUNT": "name", "as": "count"}],
+		group_by="status",
+		limit=0,
+	)
+	counts = {row.status: cint(row.count) for row in grouped_counts}
 
 	return {
-		"rows": rows[:limit],
+		"rows": visible_rows,
 		"has_more": len(rows) > limit,
-		"total_count": count_for(),
-		"status_counts": {"ACTIVE": count_for({"status": "ACTIVE"}), "PAUSED": count_for({"status": "PAUSED"})},
+		"total_count": counts.get(status, 0) if status else sum(counts.values()),
+		"status_counts": {"ACTIVE": counts.get("ACTIVE", 0), "PAUSED": counts.get("PAUSED", 0)},
 	}
 
 
@@ -758,28 +800,135 @@ def set_workflow_folder(workflow_name: str, folder: str | None) -> dict:
 	return {"workflow_id": workflow.name, "folder": value}
 
 
-def delete_workflow_record(workflow_name: str) -> dict:
-	"""Delete only an unpublished, never-executed draft owned by the current user."""
+def _delete_workflow_history(workflow) -> dict[str, int]:
+	"""Delete one disabled workflow and every record that owns its runtime state."""
+	workflow_name = workflow.name
+	version_names = frappe.get_all(
+		"Automation Workflow Version",
+		filters={"workflow": workflow_name},
+		pluck="name",
+		limit_page_length=0,
+	)
+	run_names = frappe.get_all(
+		"Automation Run", filters={"workflow": workflow_name}, pluck="name", limit_page_length=0
+	)
+	schedule_names = frappe.get_all(
+		"Automation Schedule", filters={"workflow": workflow_name}, pluck="name", limit_page_length=0
+	)
+	counts: dict[str, int] = {}
+
+	# Stop every enrollment source before removing any durable state. The caller
+	# has already locked the workflow and rejected active execution records.
+	for doctype in ("Automation Trigger Subscription", "Automation Inbound Webhook"):
+		if frappe.db.table_exists(doctype):
+			frappe.db.set_value(
+				doctype,
+				{"workflow": workflow_name},
+				"enabled" if doctype.endswith("Webhook") else "active",
+				0,
+				update_modified=False,
+			)
+	if schedule_names:
+		frappe.db.set_value(
+			"Automation Schedule",
+			{"name": ["in", schedule_names]},
+			{"enabled": 0, "last_backfill_job": None},
+			update_modified=False,
+		)
+
+	def remove(doctype: str, filters: dict) -> int:
+		if not frappe.db.table_exists(doctype):
+			return 0
+		names = frappe.get_all(doctype, filters=filters, pluck="name", limit_page_length=0)
+		if names:
+			frappe.db.delete(doctype, {"name": ["in", names]})
+		counts[doctype] = counts.get(doctype, 0) + len(names)
+		return len(names)
+
+	remove("Automation Backfill Job", {"workflow": workflow_name})
+	remove("Automation Schedule", {"workflow": workflow_name})
+	remove("Automation Dead Letter", {"workflow": workflow_name})
+	remove("Automation Incident", {"workflow": workflow_name})
+	if run_names:
+		for doctype in (
+			"Automation Action Attempt",
+			"Automation Timer",
+			"Automation Run Token",
+			"Automation Run Event",
+			"Automation Effect Ledger",
+			"Automation Policy Evaluation",
+			"Automation Enrollment Decision",
+		):
+			remove(doctype, {"run": ["in", run_names]})
+	remove("Automation Enrollment Decision", {"workflow": workflow_name})
+	remove("Automation Policy Evaluation", {"workflow": workflow_name})
+	remove("Automation Enrollment Ledger", {"workflow": workflow_name})
+	remove("Automation Run", {"workflow": workflow_name})
+	remove("Automation Metric Daily", {"workflow": workflow_name})
+	remove("Automation Suppression Rule", {"workflow": workflow_name})
+	remove("Automation Workflow Comment", {"workflow": workflow_name})
+	remove("Automation Trigger Subscription", {"workflow": workflow_name})
+
+	# Password fields have auxiliary auth rows; use the document lifecycle for
+	# the small number of webhook definitions instead of a raw bulk delete.
+	if frappe.db.table_exists("Automation Inbound Webhook"):
+		for name in frappe.get_all(
+			"Automation Inbound Webhook",
+			filters={"workflow": workflow_name},
+			pluck="name",
+			limit_page_length=0,
+		):
+			frappe.delete_doc("Automation Inbound Webhook", name, ignore_permissions=True)
+			counts["Automation Inbound Webhook"] = counts.get("Automation Inbound Webhook", 0) + 1
+
+	if version_names:
+		for doctype in ("Automation Round Robin Cursor", "Automation Drip Cursor"):
+			remove(doctype, {"workflow_version": ["in", version_names]})
+	remove("Automation Workflow Draft", {"workflow": workflow_name})
+	remove("Automation Audit Event", {"workflow": workflow_name})
+	workflow.db_set("active_version", None, update_modified=False)
+	remove("Automation Workflow Version", {"workflow": workflow_name})
+	frappe.delete_doc("Automation Workflow", workflow_name, ignore_permissions=True)
+	counts["Automation Workflow"] = 1
+	return counts
+
+
+def delete_workflow_record(workflow_name: str, delete_history: bool = False) -> dict:
+	"""Delete a disposable draft or, for System Managers, a disabled workflow."""
 	workflow = _workflow(workflow_name, "write", for_update=True)
-	if workflow.owner != frappe.session.user and "System Manager" not in frappe.get_roles():
+	is_system_manager = "System Manager" in frappe.get_roles()
+	if workflow.owner != frappe.session.user and not is_system_manager:
 		raise AutomationPermissionError(_("Only the workflow owner can delete this draft."))
-	if workflow.status != "DRAFT" or workflow.active_version or cint(workflow.latest_version):
-		raise AutomationError(_("Published, active, paused, or disabled workflows cannot be deleted."))
-	for doctype in (
+	has_history = bool(workflow.active_version or cint(workflow.latest_version)) or any(
+		frappe.db.exists(doctype, {"workflow": workflow.name})
+		for doctype in (
 		"Automation Workflow Version",
 		"Automation Trigger Subscription",
 		"Automation Enrollment Ledger",
 		"Automation Run",
+		)
+	)
+	if not has_history and workflow.status == "DRAFT":
+		counts = _delete_workflow_history(workflow)
+		return {"workflow_id": workflow.name, "deleted": True, "history_deleted": False, "counts": counts}
+	if not is_system_manager:
+		raise AutomationPermissionError(_("Only a System Manager can permanently delete workflow history."))
+	if not cint(delete_history):
+		raise AutomationError(_("Confirm permanent deletion of this workflow and its history."))
+	if workflow.status in {"ACTIVE", "PAUSED"}:
+		raise AutomationError(_("Disable this workflow before permanently deleting it."))
+	if frappe.db.exists(
+		"Automation Run",
+		{"workflow": workflow.name, "status": ["in", ["QUEUED", "RUNNING", "WAITING"]]},
 	):
-		if frappe.db.exists(doctype, {"workflow": workflow.name}):
-			raise AutomationError(_("This workflow has runtime or publication history and cannot be deleted."))
-	for doctype in ("Automation Workflow Draft", "Automation Audit Event"):
-		for name in frappe.get_list(
-			doctype, filters={"workflow": workflow.name}, pluck="name", ignore_permissions=True, limit=0
-		):
-			frappe.delete_doc(doctype, name, ignore_permissions=True)
-	frappe.delete_doc("Automation Workflow", workflow.name, ignore_permissions=True)
-	return {"workflow_id": workflow.name, "deleted": True}
+		raise AutomationError(_("This workflow still has active runs. Disable it and wait for cancellation to finish."))
+	if frappe.db.exists(
+		"Automation Backfill Job",
+		{"workflow": workflow.name, "status": ["in", ["QUEUED", "RUNNING", "PAUSED"]]},
+	):
+		raise AutomationError(_("This workflow still has an active backfill. Cancel it before deleting the workflow."))
+	counts = _delete_workflow_history(workflow)
+	return {"workflow_id": workflow.name, "deleted": True, "history_deleted": True, "counts": counts}
 
 
 def get_workflow_draft(workflow_name: str) -> dict:
@@ -1032,6 +1181,7 @@ def publish_workflow(workflow_name: str, draft_revision: int, *, activate: bool 
 		"trigger.filter_criteria": "ON_UPDATE",
 		"trigger.event": "EVENT",
 		"trigger.schedule": "SCHEDULED",
+		"trigger.webhook": "WEBHOOK",
 	}
 	if trigger["type"] == "trigger.any":
 		trigger_specs = [

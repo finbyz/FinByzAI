@@ -29,6 +29,7 @@ const typeIcons: Partial<Record<NodeType, typeof Play>> = {
 	'trigger.event': BellRing,
 	'trigger.any': GitBranch,
   'trigger.schedule': Calendar,
+  'trigger.webhook': Link2,
   'condition.if_else': GitBranch,
 	'condition.random_split': Share2,
   'condition.switch': GitMerge,

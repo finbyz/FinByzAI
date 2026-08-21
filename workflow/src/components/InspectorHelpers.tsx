@@ -2,11 +2,13 @@
 import {
   BellRing,
   CheckCircle2,
+	ChevronDown,
   Clock3,
   DatabaseZap,
   GitBranch,
   Info,
   ListTodo,
+  Link2,
   MessageSquareText,
   Plus,
   Play,
@@ -62,6 +64,7 @@ export const nodeLabels: Record<NodeType, string> = {
   'action.round_robin': 'Round robin assign',
   'action.delete_record': 'Delete record',
   'trigger.schedule': 'Scheduled trigger',
+  'trigger.webhook': 'Incoming webhook',
   'condition.switch': 'Value branch',
   'condition.deduplicate': 'Deduplicate',
 	'delay.until_event': 'Wait until event',
@@ -109,6 +112,7 @@ export const nodeIcons: Record<NodeType, typeof Play> = {
   'action.round_robin': UserRoundPlus,
   'action.delete_record': Trash2,
   'trigger.schedule': Play,
+  'trigger.webhook': Link2,
   'condition.switch': GitBranch,
   'condition.deduplicate': GitBranch,
   'delay.until_event': Clock3,
@@ -154,7 +158,7 @@ function operatorsFor(field?: FieldCatalogItem) {
 
 export function InspectorSection({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
   return (
-    <section className="rounded-xl border border-[var(--border-color)] bg-white/60 dark:bg-white/5 backdrop-blur-md p-4">
+    <section className="inspector-section">
       <h3 className="text-heading text-xs font-bold">{title}</h3>
       {description && <p className="text-muted mt-1 text-[10.5px] leading-4">{description}</p>}
       <div className="mt-3 space-y-3.5">{children}</div>
@@ -162,8 +166,8 @@ export function InspectorSection({ title, description, children }: { title: stri
   )
 }
 
-export function Hint({ children }: { children: ReactNode }) {
-  return <p className="text-muted flex gap-2 rounded-lg border border-[var(--border-color)] bg-[var(--subtle-fg)] p-2.5 text-[10.5px] leading-4"><Info className="mt-0.5 shrink-0 text-brand-500" size={13} />{children}</p>
+export function Hint({ children, title = 'How this works', defaultOpen = false }: { children: ReactNode; title?: string; defaultOpen?: boolean }) {
+  return <details className="inspector-help" open={defaultOpen || undefined}><summary><Info size={13} /><span>{title}</span><ChevronDown size={13} /></summary><div>{children}</div></details>
 }
 
 export function FieldPicker({ value, fields, onChange }: { value?: string; fields: FieldCatalogItem[]; onChange(value: string): void }) {
@@ -208,16 +212,19 @@ export function TypedValueInput({ field, value, onChange, referenceDoctype, mult
   return <input type={type} className={inputClass} placeholder="Enter a value" value={String(value ?? '')} onChange={(event) => onChange(event.target.value)} />
 }
 
-export function ConditionExpressionEditor({ expression, fields, primaryDoctype, depth, onChange, onRemove }: { expression: ConditionExpression; fields: FieldCatalogItem[]; primaryDoctype?: string; depth: number; onChange(expression: ConditionExpression): void; onRemove?: () => void }) {
+export function ConditionExpressionEditor({ expression, fields, primaryDoctype, outputNodes = [], outputPaths = {}, depth, onChange, onRemove }: { expression: ConditionExpression; fields: FieldCatalogItem[]; primaryDoctype?: string; outputNodes?: WorkflowNode[]; outputPaths?: NodeOutputCatalog; depth: number; onChange(expression: ConditionExpression): void; onRemove?: () => void }) {
   if (expression.kind === 'predicate') {
-    const selectedField = fields.find((field) => field.fieldname === expression.field)
+	const outputSource = expression.source?.kind === 'node_output' ? expression.source : undefined
+	const selectedOutputNode = outputSource ? outputNodes.find((node) => node.id === outputSource.node_id) : undefined
+    const selectedField = outputSource ? undefined : fields.find((field) => field.fieldname === expression.field)
     const operators = operatorsFor(selectedField)
     const patch = (values: Partial<ConditionPredicate>) => onChange({ ...expression, ...values })
     return (
-      <div className="min-w-0 rounded-lg border border-[var(--border-color)] bg-white/40 p-3 dark:bg-transparent">
+      <div className="condition-rule min-w-0">
         <div className="grid min-w-0 gap-2.5">
 		  <div className="flex items-center justify-between"><span className="text-light text-[9px] font-bold uppercase tracking-wider">Condition</span>{onRemove && <button type="button" className="icon-button !size-7 hover:!text-red-600" onClick={onRemove} aria-label="Remove condition"><Trash2 size={13} /></button>}</div>
-          <FieldPicker fields={fields} value={expression.field} onChange={(fieldname) => { const nextField = fields.find((field) => field.fieldname === fieldname); patch({ field: fieldname, operator: nextField?.fieldtype === 'Table MultiSelect' ? 'contains_any' : 'eq', value: nextField?.fieldtype === 'Table MultiSelect' ? [] : null }) }} />
+		  {outputNodes.length > 0 && <select className={inputClass} aria-label="Condition data source" value={outputSource ? 'node_output' : 'record_field'} onChange={(event) => event.target.value === 'node_output' ? patch({ field: '', source: { kind: 'node_output', node_id: '', path: '' }, operator: 'eq', value: null }) : patch({ source: undefined, field: '', operator: 'eq', value: null })}><option value="record_field">Enrolled record field</option><option value="node_output">Earlier action output</option></select>}
+		  {outputSource ? <div className="grid gap-1.5 sm:grid-cols-2"><select className={inputClass} value={outputSource.node_id} onChange={(event) => { const selected = outputNodes.find((node) => node.id === event.target.value); patch({ source: { kind: 'node_output', node_id: event.target.value, path: nodeOutputPaths(selected, outputPaths)[0] || '' } }) }}><option value="">Choose earlier action</option>{outputNodes.map((node) => <option value={node.id} key={node.id}>{nodeLabels[node.type] || node.type}</option>)}</select><input className={inputClass} list={selectedOutputNode ? `condition-output-${selectedOutputNode.id}` : undefined} value={outputSource.path} placeholder="Output path" onChange={(event) => patch({ source: { ...outputSource, path: event.target.value } })} />{selectedOutputNode && <datalist id={`condition-output-${selectedOutputNode.id}`}>{nodeOutputPaths(selectedOutputNode, outputPaths).map((path) => <option value={path} key={path} />)}</datalist>}</div> : <FieldPicker fields={fields} value={expression.field} onChange={(fieldname) => { const nextField = fields.find((field) => field.fieldname === fieldname); patch({ field: fieldname, source: undefined, operator: nextField?.fieldtype === 'Table MultiSelect' ? 'contains_any' : 'eq', value: nextField?.fieldtype === 'Table MultiSelect' ? [] : null }) }} />}
           <select aria-label={`${selectedField?.label || 'Field'} condition operator`} className={inputClass} value={expression.operator} onChange={(event) => patch({ operator: event.target.value, value: ['in', 'not_in', 'contains_any', 'contains_all', 'contains_none'].includes(event.target.value) ? [] : null })}>
             {operators.map(([value, label]) => <option value={value} key={value}>{label}</option>)}
           </select>
@@ -234,14 +241,14 @@ export function ConditionExpressionEditor({ expression, fields, primaryDoctype, 
     onChange({ ...expression, children: children.length ? children : [emptyPredicate()] })
   }
   return (
-    <div className={`min-w-0 rounded-xl border p-3 ${depth ? 'border-magic-100 bg-magic-50/40 dark:border-magic-500/20 dark:bg-magic-500/5' : 'border-[var(--border-color)] bg-[var(--subtle-fg)]'}`}>
+    <div className="condition-group min-w-0" data-depth={depth}>
       <div className="mb-2.5 flex min-w-0 flex-wrap items-center gap-2">
 		<select className="frappe-control !min-h-8 min-w-0 flex-1 px-2 text-[10px] font-bold" value={expression.kind} onChange={(event) => changeKind(event.target.value as ConditionGroup['kind'])} aria-label="How should these conditions be combined?"><option value="all">All conditions must match (AND)</option><option value="any">Any condition can match (OR)</option><option value="not">None may match (NOT)</option></select>
         <span className="text-light shrink-0 text-[9px]">{expression.children.length} {expression.children.length === 1 ? 'condition' : 'conditions'}</span>
         {onRemove && <button type="button" className="icon-button !ml-auto !size-7 hover:!text-red-600" onClick={onRemove} aria-label="Remove condition group"><Trash2 size={13} /></button>}
       </div>
       <div className="space-y-2">
-        {expression.children.map((child, index) => <ConditionExpressionEditor key={`${depth}-${index}`} expression={child} fields={fields} primaryDoctype={primaryDoctype} depth={depth + 1} onChange={(next) => replaceChild(index, next)} onRemove={expression.kind === 'not' ? undefined : () => removeChild(index)} />)}
+		{expression.children.map((child, index) => <ConditionExpressionEditor key={`${depth}-${index}`} expression={child} fields={fields} primaryDoctype={primaryDoctype} outputNodes={outputNodes} outputPaths={outputPaths} depth={depth + 1} onChange={(next) => replaceChild(index, next)} onRemove={expression.kind === 'not' ? undefined : () => removeChild(index)} />)}
       </div>
 	  {expression.kind !== 'not' && <div className="mt-2.5 flex min-w-0 flex-wrap gap-1.5"><button type="button" className="btn-core btn-secondary min-w-0 flex-1 !min-h-8 !px-2.5 !text-[10px]" onClick={() => onChange({ ...expression, children: [...expression.children, emptyPredicate()] })}><Plus className="shrink-0" size={12} />Add condition</button><button type="button" className="btn-core btn-ghost min-w-0 flex-1 !min-h-8 !px-2.5 !text-[10px]" disabled={depth >= 4} title={depth >= 4 ? 'Maximum editor nesting reached' : 'Advanced: add a nested condition group'} onClick={() => onChange({ ...expression, children: [...expression.children, { kind: 'all', children: [emptyPredicate()] }] })}><GitBranch className="shrink-0" size={12} />Advanced group</button></div>}
     </div>
@@ -306,7 +313,7 @@ export function AssignmentEditor({ config, fields, sourceFields, outputNodes, ou
   const conditionalFields = fields.filter((field) => Boolean(field.mandatory_depends_on))
   const completedMandatory = mandatoryFields.filter((field) => {
     const assignment = assignments.find((item) => item.field === field.fieldname)
-    return assignment ? assignmentValueConfigured(assignment.value) : false
+    return assignment ? assignment.operation !== 'clear' && assignmentValueConfigured(assignment.value) : false
   })
   return (
     <>
@@ -315,10 +322,12 @@ export function AssignmentEditor({ config, fields, sourceFields, outputNodes, ou
         const selectedField = fields.find((field) => field.fieldname === assignment.field)
         const availableFields = fields.filter((field) => field.fieldname === assignment.field || !usedFields.has(field.fieldname))
         const replace = (next: WorkflowAssignment) => setAssignments(assignments.map((current, assignmentIndex) => assignmentIndex === index ? next : current), `assignment:${index}`)
+		const operation = assignment.operation || 'set'
         const mandatoryIncomplete = Boolean(createMode && (selectedField?.required || selectedField?.mandatory_depends_on) && (selectedField.default == null || selectedField.default === '') && !assignmentValueConfigured(assignment.value))
-        return <div className={`rounded-xl border bg-white/40 p-3 dark:bg-transparent ${mandatoryIncomplete ? 'border-red-300 ring-1 ring-red-100 dark:border-red-800 dark:ring-red-900/30' : 'border-[var(--border-color)]'}`} key={index}><div className="mb-2 flex items-center justify-between"><span className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-[var(--text-light)]">{createMode ? 'Record field' : 'Field change'} {index + 1}{(selectedField?.required || selectedField?.mandatory_depends_on) && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[8px] text-amber-800 dark:bg-amber-500/20 dark:text-amber-200">{selectedField.required ? 'Mandatory' : 'Conditional'}</span>}</span><button type="button" className="icon-button !size-7 hover:!text-red-600" onClick={() => setAssignments(assignments.filter((_, assignmentIndex) => assignmentIndex !== index), `assignment:remove:${index}`)} aria-label={`Remove field change ${index + 1}`}><Trash2 size={13} /></button></div><div className="space-y-2"><FieldPicker fields={availableFields} value={assignment.field} onChange={(field) => replace({ ...assignment, field })} /><ValueSourceEditor assignment={assignment} targetField={selectedField} sourceFields={sourceFields} outputNodes={outputNodes} outputPaths={outputPaths} referenceDoctype={referenceDoctype} onChange={replace} />{mandatoryIncomplete && <p className="flex items-center gap-1.5 text-[9.5px] font-semibold text-red-600 dark:text-red-300"><Info size={11} />Provide a value or map a source for this {selectedField?.mandatory_depends_on && !selectedField.required ? 'conditionally mandatory' : 'mandatory'} field.</p>}</div></div>
+		const mandatoryClear = Boolean(!createMode && selectedField?.required && operation === 'clear')
+		return <div className={`rounded-xl border bg-white/40 p-3 dark:bg-transparent ${mandatoryIncomplete || mandatoryClear ? 'border-red-300 ring-1 ring-red-100 dark:border-red-800 dark:ring-red-900/30' : 'border-[var(--border-color)]'}`} key={index}><div className="mb-2 flex items-center justify-between"><span className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-[var(--text-light)]">{createMode ? 'Record field' : 'Field change'} {index + 1}{(selectedField?.required || selectedField?.mandatory_depends_on) && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[8px] text-amber-800 dark:bg-amber-500/20 dark:text-amber-200">{selectedField.required ? 'Mandatory' : 'Conditional'}</span>}</span><button type="button" className="icon-button !size-7 hover:!text-red-600" onClick={() => setAssignments(assignments.filter((_, assignmentIndex) => assignmentIndex !== index), `assignment:remove:${index}`)} aria-label={`Remove field change ${index + 1}`}><Trash2 size={13} /></button></div><div className="space-y-2"><FieldPicker fields={availableFields} value={assignment.field} onChange={(field) => { const nextField = fields.find((candidate) => candidate.fieldname === field); replace({ ...assignment, field, operation: nextField?.required && operation === 'clear' ? 'set' : assignment.operation }) }} />{!createMode && <select className={inputClass} aria-label={`Field operation ${index + 1}`} value={operation} onChange={(event) => replace({ ...assignment, operation: event.target.value as WorkflowAssignment['operation'] })}><option value="set">Set value</option><option value="clear" disabled={Boolean(selectedField?.required)}>Clear value{selectedField?.required ? ' (mandatory field)' : ''}</option>{selectedField?.fieldtype === 'Table MultiSelect' && <><option value="append">Append values</option><option value="remove">Remove values</option></>}</select>}{operation !== 'clear' && <ValueSourceEditor assignment={assignment} targetField={selectedField} sourceFields={sourceFields} outputNodes={outputNodes} outputPaths={outputPaths} referenceDoctype={referenceDoctype} onChange={replace} />}{operation === 'clear' && <Hint>{selectedField?.required ? 'This field is mandatory. Choose Set value and provide a value before publishing.' : 'This clears the field. The workflow check validates Frappe field rules before publication.'}</Hint>}{mandatoryIncomplete && <p className="flex items-center gap-1.5 text-[9.5px] font-semibold text-red-600 dark:text-red-300"><Info size={11} />Provide a value or map a source for this {selectedField?.mandatory_depends_on && !selectedField.required ? 'conditionally mandatory' : 'mandatory'} field.</p>}{mandatoryClear && <p className="flex items-center gap-1.5 text-[9.5px] font-semibold text-red-600 dark:text-red-300"><Info size={11} />A mandatory field cannot be cleared.</p>}</div></div>
       })}
-      <button type="button" className="btn-core btn-secondary w-full !text-[10px]" disabled={!fields.length || assignments.length >= fields.length} onClick={() => setAssignments([...assignments, { field: '', value: { kind: 'literal', value: '' } }], 'assignment:add')}><Plus size={12} />{createMode ? 'Add another record field' : 'Add field change'}</button>
+	  <button type="button" className="btn-core btn-secondary w-full !text-[10px]" disabled={!fields.length || assignments.length >= fields.length} onClick={() => setAssignments([...assignments, { field: '', operation: 'set', value: { kind: 'literal', value: '' } }], 'assignment:add')}><Plus size={12} />{createMode ? 'Add another record field' : 'Add field change'}</button>
       <Hint>{createMode ? 'Mandatory fields are inserted automatically. ' : ''}Only fields writable by the workflow execution user are available. Sensitive and complex fields stay protected by Frappe.</Hint>
     </>
   )

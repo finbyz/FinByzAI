@@ -1,3 +1,4 @@
+from datetime import datetime
 from unittest.mock import patch
 
 import frappe
@@ -12,7 +13,7 @@ from finbyzai.workflow_builder.authoring import (
 	publish_workflow,
 	save_workflow_draft,
 )
-from finbyzai.workflow_builder.errors import AutomationConflictError
+from finbyzai.workflow_builder.errors import AutomationConflictError, AutomationError
 
 
 class TestAutomationBulkOperations(IntegrationTestCase):
@@ -28,6 +29,43 @@ class TestAutomationBulkOperations(IntegrationTestCase):
 		self.bulk_enabled = patch.object(bulk, "automation_enabled", return_value=True)
 		self.bulk_enabled.start()
 		self.addCleanup(self.bulk_enabled.stop)
+
+	def test_calendar_recurrence_clamps_month_end_and_leap_day(self):
+		monthly = bulk._next_occurrence(
+			datetime(2024, 1, 31, 10, 0),
+			"MONTHLY",
+			"UTC",
+			{"monthly_mode": "DAY", "day": 31},
+		)
+		self.assertEqual(monthly, datetime(2024, 2, 29, 10, 0))
+		annual = bulk._next_occurrence(
+			datetime(2024, 2, 29, 10, 0),
+			"ANNUAL",
+			"UTC",
+			{"month": 2, "day": 29},
+		)
+		self.assertEqual(annual, datetime(2025, 2, 28, 10, 0))
+
+	def test_schedule_rejects_nonexistent_dst_wall_time(self):
+		with self.assertRaisesRegex(AutomationError, "daylight-saving"):
+			bulk._local_to_system("2026-03-29 02:30:00", "Europe/Berlin")
+
+	def test_daily_recurrence_advances_through_spring_forward_gap(self):
+		next_run = bulk._next_occurrence(
+			datetime(2026, 3, 28, 1, 30),
+			"DAILY",
+			"Europe/Berlin",
+		)
+		self.assertEqual(next_run, datetime(2026, 3, 29, 1, 30))
+
+	def test_date_field_schedule_checks_the_property_each_local_day(self):
+		next_run = bulk._next_occurrence(
+			datetime(2026, 8, 21, 9, 30),
+			"DATE_FIELD",
+			"UTC",
+			{"date_field": "contact_date", "date_field_type": "Date"},
+		)
+		self.assertEqual(next_run, datetime(2026, 8, 22, 9, 30))
 
 	def test_backfill_uses_durable_cursor_and_idempotent_occurrences(self):
 		leads = [
