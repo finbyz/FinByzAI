@@ -16,6 +16,9 @@
   "max_recursion_depth",
   "retention_section",
   "history_retention_days",
+  "log_cleanup_interval_hours",
+  "log_cleanup_batch_size",
+  "last_log_cleanup_at",
   "monitoring_section",
   "health_failure_window_hours",
   "incident_alert_user",
@@ -91,10 +94,31 @@
   },
   {
    "default": "180",
-   "description": "Completed, failed, and cancelled workflow execution details older than this number of days are purged daily. Minimum 180 days preserves the client-required six-month history window.",
+   "description": "Completed workflow runs and resolved operational logs older than this number of days are removed. Minimum 180 days preserves the client-required six-month history window.",
    "fieldname": "history_retention_days",
    "fieldtype": "Int",
-   "label": "Execution History Retention (Days)"
+   "label": "Workflow Log Retention (Days)"
+  },
+  {
+   "default": "24",
+   "description": "How often the hourly scheduler checks and removes expired workflow logs. Range: 1 to 168 hours.",
+   "fieldname": "log_cleanup_interval_hours",
+   "fieldtype": "Int",
+   "label": "Log Cleanup Interval (Hours)"
+  },
+  {
+   "default": "500",
+   "description": "Maximum records removed from each log table in one cleanup pass. Range: 100 to 5000. Increase gradually when old logs accumulate.",
+   "fieldname": "log_cleanup_batch_size",
+   "fieldtype": "Int",
+   "label": "Log Cleanup Batch Size"
+  },
+  {
+   "description": "Last successful scheduled cleanup. This is updated by the scheduler and is not affected by the workflow execution switch.",
+   "fieldname": "last_log_cleanup_at",
+   "fieldtype": "Datetime",
+   "label": "Last Log Cleanup",
+   "read_only": 1
   },
   {
    "fieldname": "monitoring_section",

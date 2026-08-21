@@ -47,7 +47,7 @@
    "fieldtype": "Select",
    "label": "Event Type",
    "reqd": 1,
-   "options": "MANUAL\nAFTER_INSERT\nON_UPDATE\nSCHEDULED\nEVENT"
+   "options": "MANUAL\nAFTER_INSERT\nON_UPDATE\nSCHEDULED\nEVENT\nWEBHOOK"
   },
   {
    "fieldname": "dependency_fields_json",

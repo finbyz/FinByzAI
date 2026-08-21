@@ -25,6 +25,7 @@ describe('SendEmailEditor', () => {
 				roles: ['Email Designer'],
 			},
 		}
+		mocks.searchLink.mockResolvedValue([{ value: 'Product Updates', label: 'Product Updates', description: 'Campaign news' }])
 		mocks.call.mockImplementation((method: string) => {
 			if (method === 'get_workflow_email_template') {
 				return Promise.resolve({
@@ -74,6 +75,9 @@ describe('SendEmailEditor', () => {
 
 		expect(await screen.findByText('Welcome {{ lead_name }}')).toBeInTheDocument()
 		expect(screen.queryByText(/Require current email consent/i)).not.toBeInTheDocument()
+		expect(screen.getByRole('combobox', { name: 'Reach subscription topic' })).toBeInTheDocument()
+		expect(screen.getByText(/Global Frappe and CRM opt-outs are always enforced/i)).toBeInTheDocument()
+		expect(screen.getByText(/Workflow emails do not alter Reach’s preference page/i)).toBeInTheDocument()
 		expect(screen.getByRole('link', { name: 'Open visual email builder' })).toHaveAttribute(
 			'href',
 			'/builder?template=Lead%20welcome',
@@ -101,6 +105,10 @@ describe('SendEmailEditor', () => {
 			}),
 			true,
 		)
+
+		fireEvent.focus(screen.getByRole('combobox', { name: 'Reach subscription topic' }))
+		fireEvent.click(await screen.findByRole('option', { name: /Product Updates/ }))
+		expect(update).toHaveBeenCalledWith(expect.objectContaining({ subscription_topic: 'Product Updates' }), 'subscription_topic')
 	})
 
 	it('keeps quick inline email available for one-off content', () => {

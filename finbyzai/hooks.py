@@ -192,6 +192,8 @@ doc_events = {
 scheduler_events = {
 	"all": [
 		"finbyzai.workflow_builder.events.dispatch_pending_outbox",
+		"finbyzai.workflow_builder.engine.recover_stale_external_effects",
+		"finbyzai.workflow_builder.engine.recover_orphaned_active_runs",
 		"finbyzai.workflow_builder.engine.release_due_timers",
 		"finbyzai.workflow_builder.engine.dispatch_ready_tokens",
 		"finbyzai.workflow_builder.bulk.dispatch_ready_backfills",
@@ -200,9 +202,7 @@ scheduler_events = {
 	"hourly": [
 		"finbyzai.ai.doctype.knowledge_base.knowledge_base.process_queued_knowledge_bases",
 		"finbyzai.workflow_builder.integrations.capture_abandoned_shopping_carts",
-	],
-	"daily": [
-		"finbyzai.workflow_builder.maintenance.purge_expired_execution_history"
+		"finbyzai.workflow_builder.maintenance.run_scheduled_log_cleanup",
 	],
 }
 
@@ -217,6 +217,11 @@ scheduler_events = {
 # override_whitelisted_methods = {
 # 	"frappe.desk.doctype.event.event.get_events": "finbyzai.event.get_events"
 # }
+override_whitelisted_methods = {
+	"finbyzreach.email_marketing.update_subscription_preferences": (
+		"finbyzai.workflow_builder.integrations.update_reach_subscription_preferences"
+	),
+}
 #
 # each overriding function accepts a `data` argument;
 # generated from the base implementation of the doctype dashboard,

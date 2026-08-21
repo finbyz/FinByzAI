@@ -37,7 +37,7 @@
    "fieldtype": "Select",
    "label": "Event Type",
    "reqd": 1,
-   "options": "AFTER_INSERT\nON_UPDATE"
+   "options": "AFTER_INSERT\nON_UPDATE\nWEBHOOK"
   },
   {
    "fieldname": "object_doctype",

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { NodeCatalogItem, WorkflowGraph } from '../types'
-import { arrangeWorkflowGraph, catalogNode, duplicateWorkflowNode, duplicateWorkflowSection, insertWorkflowNode, reachableWorkflowNodeIds, relocateWorkflowNode, removeWorkflowNodes, replaceWorkflowTrigger, sameExecutionGraph, suggestedNodePlacement, upgradeLegacyIfElseBranches, workflowNodeContinuationHandle, workflowNodeSourceHandles, workflowSectionNodeIds } from './workflowGraphCommands'
+import { arrangeWorkflowGraph, catalogNode, duplicateWorkflowNode, duplicateWorkflowSection, insertWorkflowNode, reachableWorkflowNodeIds, relocateWorkflowNode, removeWorkflowNodes, replaceWorkflowTrigger, sameExecutionGraph, suggestedNodePlacement, upgradeLegacyIfElseBranches, workflowNodeContinuationHandle, workflowNodeSourceHandles, workflowNodeVisualWidth, workflowSectionNodeIds } from './workflowGraphCommands'
 
 const graph: WorkflowGraph = {
   schema_version: 1,
@@ -112,6 +112,35 @@ describe('sameExecutionGraph', () => {
     layout.nodes[0].config = { changed: true }
     expect(sameExecutionGraph(graph, layout)).toBe(false)
   })
+})
+
+describe('workflowNodeVisualWidth', () => {
+	it('reserves one structural canvas slot for every trigger plus Add trigger', () => {
+		const triggers = Array.from({ length: 10 }, (_, index) => ({ id: `trigger-${index}`, type: 'trigger.document_insert', config: { condition: null } }))
+		const trigger = {
+			id: 'start',
+			type: 'trigger.any',
+			type_version: 2,
+			position: { x: 0, y: 0 },
+			config: { triggers },
+		} as WorkflowGraph['nodes'][number]
+		expect(workflowNodeVisualWidth(trigger)).toBe(2376)
+		expect(workflowNodeVisualWidth({ ...trigger, config: { triggers: [triggers[0]] } })).toBe(432)
+	})
+
+	it('counts incomplete persisted cards so draft triggers never overflow the convergence boundary', () => {
+		const trigger = {
+			id: 'start',
+			type: 'trigger.any',
+			type_version: 2,
+			position: { x: 0, y: 0 },
+			config: { triggers: [
+				{ id: 'created', type: 'trigger.document_insert', config: { condition: null } },
+				{ id: 'event-draft', type: 'trigger.event', config: { event_topic: '' } },
+			] },
+		} as WorkflowGraph['nodes'][number]
+		expect(workflowNodeVisualWidth(trigger)).toBe(648)
+	})
 })
 
 describe('fast graph authoring commands', () => {
