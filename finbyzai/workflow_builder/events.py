@@ -25,6 +25,8 @@ from .errors import AutomationError, AutomationTransientError
 from .observability import record_enrollment_decision, record_incident
 from .registry import configured_blocked_doctypes
 from .schema import (
+	ABANDONED_CART_DEFAULT_HOURS,
+	abandoned_cart_event_matches,
 	condition_fields,
 	evaluate_expression,
 	event_filter_matches,
@@ -79,13 +81,21 @@ def signal_business_event(
 	if check_record_permission and source_doctype and source_name:
 		source_record = frappe.get_doc(source_doctype, source_name)
 		source_record.check_permission("read")
-	released = engine.release_event_waiters(
-		topic,
+	release_waiters = topic != "commerce.order.abandoned" or abandoned_cart_event_matches(
+		{"abandoned_after_value": ABANDONED_CART_DEFAULT_HOURS, "abandoned_after_unit": "hours"},
 		payload_value,
-		record_doctype=record_doctype,
-		record_name=record_name,
-		source_doctype=source_doctype,
-		source_name=source_name,
+	)
+	released = (
+		engine.release_event_waiters(
+			topic,
+			payload_value,
+			record_doctype=record_doctype,
+			record_name=record_name,
+			source_doctype=source_doctype,
+			source_name=source_name,
+		)
+		if release_waiters
+		else 0
 	)
 	if topic == "communication.responded" and record_doctype and record_name:
 		engine.apply_response_policy(record_doctype, record_name, payload_value)
@@ -107,6 +117,7 @@ def signal_business_event(
 					entry
 					for entry in entries
 					if str(entry.get("event_topic") or "").strip() == topic
+					and (topic != "commerce.order.abandoned" or abandoned_cart_event_matches(entry, payload_value))
 					and event_filter_matches(entry.get("event_filter"), payload_value)
 				),
 				None,
@@ -1015,7 +1026,8 @@ def runtime_health(workflow_id: str | None = None) -> dict:
 	stale_cutoff = add_to_date(now_datetime(), minutes=-stale_after_minutes)
 	stale_active = sum(1 for row in active_rows if row.modified and row.modified <= stale_cutoff)
 	stale_external_effects = frappe.db.count(
-		"Automation Effect Ledger", {"status": "STARTED", "modified": ["<=", stale_cutoff]}
+		"Automation Effect Ledger",
+		{"status": ["in", ["PROCESSING", "STARTED"]], "modified": ["<=", stale_cutoff]},
 	)
 	orphaned_active = sum(
 		1

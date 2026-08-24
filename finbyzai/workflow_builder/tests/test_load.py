@@ -285,3 +285,77 @@ class TestLoadAndRecovery(IntegrationTestCase):
 		self._delete_test_run(run.name)
 		self.test_runs.remove(run.name)
 		frappe.db.commit()
+
+	def test_orphan_recovery_closes_token_timer_and_attempt_evidence(self):
+		run = frappe.get_doc(
+			{
+				"doctype": "Automation Run",
+				"workflow": f"missing-{frappe.generate_hash(length=10)}",
+				"workflow_version": "missing-version",
+				"record_doctype": "Lead",
+				"record_name": "Test",
+				"record_key": "Lead:Test",
+				"source": "MANUAL",
+				"status": "RUNNING",
+			}
+		).insert(ignore_permissions=True, ignore_links=True)
+		self.test_runs.append(run.name)
+		token = frappe.get_doc(
+			{
+				"doctype": "Automation Run Token",
+				"run": run.name,
+				"node_id": "delay",
+				"status": "WAITING",
+				"lease_owner": "abandoned-worker",
+				"lease_until": add_to_date(now_datetime(), minutes=-10),
+			}
+		).insert(ignore_permissions=True)
+		timer = frappe.get_doc(
+			{
+				"doctype": "Automation Timer",
+				"run": run.name,
+				"token": token.name,
+				"node_id": "delay",
+				"timer_type": "DELAY",
+				"due_at": add_to_date(now_datetime(), minutes=10),
+				"status": "ACTIVE",
+			}
+		).insert(ignore_permissions=True)
+		attempt = frappe.get_doc(
+			{
+				"doctype": "Automation Action Attempt",
+				"run": run.name,
+				"token": token.name,
+				"node_id": "delay",
+				"attempt_no": 1,
+				"status": "WAITING",
+				"started_at": now_datetime(),
+			}
+		).insert(ignore_permissions=True)
+
+		self.assertGreaterEqual(engine.recover_orphaned_active_runs(), 1)
+		token_state = frappe.db.get_value(
+			"Automation Run Token",
+			token.name,
+			["status", "completed_at", "lease_owner", "lease_until"],
+			as_dict=True,
+		)
+		self.assertEqual(token_state.status, "CANCELLED")
+		self.assertIsNotNone(token_state.completed_at)
+		self.assertIsNone(token_state.lease_owner)
+		self.assertIsNone(token_state.lease_until)
+		timer_state = frappe.db.get_value(
+			"Automation Timer", timer.name, ["status", "released_at"], as_dict=True
+		)
+		self.assertEqual(timer_state.status, "CANCELLED")
+		self.assertIsNotNone(timer_state.released_at)
+		attempt_state = frappe.db.get_value(
+			"Automation Action Attempt", attempt.name, ["status", "completed_at", "error_code"], as_dict=True
+		)
+		self.assertEqual(attempt_state.status, "CANCELLED")
+		self.assertIsNotNone(attempt_state.completed_at)
+		self.assertEqual(attempt_state.error_code, "MISSING_WORKFLOW")
+
+		self._delete_test_run(run.name)
+		self.test_runs.remove(run.name)
+		frappe.db.commit()

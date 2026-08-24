@@ -31,7 +31,7 @@
    "fieldtype": "Select",
    "label": "Status",
    "reqd": 1,
-   "options": "STARTED\nCOMPLETED\nFAILED\nUNKNOWN_COMMIT"
+   "options": "PENDING\nPROCESSING\nSTARTED\nCOMPLETED\nFAILED\nUNKNOWN_COMMIT"
   },
   {
    "fieldname": "run",

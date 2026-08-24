@@ -12,7 +12,7 @@ import {
   useRef,
 } from 'react'
 import { call, mutationEnvelope, WorkflowApiError } from '../lib/api'
-import { arrangeWorkflowGraph, canonicalValue, catalogNode, duplicateWorkflowNode, duplicateWorkflowSection, insertWorkflowNode, relocateWorkflowNode, removeWorkflowNodes, replaceWorkflowTrigger, sameExecutionGraph, suggestedNodePlacement, upgradeLegacyIfElseBranches, type NodePlacement } from '../lib/workflowGraphCommands'
+import { arrangeWorkflowGraph, canonicalValue, catalogNode, duplicateWorkflowNode, duplicateWorkflowSection, insertWorkflowNode, relocateWorkflowNode, removeWorkflowNodes, replaceWorkflowTrigger, sameExecutionGraph, suggestedNodePlacement, upgradeLegacyIfElseBranches, workflowSectionNodeIds, type NodePlacement } from '../lib/workflowGraphCommands'
 import type {
   NodeCatalogItem,
   SimulationResult,
@@ -387,6 +387,7 @@ interface WorkflowActions {
   relocateNode(nodeId: string, edgeId: string, position: { x: number; y: number }): void
   removeNode(nodeId: string): void
   removeNodes(nodeIds: string[]): void
+  removeSection(nodeId: string): void
   connect(edge: Omit<WorkflowEdge, 'id'>): void
   removeEdge(edgeId: string): void
   removeEdges(edgeIds: string[]): void
@@ -434,6 +435,7 @@ export function WorkflowProvider({ workflowId, children }: { workflowId: string;
   const documentRef = useRef(document)
   const historyRef = useRef(history)
   const savePromiseRef = useRef<Promise<number> | null>(null)
+  const loadRequestRef = useRef(0)
   const clipboardRef = useRef<{ kind: 'node'; node: WorkflowNode } | { kind: 'section'; rootId: string } | null>(null)
   documentRef.current = document
   historyRef.current = history
@@ -444,6 +446,7 @@ export function WorkflowProvider({ workflowId, children }: { workflowId: string;
   )
 
   const load = useCallback(async () => {
+    const requestId = ++loadRequestRef.current
     documentDispatch({ type: 'LOAD_START', workflowId })
     try {
       const response = await call<{
@@ -451,6 +454,7 @@ export function WorkflowProvider({ workflowId, children }: { workflowId: string;
         publication: WorkflowPublication
         draft: { draft_revision: number; graph: WorkflowGraph; settings: WorkflowSettings; validation: ValidationIssue[] }
       }>('get_draft', { workflow_id: workflowId })
+		if (loadRequestRef.current !== requestId) return
 		const serverGraph = response.draft.graph
       const serverSettings = response.draft.settings || {}
       let graph = serverGraph
@@ -495,12 +499,16 @@ export function WorkflowProvider({ workflowId, children }: { workflowId: string;
       historyDispatch({ type: 'RESET' })
       editorDispatch({ type: 'RESOLVE_CONFLICT' })
     } catch (error) {
+      if (loadRequestRef.current !== requestId) return
       documentDispatch({ type: 'LOAD_ERROR', error: error instanceof Error ? error.message : 'Unable to load workflow' })
     }
   }, [recoveryKey, workflowId])
 
   useEffect(() => {
     void load()
+    return () => {
+      loadRequestRef.current += 1
+    }
   }, [load])
 
   const save = useCallback(() => {
@@ -803,14 +811,9 @@ export function WorkflowProvider({ workflowId, children }: { workflowId: string;
     removeNode(nodeId) {
       const current = documentRef.current.graph
       if (!current || nodeId === current.start_node_id) return
-      mutate(
-        {
-          ...current,
-          nodes: current.nodes.filter((node) => node.id !== nodeId),
-          edges: current.edges.filter((edge) => edge.source !== nodeId && edge.target !== nodeId),
-        },
-        'remove-node',
-      )
+		const next = removeWorkflowNodes(current, [nodeId])
+		if (next === current) return
+		mutate(arrangeWorkflowGraph(next), 'remove-node')
       editorDispatch({ type: 'SELECT' })
     },
     removeNodes(nodeIds) {
@@ -818,9 +821,18 @@ export function WorkflowProvider({ workflowId, children }: { workflowId: string;
       if (!current || !nodeIds.length) return
       const next = removeWorkflowNodes(current, nodeIds)
       if (next === current) return
-      mutate(next, 'remove-nodes')
+		mutate(arrangeWorkflowGraph(next), 'remove-nodes')
       editorDispatch({ type: 'SELECT' })
     },
+	removeSection(nodeId) {
+		const current = documentRef.current.graph
+		if (!current || nodeId === current.start_node_id) return
+		const sectionIds = workflowSectionNodeIds(current, nodeId)
+		const next = removeWorkflowNodes(current, sectionIds)
+		if (next === current) return
+		mutate(arrangeWorkflowGraph(next), 'remove-section')
+		editorDispatch({ type: 'SELECT' })
+	},
     connect(edge) {
       const current = documentRef.current.graph
       if (!current || edge.source === edge.target) return

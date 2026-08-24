@@ -27,6 +27,7 @@ from finbyzai.workflow_builder.engine import (
 	_SET_USER_LOCAL_FIELDS,
 	_assert_worker_execution,
 	_business_hours_state,
+	cancel_run_record,
 	_enabled_user_names,
 	_execute_node,
 	_execution_identity,
@@ -201,6 +202,27 @@ class TestAutomationAuthoring(IntegrationTestCase):
 			issues = validate_bindings(graph, "Administrator")
 
 		self.assertIn("INVALID_SUBSCRIPTION_TOPIC", {issue["code"] for issue in issues})
+		self.assertIn("nodes.email.config.subscription_topic", {issue["path"] for issue in issues})
+
+	def test_email_subscription_topic_is_rejected_outside_lead_workflows(self):
+		graph = empty_graph("Customer")
+		graph["nodes"].append({
+			"id": "email",
+			"type": "action.send_email",
+			"type_version": 2,
+			"config": {
+				"content_mode": "inline",
+				"recipient": {"kind": "literal", "value": "person@example.com"},
+				"subject": {"kind": "literal", "value": "Hello"},
+				"message": {"kind": "literal", "value": "Body"},
+				"subscription_topic": "Product Updates",
+			},
+		})
+		graph["edges"] = [{"id": "edge-1", "source": "trigger-1", "source_handle": "default", "target": "email"}]
+
+		issues = validate_bindings(graph, "Administrator")
+
+		self.assertIn("SUBSCRIPTION_TOPIC_REQUIRES_LEAD", {issue["code"] for issue in issues})
 		self.assertIn("nodes.email.config.subscription_topic", {issue["path"] for issue in issues})
 
 	def test_branch_field_permissions_skip_blank_rows_and_point_to_the_affected_path(self):
@@ -592,6 +614,20 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		with self.assertRaisesRegex(AutomationError, "Disable this workflow"):
 			delete_workflow_record(published["workflow"], delete_history=True)
 		change_workflow_state(published["workflow"], "DISABLED")
+		effect = frappe.get_doc(
+			{
+				"doctype": "Automation Effect Ledger",
+				"effect_key": f"delete-race:{run_name}",
+				"request_hash": frappe.utils.sha256_hash("delete-race"),
+				"status": "PROCESSING",
+				"run": run_name,
+				"node_id": "external-action",
+			}
+		).insert(ignore_permissions=True)
+		with self.assertRaisesRegex(AutomationError, "unresolved delivery"):
+			delete_workflow_record(published["workflow"], delete_history=True)
+		effect.status = "FAILED"
+		effect.save(ignore_permissions=True)
 		result = delete_workflow_record(published["workflow"], delete_history=True)
 		self.assertTrue(result["deleted"])
 		self.assertTrue(result["history_deleted"])
@@ -916,6 +952,11 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		self.assertEqual(frappe.db.get_value("Automation Run", run_name, "status"), "CANCELLED")
 		self.assertEqual(frappe.db.get_value("Automation Run Token", {"run": run_name, "node_id": "delay"}, "status"), "CANCELLED")
 		self.assertEqual(frappe.db.get_value("Automation Timer", {"run": run_name}, "status"), "CANCELLED")
+		self.assertIsNotNone(frappe.db.get_value("Automation Run", run_name, "completed_at"))
+		self.assertIsNotNone(
+			frappe.db.get_value("Automation Run Token", {"run": run_name, "node_id": "delay"}, "completed_at")
+		)
+		self.assertIsNotNone(frappe.db.get_value("Automation Timer", {"run": run_name}, "released_at"))
 
 	def test_safe_action_chain_and_duplicate_delivery(self):
 		lead = frappe.get_doc({"doctype": "Lead", "first_name": "Action Chain"}).insert()
@@ -980,6 +1021,304 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		self.assertEqual(frappe.db.count("Automation Effect Ledger", {"run": run_name, "status": "COMPLETED"}), 5)
 		self.assertEqual(frappe.db.get_value("Automation Run", run_name, "status"), "COMPLETED")
 
+	def test_mark_communications_read_updates_only_unread_inbound_records(self):
+		lead = frappe.get_doc({"doctype": "Lead", "first_name": "Conversation State"}).insert()
+
+		def communication(direction: str, seen: int, subject: str):
+			return frappe.get_doc(
+				{
+					"doctype": "Communication",
+					"subject": subject,
+					"content": subject,
+					"communication_medium": "Email",
+					"communication_type": "Communication",
+					"status": "Open",
+					"sent_or_received": direction,
+					"reference_doctype": "Lead",
+					"reference_name": lead.name,
+					"seen": seen,
+				}
+			).insert(ignore_permissions=True)
+
+		unread_inbound = communication("Received", 0, "Unread inbound")
+		read_inbound = communication("Received", 1, "Read inbound")
+		unread_outbound = communication("Sent", 0, "Unread outbound")
+
+		created = create_workflow_record("Mark real communications read", "Lead")
+		graph = created["graph"]
+		graph["nodes"].append(
+			{"id": "mark-read", "type": "action.mark_communications_read", "type_version": 1, "config": {}}
+		)
+		graph["edges"] = [
+			{"id": "edge-1", "source": "trigger-1", "source_handle": "default", "target": "mark-read"}
+		]
+		saved = save_workflow_draft(created["workflow"], 0, graph)
+		self.assertTrue(saved["valid"])
+		publish_workflow(created["workflow"], saved["draft_revision"])
+		run_name = enroll(created["workflow"], "Lead", lead.name, source="MANUAL", occurrence_key="mark-read")
+		while token_name := frappe.db.get_value("Automation Run Token", {"run": run_name, "status": "READY"}, "name"):
+			execute_token(token_name)
+
+		self.assertEqual(frappe.db.get_value("Communication", unread_inbound.name, "seen"), 1)
+		self.assertEqual(frappe.db.get_value("Communication", unread_inbound.name, "unread_notification_sent"), 1)
+		self.assertEqual(frappe.db.get_value("Communication", read_inbound.name, "seen"), 1)
+		self.assertEqual(frappe.db.get_value("Communication", unread_outbound.name, "seen"), 0)
+		output = frappe.parse_json(
+			frappe.db.get_value("Automation Run Token", {"run": run_name, "node_id": "mark-read"}, "output_json")
+		)
+		self.assertEqual(output["updated"], 1)
+		self.assertEqual(frappe.db.get_value("Automation Run", run_name, "status"), "COMPLETED")
+
+	def test_create_todo_notifies_a_real_nonself_assignee_without_rendering_failure(self):
+		assignee = f"workflow-assignee-{frappe.generate_hash(length=8)}@example.invalid"
+		frappe.get_doc(
+			{
+				"doctype": "User",
+				"email": assignee,
+				"first_name": "Workflow Assignee",
+				"enabled": 1,
+				"user_type": "System User",
+				"send_welcome_email": 0,
+				"roles": [{"role": "System Manager"}],
+			}
+		).insert(ignore_permissions=True)
+		lead = frappe.get_doc({"doctype": "Lead", "first_name": "Nonself Assignment"}).insert()
+		created = create_workflow_record("Notify nonself assignee", "Lead")
+		graph = created["graph"]
+		graph["nodes"].append(
+			{
+				"id": "todo",
+				"type": "action.create_todo",
+				"type_version": 1,
+				"config": {
+					"allocated_to": assignee,
+					"description": "Real assignment notification certification",
+					"priority": "High",
+				},
+			}
+		)
+		graph["edges"] = [
+			{"id": "edge-1", "source": "trigger-1", "source_handle": "default", "target": "todo"}
+		]
+		saved = save_workflow_draft(created["workflow"], 0, graph)
+		self.assertTrue(saved["valid"], saved["validation"])
+		publish_workflow(created["workflow"], saved["draft_revision"])
+		run_name = enroll(created["workflow"], "Lead", lead.name, source="MANUAL", occurrence_key="assignee")
+		while token_name := frappe.db.get_value("Automation Run Token", {"run": run_name, "status": "READY"}, "name"):
+			execute_token(token_name)
+
+		self.assertEqual(frappe.db.get_value("Automation Run", run_name, "status"), "COMPLETED")
+		self.assertTrue(
+			frappe.db.exists(
+				"ToDo",
+				{
+					"reference_type": "Lead",
+					"reference_name": lead.name,
+					"allocated_to": assignee,
+					"status": "Open",
+				},
+			)
+		)
+		self.assertTrue(
+			frappe.db.exists(
+				"Notification Log",
+				{"for_user": assignee, "type": "Assignment", "document_type": "Lead", "document_name": lead.name},
+			)
+		)
+
+	def test_complete_goal_records_marker_and_ends_path(self):
+		lead = frappe.get_doc({"doctype": "Lead", "first_name": "Goal Marker"}).insert()
+		created = create_workflow_record("Complete named goal", "Lead")
+		graph = created["graph"]
+		graph["nodes"].extend(
+			[
+				{
+					"id": "goal",
+					"type": "action.complete_goal",
+					"type_version": 1,
+					"config": {"goal": "Qualified by certification"},
+				},
+				{
+					"id": "must-not-run",
+					"type": "action.add_comment",
+					"type_version": 1,
+					"config": {"content": "This action must not execute after the goal."},
+				},
+			]
+		)
+		graph["edges"] = [
+			{"id": "edge-1", "source": "trigger-1", "source_handle": "default", "target": "goal"},
+			{"id": "edge-2", "source": "goal", "source_handle": "default", "target": "must-not-run"},
+		]
+		saved = save_workflow_draft(created["workflow"], 0, graph)
+		self.assertTrue(saved["valid"])
+		publish_workflow(created["workflow"], saved["draft_revision"])
+		run_name = enroll(created["workflow"], "Lead", lead.name, source="MANUAL", occurrence_key="goal")
+		while token_name := frappe.db.get_value("Automation Run Token", {"run": run_name, "status": "READY"}, "name"):
+			execute_token(token_name)
+
+		self.assertEqual(frappe.db.get_value("Automation Run", run_name, "status"), "COMPLETED")
+		self.assertFalse(frappe.db.exists("Automation Run Token", {"run": run_name, "node_id": "must-not-run"}))
+		goal_output = frappe.parse_json(
+			frappe.db.get_value("Automation Run Token", {"run": run_name, "node_id": "goal"}, "output_json")
+		)
+		self.assertEqual(goal_output, {"goal": "Qualified by certification", "terminate_path": True})
+		event_payload = frappe.parse_json(
+			frappe.db.get_value(
+				"Automation Run Event",
+				{"run": run_name, "event_type": "NODE_COMPLETED", "node_id": "goal"},
+				"payload_json",
+			)
+		)
+		self.assertEqual(event_payload["goal"], "Qualified by certification")
+
+	def test_remove_from_workflow_cancels_waiting_run_and_closes_durable_state(self):
+		lead = frappe.get_doc({"doctype": "Lead", "first_name": "Remove From Workflow"}).insert()
+		target = create_workflow_record("Removal target", "Lead")
+		target_graph = target["graph"]
+		target_graph["nodes"].append(
+			{"id": "delay", "type": "delay.fixed", "type_version": 1, "config": {"seconds": 3600}}
+		)
+		target_graph["edges"] = [
+			{"id": "edge-1", "source": "trigger-1", "source_handle": "default", "target": "delay"}
+		]
+		target_saved = save_workflow_draft(target["workflow"], 0, target_graph)
+		publish_workflow(target["workflow"], target_saved["draft_revision"])
+		target_run = enroll(target["workflow"], "Lead", lead.name, source="MANUAL", occurrence_key="wait")
+		for node_id in ("trigger-1", "delay"):
+			execute_token(
+				frappe.db.get_value("Automation Run Token", {"run": target_run, "node_id": node_id}, "name")
+			)
+		self.assertEqual(frappe.db.get_value("Automation Run", target_run, "status"), "WAITING")
+
+		remover = create_workflow_record("Removal controller", "Lead")
+		remover_graph = remover["graph"]
+		remover_graph["nodes"].append(
+			{
+				"id": "remove",
+				"type": "action.remove_from_workflow",
+				"type_version": 1,
+				"config": {"target_workflow": target["workflow"]},
+			}
+		)
+		remover_graph["edges"] = [
+			{"id": "edge-1", "source": "trigger-1", "source_handle": "default", "target": "remove"}
+		]
+		remover_saved = save_workflow_draft(remover["workflow"], 0, remover_graph)
+		self.assertTrue(remover_saved["valid"])
+		publish_workflow(remover["workflow"], remover_saved["draft_revision"])
+		remover_run = enroll(remover["workflow"], "Lead", lead.name, source="MANUAL", occurrence_key="remove")
+		while token_name := frappe.db.get_value("Automation Run Token", {"run": remover_run, "status": "READY"}, "name"):
+			execute_token(token_name)
+
+		target_state = frappe.db.get_value(
+			"Automation Run", target_run, ["status", "completed_at", "error_code"], as_dict=True
+		)
+		self.assertEqual(target_state.status, "CANCELLED")
+		self.assertIsNotNone(target_state.completed_at)
+		self.assertEqual(target_state.error_code, "REMOVED_BY_WORKFLOW")
+		delay_token = frappe.db.get_value(
+			"Automation Run Token",
+			{"run": target_run, "node_id": "delay"},
+			["status", "completed_at", "lease_owner", "lease_until"],
+			as_dict=True,
+		)
+		self.assertEqual(delay_token.status, "CANCELLED")
+		self.assertIsNotNone(delay_token.completed_at)
+		self.assertIsNone(delay_token.lease_owner)
+		self.assertIsNone(delay_token.lease_until)
+		timer = frappe.db.get_value(
+			"Automation Timer", {"run": target_run}, ["status", "released_at"], as_dict=True
+		)
+		self.assertEqual(timer.status, "CANCELLED")
+		self.assertIsNotNone(timer.released_at)
+		remove_output = frappe.parse_json(
+			frappe.db.get_value("Automation Run Token", {"run": remover_run, "node_id": "remove"}, "output_json")
+		)
+		self.assertEqual(remove_output["cancelled_runs"], 1)
+
+	def test_advanced_internal_actions_execute_on_real_records_and_remain_idempotent(self):
+		lead = frappe.get_doc({"doctype": "Lead", "first_name": "Advanced Action Certification"}).insert()
+		created = create_workflow_record("Advanced internal actions", "Lead")
+		graph = created["graph"]
+		graph["nodes"].extend(
+			[
+				{
+					"id": "note",
+					"type": "action.create_note",
+					"type_version": 1,
+					"config": {"title": "Certified workflow note", "content": "Created from a real Lead."},
+				},
+				{"id": "copy", "type": "action.copy_record", "type_version": 1, "config": {}},
+				{
+					"id": "assign",
+					"type": "action.create_todo",
+					"type_version": 1,
+					"config": {
+						"allocated_to": "Administrator",
+						"description": "Assignment closed by the next workflow action",
+						"priority": "Medium",
+					},
+				},
+				{"id": "unassign", "type": "action.unassign_record", "type_version": 1, "config": {}},
+				{
+					"id": "jump",
+					"type": "action.go_to",
+					"type_version": 1,
+					"config": {"target_node_id": "final-comment"},
+				},
+				{
+					"id": "final-comment",
+					"type": "action.add_comment",
+					"type_version": 1,
+					"config": {"content": "Reached through Go to."},
+				},
+			]
+		)
+		sequence = ["trigger-1", "note", "copy", "assign", "unassign", "jump"]
+		graph["edges"] = [
+			{"id": f"edge-{index}", "source": source, "source_handle": "default", "target": target}
+			for index, (source, target) in enumerate(zip(sequence, sequence[1:]), 1)
+		]
+		saved = save_workflow_draft(created["workflow"], 0, graph)
+		self.assertTrue(saved["valid"], saved["validation"])
+		publish_workflow(created["workflow"], saved["draft_revision"])
+		lead_count_before = frappe.db.count("Lead", {"first_name": "Advanced Action Certification"})
+		run_name = enroll(created["workflow"], "Lead", lead.name, source="MANUAL", occurrence_key="advanced")
+		while token_name := frappe.db.get_value("Automation Run Token", {"run": run_name, "status": "READY"}, "name"):
+			execute_token(token_name)
+
+		note_output = frappe.parse_json(
+			frappe.db.get_value("Automation Run Token", {"run": run_name, "node_id": "note"}, "output_json")
+		)
+		self.assertTrue(frappe.db.exists("Note", note_output["note"]))
+		self.assertIn(lead.name, frappe.db.get_value("Note", note_output["note"], "content"))
+		copy_output = frappe.parse_json(
+			frappe.db.get_value("Automation Run Token", {"run": run_name, "node_id": "copy"}, "output_json")
+		)
+		self.assertNotEqual(copy_output["name"], lead.name)
+		self.assertTrue(frappe.db.exists("Lead", copy_output["name"]))
+		self.assertEqual(
+			frappe.db.count("Lead", {"first_name": "Advanced Action Certification"}),
+			lead_count_before + 1,
+		)
+		self.assertFalse(
+			frappe.db.exists(
+				"ToDo",
+				{"reference_type": "Lead", "reference_name": lead.name, "status": "Open"},
+			)
+		)
+		self.assertTrue(frappe.db.exists("Automation Run Token", {"run": run_name, "node_id": "final-comment"}))
+
+		# A duplicated worker delivery must reuse the completed effect instead of
+		# creating another Lead or Note.
+		execute_token(frappe.db.get_value("Automation Run Token", {"run": run_name, "node_id": "copy"}, "name"))
+		self.assertEqual(
+			frappe.db.count("Lead", {"first_name": "Advanced Action Certification"}),
+			lead_count_before + 1,
+		)
+		self.assertEqual(frappe.db.get_value("Automation Run", run_name, "status"), "COMPLETED")
+
 	def test_stale_external_effect_requires_operator_reconciliation_without_resending(self):
 		lead = frappe.get_doc(
 			{"doctype": "Lead", "first_name": "External Recovery", "email_id": "recovery@example.com"}
@@ -1017,7 +1356,7 @@ class TestAutomationAuthoring(IntegrationTestCase):
 				execute_token(token_name)
 			enqueue.reset_mock()
 			ledger_name = frappe.db.get_value(
-				"Automation Effect Ledger", {"run": run_name, "status": "STARTED"}, "name"
+				"Automation Effect Ledger", {"run": run_name, "status": "PENDING"}, "name"
 			)
 			frappe.db.set_value(
 				"Automation Effect Ledger",
@@ -1026,6 +1365,27 @@ class TestAutomationAuthoring(IntegrationTestCase):
 				frappe.utils.add_to_date(frappe.utils.now_datetime(), minutes=-60),
 				update_modified=False,
 			)
+			self.assertGreaterEqual(recover_stale_external_effects(), 1)
+			enqueue.assert_called_once()
+			self.assertEqual(
+				frappe.db.get_value("Automation Effect Ledger", ledger_name, "status"), "PENDING"
+			)
+
+			# Once a worker has atomically claimed the provider call, a stale result
+			# can no longer be retried safely and must require reconciliation.
+			waiting_token = frappe.db.get_value(
+				"Automation Run Token", {"run": run_name, "node_id": "email", "status": "WAITING"}, "name"
+			)
+			self.assertIsNotNone(engine._claim_external_effect_delivery(ledger_name, waiting_token))
+			self.assertIsNone(engine._claim_external_effect_delivery(ledger_name, waiting_token))
+			frappe.db.set_value(
+				"Automation Effect Ledger",
+				ledger_name,
+				"modified",
+				frappe.utils.add_to_date(frappe.utils.now_datetime(), minutes=-60),
+				update_modified=False,
+			)
+			enqueue.reset_mock()
 			self.assertGreaterEqual(recover_stale_external_effects(), 1)
 			enqueue.assert_not_called()
 
@@ -1046,6 +1406,58 @@ class TestAutomationAuthoring(IntegrationTestCase):
 			)
 		)
 		self.assertEqual(recover_stale_external_effects(), 0)
+
+	def test_paused_external_effect_is_held_and_resumes_without_losing_its_queue_state(self):
+		lead = frappe.get_doc(
+			{
+				"doctype": "Lead",
+				"first_name": "Paused External",
+				"email_id": f"paused-{frappe.generate_hash(length=8)}@example.com",
+			}
+		).insert()
+		created = create_workflow_record("Paused external effect", "Lead")
+		graph = created["graph"]
+		graph["nodes"].append(
+			{
+				"id": "email",
+				"type": "action.send_email",
+				"type_version": 2,
+				"config": {
+					"content_mode": "inline",
+					"recipient": {"kind": "record_field", "field": "email_id"},
+					"subject": {"kind": "literal", "value": "Pause check"},
+					"message": {"kind": "literal", "value": "Resume safely."},
+				},
+			}
+		)
+		graph["edges"] = [
+			{"id": "edge-email", "source": "trigger-1", "source_handle": "default", "target": "email"}
+		]
+		save_workflow_draft(created["workflow"], 0, graph)
+		publish_workflow(created["workflow"], 1)
+		with patch.object(frappe, "enqueue") as enqueue:
+			run_name = enroll(
+				created["workflow"], "Lead", lead.name, source="MANUAL", occurrence_key="paused-external"
+			)
+			while token_name := frappe.db.get_value(
+				"Automation Run Token", {"run": run_name, "status": "READY"}, "name"
+			):
+				execute_token(token_name)
+			token_name = frappe.db.get_value(
+				"Automation Run Token", {"run": run_name, "node_id": "email", "status": "WAITING"}, "name"
+			)
+			ledger_name = frappe.db.get_value(
+				"Automation Effect Ledger", {"run": run_name, "status": "PENDING"}, "name"
+			)
+			change_workflow_state(created["workflow"], "PAUSED")
+			engine.execute_external_effect(ledger_name, token_name)
+			self.assertEqual(frappe.db.get_value("Automation Run Token", token_name, "status"), "HELD")
+			self.assertEqual(frappe.db.get_value("Automation Effect Ledger", ledger_name, "status"), "PENDING")
+
+			change_workflow_state(created["workflow"], "ACTIVE")
+			self.assertEqual(engine.resume_held_tokens(created["workflow"]), 1)
+			self.assertEqual(frappe.db.get_value("Automation Run Token", token_name, "status"), "READY")
+			enqueue.assert_called()
 
 	def test_fixed_delay_uses_durable_timer(self):
 		lead = frappe.get_doc({"doctype": "Lead", "first_name": "Timer Test"}).insert()
@@ -1074,6 +1486,39 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		execute_token(frappe.db.get_value("Automation Run Token", {"run": run_name, "node_id": "delay"}, "name"))
 		execute_token(frappe.db.get_value("Automation Run Token", {"run": run_name, "node_id": "end"}, "name"))
 		self.assertEqual(frappe.db.get_value("Automation Run", run_name, "status"), "COMPLETED")
+
+	def test_operator_cancellation_closes_waiting_token_and_timer_evidence(self):
+		lead = frappe.get_doc({"doctype": "Lead", "first_name": "Operator Cancellation"}).insert()
+		created = create_workflow_record("Operator cancellation", "Lead")
+		graph = created["graph"]
+		graph["nodes"].append(
+			{"id": "delay", "type": "delay.fixed", "type_version": 1, "config": {"seconds": 3600}}
+		)
+		graph["edges"] = [
+			{"id": "edge-1", "source": "trigger-1", "source_handle": "default", "target": "delay"}
+		]
+		saved = save_workflow_draft(created["workflow"], 0, graph)
+		publish_workflow(created["workflow"], saved["draft_revision"])
+		run_name = enroll(created["workflow"], "Lead", lead.name, source="MANUAL", occurrence_key="cancel")
+		for node_id in ("trigger-1", "delay"):
+			execute_token(frappe.db.get_value("Automation Run Token", {"run": run_name, "node_id": node_id}, "name"))
+
+		self.assertEqual(cancel_run_record(run_name)["status"], "CANCELLED")
+		token = frappe.db.get_value(
+			"Automation Run Token",
+			{"run": run_name, "node_id": "delay"},
+			["status", "completed_at", "lease_owner", "lease_until"],
+			as_dict=True,
+		)
+		self.assertEqual(token.status, "CANCELLED")
+		self.assertIsNotNone(token.completed_at)
+		self.assertIsNone(token.lease_owner)
+		self.assertIsNone(token.lease_until)
+		timer = frappe.db.get_value(
+			"Automation Timer", {"run": run_name}, ["status", "released_at"], as_dict=True
+		)
+		self.assertEqual(timer.status, "CANCELLED")
+		self.assertIsNotNone(timer.released_at)
 
 	def test_event_wait_releases_to_event_branch_and_timeout_branch(self):
 		def create_run(key: str):

@@ -33,6 +33,10 @@ INDEXES = {
 	"Automation Run Event": [
 		(["run", "sequence_no"], "idx_automation_run_event_sequence"),
 	],
+	"Automation Effect Ledger": [
+		(["status", "modified"], "idx_automation_effect_recovery"),
+		(["run", "status"], "idx_automation_effect_run"),
+	],
 	"Automation Timer": [
 		(["status", "due_at", "creation"], "idx_automation_timer_due"),
 		(["run", "status"], "idx_automation_timer_run"),
