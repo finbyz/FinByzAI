@@ -183,6 +183,73 @@ class TestDeadlocks(IntegrationTestCase):
 		doc = frappe.get_doc("Automation Run Token", token.name)
 		self.assertEqual(doc.status, "RUNNING")
 
+	def test_concurrent_external_effect_claim_allows_one_provider_worker(self):
+		"""Only one duplicate queue job may cross the provider-I/O boundary."""
+		run_name = f"test-external-{frappe.generate_hash(length=12)}"
+		run = frappe.get_doc(
+			{
+				"doctype": "Automation Run",
+				"name": run_name,
+				"workflow": self.fixture_workflow,
+				"workflow_version": self.fixture_version,
+				"record_doctype": "Lead",
+				"record_name": "Test",
+				"record_key": "Lead:Test",
+				"source": "MANUAL",
+				"status": "WAITING",
+			}
+		).insert(ignore_permissions=True, ignore_links=True)
+		run_name = run.name
+		self.test_runs.append(run_name)
+		token = frappe.get_doc(
+			{
+				"doctype": "Automation Run Token",
+				"run": run_name,
+				"node_id": "email",
+				"status": "WAITING",
+				"available_at": frappe.utils.now_datetime(),
+			}
+		).insert(ignore_permissions=True, ignore_links=True)
+		ledger = frappe.get_doc(
+			{
+				"doctype": "Automation Effect Ledger",
+				"effect_key": f"{run_name}:email:1",
+				"request_hash": frappe.utils.sha256_hash("external-claim"),
+				"status": "PENDING",
+				"run": run_name,
+				"node_id": "email",
+			}
+		).insert(ignore_permissions=True)
+		frappe.db.commit()
+		site_name = frappe.local.site
+		results: list[int] = []
+		errors: list[str] = []
+
+		def worker(index: int):
+			try:
+				frappe.init(site=site_name)
+				frappe.connect()
+				if engine._claim_external_effect_delivery(ledger.name, token.name):
+					frappe.db.commit()
+					results.append(index)
+			except Exception as exc:
+				errors.append(str(exc))
+			finally:
+				if getattr(frappe.local, "db", None):
+					frappe.db.rollback()
+					frappe.destroy()
+
+		threads = [threading.Thread(target=worker, args=(index,)) for index in range(5)]
+		for thread in threads:
+			thread.start()
+		for thread in threads:
+			thread.join()
+
+		self.assertEqual(errors, [])
+		self.assertEqual(len(results), 1)
+		frappe.db.rollback()
+		self.assertEqual(frappe.db.get_value("Automation Effect Ledger", ledger.name, "status"), "PROCESSING")
+
 	def test_concurrent_round_robin_rotation_uses_one_locked_cursor(self):
 		created = create_workflow_record("Concurrent cursor", "Lead")
 		self.test_workflows.append(created["workflow"])

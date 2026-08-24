@@ -136,4 +136,32 @@ describe('SendEmailEditor', () => {
 			'content_mode',
 		)
 	})
+
+	it('offers Reach topic preferences only for Lead workflows', async () => {
+		const update = vi.fn()
+		render(
+			<SendEmailEditor
+				config={{
+					content_mode: 'inline',
+					subscription_topic: 'Product Updates',
+				}}
+				workflowId="AUTO-WORKFLOW-1"
+				primaryDoctype="Customer"
+				update={update}
+				recipientEditor={<div>Recipient binding</div>}
+				subjectOverrideEditor={<div>Subject override binding</div>}
+				subjectEditor={<div>Inline subject binding</div>}
+				messageEditor={<div>Inline message binding</div>}
+			/>,
+		)
+
+		expect(screen.queryByRole('combobox', { name: 'Reach subscription topic' })).not.toBeInTheDocument()
+		expect(screen.getByText(/unsubscribe link globally opts out this recipient/i)).toBeInTheDocument()
+		expect(screen.getByText(/FinbyzReach topics are Lead-only/i)).toBeInTheDocument()
+		expect(mocks.searchLink).not.toHaveBeenCalledWith('Subscription Topic', expect.anything(), expect.anything())
+		await waitFor(() => expect(update).toHaveBeenCalledWith(
+			expect.not.objectContaining({ subscription_topic: expect.anything() }),
+			'subscription_topic:remove-inapplicable',
+		))
+	})
 })

@@ -28,6 +28,7 @@ import {
   AsyncCombobox,
   type ComboboxOption,
 } from "../components/AsyncCombobox";
+import { useConfirmDialog } from "../components/useConfirmDialog";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { call, mutationEnvelope, searchLink } from "../lib/api";
 import {
@@ -335,6 +336,7 @@ function WebhookEnrollment({
     endpoint: string;
     secret: string;
   }>();
+  const confirmation = useConfirmDialog();
   const load = useCallback(
     () =>
       call<{ rows: InboundWebhookRow[] }>("list_inbound_webhooks", {
@@ -409,12 +411,12 @@ function WebhookEnrollment({
     }
   };
   const rotate = async (row: InboundWebhookRow) => {
-    if (
-      !window.confirm(
-        `Rotate the secret for ${row.title}? Existing senders will stop authenticating immediately.`,
-      )
-    )
-      return;
+    if (!await confirmation.ask({
+      title: `Rotate the secret for ${row.title}?`,
+      description: "Existing senders will stop authenticating immediately. Update every sender with the newly generated secret before its next request.",
+      confirmLabel: "Rotate secret",
+      tone: "danger",
+    })) return;
     setBusy(`rotate:${row.name}`);
     setError("");
     try {
@@ -659,6 +661,7 @@ function WebhookEnrollment({
           </div>
         </section>
       </main>
+      {confirmation.dialog}
     </div>
   );
 }
@@ -696,6 +699,7 @@ export function EnrollmentPage() {
   const [pinnedVersion, setPinnedVersion] = useState("");
   const [catchUp, setCatchUp] = useState<"RUN_ONCE" | "SKIP">("RUN_ONCE");
   const [overlap, setOverlap] = useState<"SKIP" | "QUEUE">("SKIP");
+  const confirmation = useConfirmDialog();
 
   const load = useCallback(
     async (silent = false) => {
@@ -802,15 +806,14 @@ export function EnrollmentPage() {
       setPreview(result);
       return result;
     });
-  const startBackfill = (dryRun: boolean) => {
+  const startBackfill = async (dryRun: boolean) => {
     if (!preview) return;
-    if (
-      !dryRun &&
-      !window.confirm(
-        `Start a live backfill for ${preview.estimated_count.toLocaleString()} records using version ${preview.version_no}?`,
-      )
-    )
-      return;
+    if (!dryRun && !await confirmation.ask({
+      title: `Start a live backfill for ${preview.estimated_count.toLocaleString()} records?`,
+      description: `Eligible records will enter published version ${preview.version_no}. Workflow actions can change records and contact external services.`,
+      confirmLabel: "Start live backfill",
+      tone: "warning",
+    })) return;
     const payload = backfillPayload(
       { filters, batchSize, recordsPerMinute: rate, maxRecords },
       dryRun,
@@ -830,17 +833,16 @@ export function EnrollmentPage() {
         `${dryRun ? "Dry run" : "Backfill"} ${result.backfill_id} queued for ${result.estimated_count.toLocaleString()} records.`,
     );
   };
-  const controlBackfill = (
+  const controlBackfill = async (
     row: BackfillRow,
     action: "PAUSE" | "RESUME" | "CANCEL" | "RETRY",
   ) => {
-    if (
-      action === "CANCEL" &&
-      !window.confirm(
-        `Cancel ${row.name}? The current committed batch remains authoritative.`,
-      )
-    )
-      return;
+    if (action === "CANCEL" && !await confirmation.ask({
+      title: `Cancel backfill ${row.name}?`,
+      description: "No new batches will start. The current committed batch and records already enrolled remain authoritative.",
+      confirmLabel: "Cancel backfill",
+      tone: "danger",
+    })) return;
     void runMutation(
       `${row.name}:${action}`,
       () =>
@@ -906,8 +908,13 @@ export function EnrollmentPage() {
       (result) =>
         `Schedule ${result.schedule_id} ${result.enabled ? "enabled" : "disabled"}.`,
     );
-  const deleteSchedule = (row: ScheduleRow) => {
-    if (!window.confirm(`Delete disabled schedule ${row.name}?`)) return;
+  const deleteSchedule = async (row: ScheduleRow) => {
+    if (!await confirmation.ask({
+      title: `Delete schedule ${row.name}?`,
+      description: "This disabled schedule has no execution history and will be removed permanently.",
+      confirmLabel: "Delete schedule",
+      tone: "danger",
+    })) return;
     void runMutation(
       `delete:${row.name}`,
       () =>
@@ -1605,6 +1612,7 @@ export function EnrollmentPage() {
           </div>
         </section>
       </main>
+      {confirmation.dialog}
     </div>
   );
 }

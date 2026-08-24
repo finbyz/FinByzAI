@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from collections import deque
 from datetime import date, datetime
@@ -10,6 +11,7 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import frappe
+from frappe import _
 from frappe.utils import cint, flt, get_datetime, getdate
 
 from .constants import (
@@ -34,6 +36,39 @@ from .registry import (
 
 ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,139}$")
 VALUE_KINDS = {"literal", "record_field", "node_output"}
+ABANDONED_CART_DEFAULT_HOURS = 24
+ABANDONED_CART_MAX_HOURS = 24 * 90
+ABANDONED_CART_UNITS = {"hours": 1, "days": 24}
+
+
+def abandoned_cart_threshold_hours(config: Any) -> int:
+	"""Return the validated cart-idle threshold represented by an event config."""
+	config = config if isinstance(config, dict) else {}
+	value = config.get("abandoned_after_value", ABANDONED_CART_DEFAULT_HOURS)
+	unit = str(config.get("abandoned_after_unit") or "hours").lower()
+	try:
+		number = float(value)
+	except (TypeError, ValueError):
+		raise AutomationError(_("Cart abandonment time must be a whole number."))
+	if not math.isfinite(number) or number <= 0 or not number.is_integer():
+		raise AutomationError(_("Cart abandonment time must be a positive whole number."))
+	if unit not in ABANDONED_CART_UNITS:
+		raise AutomationError(_("Cart abandonment time must use hours or days."))
+	hours = int(number) * ABANDONED_CART_UNITS[unit]
+	if hours > ABANDONED_CART_MAX_HOURS:
+		raise AutomationError(_("Cart abandonment time cannot exceed 90 days."))
+	return hours
+
+
+def abandoned_cart_event_matches(config: Any, payload: Any) -> bool:
+	"""Keep events emitted for one configured threshold from enrolling another."""
+	payload = payload if isinstance(payload, dict) else {}
+	try:
+		configured_hours = abandoned_cart_threshold_hours(config)
+		emitted_hours = int(payload.get("abandoned_after_hours") or ABANDONED_CART_DEFAULT_HOURS)
+	except (AutomationError, TypeError, ValueError):
+		return False
+	return configured_hours == emitted_hours
 
 
 def criteria_branch_outputs(node: dict) -> list[dict]:
@@ -61,6 +96,7 @@ def event_trigger_entries(config: dict, type_version: int = 1) -> list[dict]:
 		return [entry for entry in (entries or []) if isinstance(entry, dict)]
 	return [
 		{
+			**config,
 			"id": "legacy-event",
 			"event_topic": config.get("event_topic"),
 			"event_filter": config.get("event_filter"),
@@ -475,6 +511,11 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 							node_id,
 						)
 					)
+				if topic == "commerce.order.abandoned":
+					try:
+						abandoned_cart_threshold_hours(entry)
+					except AutomationError as exc:
+						issues.append(_issue("INVALID_ABANDONED_CART_TIME", str(exc), f"{entry_path}.abandoned_after_value", node_id))
 				issues.extend(_validate_event_filter(entry.get("event_filter"), topic, f"{entry_path}.event_filter", workflow_doctype, "trigger"))
 			issues.extend(validate_expression(config.get("condition"), f"{path}.config.condition"))
 		if node.get("type") == "trigger.any":
@@ -520,6 +561,11 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 							issues.append(_issue("MISSING_EVENT_TOPIC", "Choose a business event", f"{trigger_path}.config.event_topic", node_id))
 						elif not business_event_available(topic, workflow_doctype, "trigger"):
 							issues.append(_issue("EVENT_NOT_AVAILABLE_FOR_WORKFLOW_OBJECT", f"{topic} is not an enrollment event for {workflow_doctype}", f"{trigger_path}.config.event_topic", node_id))
+						if topic == "commerce.order.abandoned":
+							try:
+								abandoned_cart_threshold_hours(entry_config)
+							except AutomationError as exc:
+								issues.append(_issue("INVALID_ABANDONED_CART_TIME", str(exc), f"{trigger_path}.config.abandoned_after_value", node_id))
 						issues.extend(_validate_event_filter(entry_config.get("event_filter"), topic, f"{trigger_path}.config.event_filter", workflow_doctype, "trigger"))
 		if node.get("type") == "condition.if_else":
 			if node_version == 1:

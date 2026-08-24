@@ -502,7 +502,9 @@ def validate_bindings(graph: dict, execution_user: str, workflow_name: str | Non
 			if sender_email and not frappe.db.exists("Email Account", {"email_id": sender_email, "enable_outgoing": 1}):
 				issues.append({"severity": "error", "code": "UNAUTHORIZED_EMAIL_SENDER", "node_id": node_id, "path": f"nodes.{node_id}.config.sender_email", "message": _("Choose the address of an enabled outgoing Email Account.")})
 			subscription_topic = str(config.get("subscription_topic") or "").strip()
-			if subscription_topic:
+			if subscription_topic and primary_doctype != "Lead":
+				issues.append({"severity": "error", "code": "SUBSCRIPTION_TOPIC_REQUIRES_LEAD", "node_id": node_id, "path": f"nodes.{node_id}.config.subscription_topic", "message": _("FinbyzReach subscription topics are available only for Lead workflows. Other workflow records use global and record-specific unsubscribe rules.")})
+			elif subscription_topic:
 				if "finbyzreach" not in frappe.get_installed_apps():
 					issues.append({"severity": "error", "code": "REACH_NOT_INSTALLED", "node_id": node_id, "path": f"nodes.{node_id}.config.subscription_topic", "message": _("Finbyz Reach is required for topic-based email preferences.")})
 				elif not frappe.db.exists("Subscription Topic", {"name": subscription_topic, "disabled": 0}):
@@ -922,6 +924,19 @@ def delete_workflow_record(workflow_name: str, delete_history: bool = False) -> 
 		{"workflow": workflow.name, "status": ["in", ["QUEUED", "RUNNING", "WAITING"]]},
 	):
 		raise AutomationError(_("This workflow still has active runs. Disable it and wait for cancellation to finish."))
+	run_names = frappe.get_all(
+		"Automation Run", filters={"workflow": workflow.name}, pluck="name", limit_page_length=0
+	)
+	if run_names and frappe.db.exists(
+		"Automation Effect Ledger",
+		{
+			"run": ["in", run_names],
+			"status": ["in", ["PROCESSING", "STARTED", "UNKNOWN_COMMIT"]],
+		},
+	):
+		raise AutomationError(
+			_("This workflow has an external action with unresolved delivery. Wait for it or reconcile it before deleting history.")
+		)
 	if frappe.db.exists(
 		"Automation Backfill Job",
 		{"workflow": workflow.name, "status": ["in", ["QUEUED", "RUNNING", "PAUSED"]]},
@@ -1280,6 +1295,7 @@ def change_workflow_state(workflow_name: str, status: str) -> dict:
 			update_modified=False,
 		)
 	if status == "DISABLED":
+		cancelled_at = now_datetime()
 		run_names = frappe.get_list(
 			"Automation Run",
 			filters={"workflow": workflow.name, "status": ["not in", ["COMPLETED", "FAILED", "CANCELLED"]]},
@@ -1291,20 +1307,24 @@ def change_workflow_state(workflow_name: str, status: str) -> dict:
 			frappe.db.set_value(
 				"Automation Run Token",
 				{"run": ["in", run_names], "status": ["not in", ["RUNNING", "COMPLETED", "FAILED", "CANCELLED"]]},
-				"status", "CANCELLED", update_modified=False,
+				{
+					"status": "CANCELLED",
+					"completed_at": cancelled_at,
+					"lease_owner": None,
+					"lease_until": None,
+				},
+				update_modified=False,
 			)
 			frappe.db.set_value(
 				"Automation Timer",
 				{"run": ["in", run_names], "status": "ACTIVE"},
-				"status",
-				"CANCELLED",
+				{"status": "CANCELLED", "released_at": cancelled_at},
 				update_modified=False,
 			)
 		frappe.db.set_value(
 			"Automation Run",
 			{"workflow": workflow.name, "status": ["not in", ["COMPLETED", "FAILED", "CANCELLED"]]},
-			"status",
-			"CANCELLED",
+			{"status": "CANCELLED", "completed_at": cancelled_at},
 			update_modified=False,
 		)
 	create_audit(workflow.name, f"WORKFLOW_{status}", {})

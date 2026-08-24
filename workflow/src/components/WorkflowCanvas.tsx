@@ -23,10 +23,11 @@ import '@xyflow/react/dist/style.css'
 import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, Copy, LayoutTemplate, Plus, Trash2, Unplug, Zap } from 'lucide-react'
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent } from 'react'
 import { call } from '../lib/api'
-import { reachableWorkflowNodeIds, workflowNodeVisualWidth } from '../lib/workflowGraphCommands'
+import { reachableWorkflowNodeIds, workflowNodeSourceHandles, workflowNodeVisualWidth } from '../lib/workflowGraphCommands'
 import { useWorkflowActions, useWorkflowDocument, useWorkflowEditor } from '../state/WorkflowContext'
 import type { BusinessEventType, CanvasMetric, CanvasMetricsResponse, NodeCatalogItem, NodeType, WorkflowNode } from '../types'
 import { EnrollmentTriggerChooser, type EnrollmentTriggerChoice } from './EnrollmentTriggerChooser'
+import { DeleteWorkflowStepButton } from './DeleteWorkflowStepButton'
 import { nodeLabels, nodeIcons } from './InspectorHelpers'
 
 type WorkflowFlowNode = Node<{ workflowNode: WorkflowNode; primaryDoctype: string; issueCount: number; manualConnections: boolean; connected: boolean; metric?: CanvasMetric }, 'workflow'>
@@ -234,6 +235,11 @@ function enrollmentCards(node: WorkflowNode, events: BusinessEventType[] = [], p
 
 function enrollmentCardSummary(entry: EnrollmentCardEntry, primaryDoctype: string) {
 	if (entry.type === 'trigger.event') {
+		if (entry.config.event_topic === 'commerce.order.abandoned') {
+			const value = Number(entry.config.abandoned_after_value || 24)
+			const unit = entry.config.abandoned_after_unit === 'days' ? 'day' : 'hour'
+			return `After ${value} ${unit}${value === 1 ? '' : 's'} without cart changes`
+		}
 		return entry.config.event_filter ? conditionSummary(entry.config.event_filter as Record<string, unknown>) : 'No event filters applied'
 	}
 	if (entry.type === 'trigger.document_insert') return entry.config.condition ? conditionSummary(entry.config.condition as Record<string, unknown>) : 'No record filters applied'
@@ -359,7 +365,7 @@ const WorkflowNodeCard = memo(({ data, selected }: NodeProps<WorkflowFlowNode>) 
   return (
 	    <article className={`workflow-node workflow-node--${kind}`} style={nodeWidth ? { width: nodeWidth } : undefined} data-invalid={data.issueCount > 0 ? 'true' : 'false'} data-selected={selected ? 'true' : 'false'} data-manual-links={data.manualConnections ? 'true' : 'false'} data-connected={data.connected ? 'true' : 'false'}>
       <span className="workflow-node__rail" aria-hidden />
-	  <div className="workflow-node__quick-actions nodrag nopan"><button type="button" title="Clone this action" aria-label={`Clone ${nodeLabels[node.type] || node.type}`} onClick={(event) => { event.stopPropagation(); actions.duplicateNode(node.id) }}><Copy size={12} /></button><button type="button" title="Delete this action" aria-label={`Delete ${nodeLabels[node.type] || node.type}`} onClick={(event) => { event.stopPropagation(); actions.removeNode(node.id) }}><Trash2 size={12} /></button></div>
+	  <div className="workflow-node__quick-actions nodrag nopan"><button type="button" title="Clone this action" aria-label={`Clone ${nodeLabels[node.type] || node.type}`} onClick={(event) => { event.stopPropagation(); actions.duplicateNode(node.id) }}><Copy size={12} /></button><DeleteWorkflowStepButton node={node} title="Delete this action" aria-label={`Delete ${nodeLabels[node.type] || node.type}`}><Trash2 size={12} /></DeleteWorkflowStepButton></div>
       {!trigger && <Handle type="target" position={Position.Top} className={`workflow-handle ${data.manualConnections ? '' : 'workflow-handle--guided'}`} />}
       <div className="px-4 pb-3.5 pt-4">
         <div className="flex items-start gap-3">
@@ -523,6 +529,7 @@ export function WorkflowCanvas() {
 				type: 'workflow',
 				position: node.position || { x: 120, y: 120 },
 				data: { workflowNode: node, primaryDoctype: graph?.primary_doctype || 'record', issueCount: validation.filter((issue) => issue.node_id === node.id).length, manualConnections, connected: connectedNodeIds.has(node.id), metric: metricsByNode.get(node.id) },
+				deletable: workflowNodeSourceHandles(node).length <= 1,
 			}),
 			...implicitEnds.map((endpoint): VirtualEndFlowNode => ({
 				id: `virtual-end:${endpoint.sourceId}:${endpoint.sourceHandle}`,

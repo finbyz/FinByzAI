@@ -73,6 +73,88 @@ describe('removeWorkflowNodes', () => {
   it('protects the start node and returns the same graph for a no-op', () => {
     expect(removeWorkflowNodes(graph, ['trigger-1', 'missing'])).toBe(graph)
   })
+
+	it('deletes a middle action and reconnects the surrounding journey', () => {
+		const source: WorkflowGraph = {
+			...graph,
+			nodes: [
+				graph.nodes[0],
+				{ id: 'middle', type: 'action.add_comment', type_version: 1, position: { x: 100, y: 300 }, config: {} },
+				{ id: 'following', type: 'action.send_email', type_version: 1, position: { x: 100, y: 500 }, config: {} },
+			],
+			edges: [
+				{ id: 'before', source: 'trigger-1', source_handle: 'default', target: 'middle' },
+				{ id: 'after', source: 'middle', source_handle: 'default', target: 'following' },
+			],
+		}
+		const result = removeWorkflowNodes(source, ['middle'])
+		expect(result.nodes.map((node) => node.id)).toEqual(['trigger-1', 'following'])
+		expect(result.edges).toEqual([{ id: 'before', source: 'trigger-1', source_handle: 'default', target: 'following' }])
+		expect(reachableWorkflowNodeIds(result)).toEqual(new Set(['trigger-1', 'following']))
+	})
+
+	it('heals around a consecutive multi-selection in one structural update', () => {
+		const source: WorkflowGraph = {
+			...graph,
+			nodes: [
+				graph.nodes[0],
+				{ id: 'one', type: 'action.add_comment', type_version: 1, position: { x: 100, y: 300 }, config: {} },
+				{ id: 'two', type: 'delay.fixed', type_version: 1, position: { x: 100, y: 500 }, config: { seconds: 60 } },
+				{ id: 'following', type: 'action.send_email', type_version: 1, position: { x: 100, y: 700 }, config: {} },
+			],
+			edges: [
+				{ id: 'before', source: 'trigger-1', source_handle: 'default', target: 'one' },
+				{ id: 'inside', source: 'one', source_handle: 'default', target: 'two' },
+				{ id: 'after', source: 'two', source_handle: 'default', target: 'following' },
+			],
+		}
+		const result = removeWorkflowNodes(source, ['one', 'two'])
+		expect(result.edges).toEqual([{ id: 'before', source: 'trigger-1', source_handle: 'default', target: 'following' }])
+	})
+
+	it('refuses to guess a continuation when deleting only a multi-path branch', () => {
+		const branch = { id: 'branch', type: 'condition.if_else', type_version: 2, position: { x: 100, y: 300 }, config: { branches: [{ handle: 'yes', name: 'Yes', condition: {} }] } } as const
+		const source: WorkflowGraph = {
+			...graph,
+			nodes: [graph.nodes[0], branch, { ...graph.nodes[1], id: 'yes-action' }, { ...graph.nodes[1], id: 'none-action' }],
+			edges: [
+				{ id: 'before', source: 'trigger-1', source_handle: 'default', target: 'branch' },
+				{ id: 'yes', source: 'branch', source_handle: 'yes', target: 'yes-action' },
+				{ id: 'none', source: 'branch', source_handle: 'none', target: 'none-action' },
+			],
+		}
+		expect(removeWorkflowNodes(source, ['branch'])).toBe(source)
+	})
+
+	it('deletes an owned branch section without orphaning a shared continuation', () => {
+		const branch = { id: 'branch', type: 'condition.if_else', type_version: 2, position: { x: 100, y: 300 }, config: { branches: [{ handle: 'yes', name: 'Yes', condition: {} }] } } as const
+		const source: WorkflowGraph = {
+			...graph,
+			nodes: [
+				graph.nodes[0],
+				branch,
+				{ ...graph.nodes[1], id: 'yes-action' },
+				{ ...graph.nodes[1], id: 'none-action' },
+				{ ...graph.nodes[1], id: 'shared' },
+				{ id: 'outside', type: 'action.add_comment', type_version: 1, position: { x: 700, y: 300 }, config: {} },
+			],
+			edges: [
+				{ id: 'before', source: 'trigger-1', source_handle: 'default', target: 'branch' },
+				{ id: 'yes', source: 'branch', source_handle: 'yes', target: 'yes-action' },
+				{ id: 'none', source: 'branch', source_handle: 'none', target: 'none-action' },
+				{ id: 'yes-join', source: 'yes-action', source_handle: 'default', target: 'shared' },
+				{ id: 'none-join', source: 'none-action', source_handle: 'default', target: 'shared' },
+				{ id: 'outside-join', source: 'outside', source_handle: 'default', target: 'shared' },
+			],
+		}
+		const section = workflowSectionNodeIds(source, 'branch')
+		expect(section).toEqual(['branch', 'yes-action', 'none-action'])
+		const result = removeWorkflowNodes(source, section)
+		expect(result.nodes.map((node) => node.id)).toEqual(['trigger-1', 'shared', 'outside'])
+		expect(result.edges).toContainEqual({ id: 'before', source: 'trigger-1', source_handle: 'default', target: 'shared' })
+		expect(result.edges).toContainEqual({ id: 'outside-join', source: 'outside', source_handle: 'default', target: 'shared' })
+		expect(reachableWorkflowNodeIds(result)).toEqual(new Set(['trigger-1', 'shared']))
+	})
 })
 
 describe('upgradeLegacyIfElseBranches', () => {

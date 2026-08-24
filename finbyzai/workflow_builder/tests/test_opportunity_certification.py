@@ -662,7 +662,7 @@ class TestOpportunityWorkflowCertification(IntegrationTestCase):
 					"Automation Run Token", {"run": run, "status": "WAITING"}, "name"
 				)
 				ledger = frappe.db.get_value(
-					"Automation Effect Ledger", {"run": run, "status": "STARTED"}, "name"
+					"Automation Effect Ledger", {"run": run, "status": "PENDING"}, "name"
 				)
 				self.assertTrue(waiting_token and ledger)
 				engine.execute_external_effect(ledger, waiting_token)

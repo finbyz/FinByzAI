@@ -35,6 +35,7 @@ export function AsyncCombobox({
   const requestNumber = useRef(0)
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState(value)
+  const [committedValue, setCommittedValue] = useState(value)
   const [committedLabel, setCommittedLabel] = useState(value)
   const [options, setOptions] = useState<ComboboxOption[]>([])
   const [highlighted, setHighlighted] = useState(-1)
@@ -59,6 +60,16 @@ export function AsyncCombobox({
       zIndex: 10000,
     })
   }, [])
+
+  useEffect(() => {
+    if (value === committedValue) return
+    // A parent can replace a dependent Link value through undo, record-type
+    // changes, or a draft reload. A label from the old value must never survive
+    // that controlled update.
+    setCommittedValue(value)
+    setCommittedLabel(value)
+    setQuery(value)
+  }, [committedValue, value])
 
   useEffect(() => {
     if (!open) {
@@ -115,6 +126,7 @@ export function AsyncCombobox({
   }, [])
 
   const choose = (option: ComboboxOption) => {
+    setCommittedValue(option.value)
     setCommittedLabel(option.label)
     setQuery(option.label)
     onChange(option.value, option)
@@ -160,7 +172,7 @@ export function AsyncCombobox({
         />
         <span className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
           {loading && <LoaderCircle className="animate-spin text-brand-500" size={14} aria-label="Searching" />}
-          {value && !loading && <button type="button" className="icon-button !size-7" aria-label="Clear selection" onClick={() => { setCommittedLabel(''); setQuery(''); onChange(''); setOpen(true) }}><X size={13} /></button>}
+          {value && !loading && <button type="button" className="icon-button !size-7" aria-label="Clear selection" onClick={() => { setCommittedValue(''); setCommittedLabel(''); setQuery(''); onChange(''); setOpen(true) }}><X size={13} /></button>}
           {!value && !loading && <ChevronDown className="text-[var(--text-light)]" size={14} aria-hidden />}
         </span>
       </div>

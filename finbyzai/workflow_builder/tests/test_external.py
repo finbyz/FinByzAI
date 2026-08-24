@@ -9,6 +9,7 @@ from finbyzai.workflow_builder.errors import AutomationError, AutomationTransien
 from finbyzai.workflow_builder.external import (
 	AutomationUnknownCommitError,
 	MAX_WEBHOOK_RESPONSE_BYTES,
+	_create_outbound_communication,
 	_consume_rate_limit,
 	_native_email_recipient_exclusion,
 	_normalise_sms_recipient,
@@ -18,6 +19,7 @@ from finbyzai.workflow_builder.external import (
 	execute_asana,
 	execute_external,
 	queue_email,
+	repair_email_queue_communication,
 	send_instagram_message,
 	send_frappe_sms,
 	transport_readiness,
@@ -27,6 +29,74 @@ from finbyzai.workflow_builder.schema import canonical_json
 
 
 class TestAutomationExternalSafety(IntegrationTestCase):
+	def test_workflow_email_creates_frappe_automated_message_for_record_timeline(self):
+		run = SimpleNamespace(record_doctype="Lead", record_name="LEAD-1")
+		communication = Mock()
+		with (
+			patch(
+				"frappe.core.doctype.communication.email._make",
+				return_value={"name": "COMMUNICATION-1"},
+			) as make_communication,
+			patch.object(frappe, "get_doc", return_value=communication) as get_doc,
+		):
+			name = _create_outbound_communication(
+				run,
+				sender="Megasol <hello@example.com>",
+				recipient="person@example.com",
+				subject="Hello Ada",
+				message="<p>Welcome Ada</p>",
+				email_template="Lead welcome",
+			)
+
+		self.assertEqual(name, "COMMUNICATION-1")
+		make_communication.assert_called_once_with(
+			doctype="Lead",
+			name="LEAD-1",
+			content="<p>Welcome Ada</p>",
+			subject="Hello Ada",
+			sender="Megasol <hello@example.com>",
+			recipients=["person@example.com"],
+			communication_medium="Email",
+			send_email=False,
+			email_template="Lead welcome",
+			communication_type="Automated Message",
+			add_signature=False,
+		)
+		get_doc.assert_called_once_with("Communication", "COMMUNICATION-1")
+		communication.get_outgoing_email_account.assert_called_once_with()
+
+	def test_legacy_workflow_email_repair_uses_sent_mime_and_is_idempotent(self):
+		queue = SimpleNamespace(
+			name="EMAIL-QUEUE-1",
+			communication=None,
+			reference_doctype="Lead",
+			reference_name="LEAD-1",
+			sender="Megasol <hello@example.com>",
+			message=(
+				"MIME-Version: 1.0\nSubject: Welcome Ada\nContent-Type: text/html; charset=utf-8\n\n"
+				"<p>Exact sent body</p>"
+			),
+			recipients=[SimpleNamespace(recipient="person@example.com")],
+			status="Sent",
+			creation="2026-08-24 08:43:42",
+			owner="Administrator",
+			message_id="message-1@example.com",
+			email_account="Outreach Account",
+		)
+		with (
+			patch.object(frappe.db, "exists", side_effect=lambda doctype, name: doctype in {"Email Queue", "Lead"}),
+			patch.object(frappe, "get_doc", return_value=queue),
+			patch("finbyzai.workflow_builder.external._create_outbound_communication", return_value="COMMUNICATION-1") as create_communication,
+			patch.object(frappe.db, "set_value") as set_value,
+		):
+			name = repair_email_queue_communication(queue.name)
+
+		self.assertEqual(name, "COMMUNICATION-1")
+		create_communication.assert_called_once()
+		self.assertEqual(create_communication.call_args.kwargs["subject"], "Welcome Ada")
+		self.assertEqual(create_communication.call_args.kwargs["message"], "<p>Exact sent body</p>")
+		self.assertEqual(set_value.call_args_list[-1].args[:4], ("Email Queue", "EMAIL-QUEUE-1", "communication", "COMMUNICATION-1"))
+
 	def test_native_email_suppression_honours_global_frappe_unsubscribe(self):
 		run = SimpleNamespace(record_doctype="Lead", record_name="LEAD-1")
 		with (
@@ -69,11 +139,20 @@ class TestAutomationExternalSafety(IntegrationTestCase):
 		}
 		content = {
 			"subject": "Hello Ada",
-			"message": "<html><body>Welcome Ada</body></html>",
+			"message": '<html><body><a href="https://example.com/welcome">Welcome Ada</a></body></html>',
 			"raw_html": True,
 			"email_template": "Lead welcome",
 			"content_hash": "content-123",
 		}
+		tracked_message = (
+			'<html><body><a href="https://example.com/tracked">Welcome Ada</a></body></html>'
+		)
+		tracked_raw_message = (
+			'<html><body><a href="https://example.com/tracked">Welcome Ada</a>'
+			'<div class="email-pixel" aria-hidden="true" '
+			'style="display:none!important;max-height:0;overflow:hidden">'
+			'<!--email_open_check--></div></body></html>'
+		)
 		queue = SimpleNamespace(name="EMAIL-QUEUE-1")
 		with (
 			patch("finbyzai.workflow_builder.external.external_actions_enabled", return_value=True),
@@ -82,20 +161,43 @@ class TestAutomationExternalSafety(IntegrationTestCase):
 			patch("finbyzai.workflow_builder.external._reach_recipient_exclusion", return_value=None),
 			patch("finbyzai.workflow_builder.external.resolve_email_content", return_value=content),
 			patch.object(frappe.db, "exists", return_value=True),
+			patch("finbyzai.workflow_builder.external._create_outbound_communication", return_value="COMMUNICATION-1") as create_communication,
+			patch(
+				"finbyzai.workflow_builder.external.decorate_workflow_email_links",
+				return_value=(tracked_message, 1),
+			) as decorate_links,
+			patch.object(frappe.db, "set_value") as set_value,
 			patch.object(frappe, "sendmail", return_value=queue) as sendmail,
 		):
 			result = queue_email(run, config, record={"lead_name": "Ada"}, outputs={})
 
 		require_consent.assert_not_called()
+		create_communication.assert_called_once_with(
+			run,
+			sender="Megasol <hello@example.com>",
+			recipient="person@example.com",
+			subject="Hello Ada",
+			message=content["message"],
+			email_template="Lead welcome",
+		)
+		decorate_links.assert_called_once_with(content["message"], "COMMUNICATION-1")
+		set_value.assert_called_once_with(
+			"Communication",
+			"COMMUNICATION-1",
+			"content",
+			tracked_raw_message,
+			update_modified=False,
+		)
 		sendmail.assert_called_once_with(
 			recipients=["person@example.com"],
 			sender="Megasol <hello@example.com>",
 			reply_to="reply@example.com",
 			subject="Hello Ada",
-			content="<html><body>Welcome Ada</body></html>",
+			content=tracked_raw_message,
 			delayed=True,
 			reference_doctype="Lead",
 			reference_name="LEAD-1",
+			communication="COMMUNICATION-1",
 			add_unsubscribe_link=1,
 			unsubscribe_message="Unsubscribe",
 			raw_html=True,
@@ -105,6 +207,7 @@ class TestAutomationExternalSafety(IntegrationTestCase):
 			result,
 			{
 				"email_queue": "EMAIL-QUEUE-1",
+				"communication": "COMMUNICATION-1",
 				"recipient": "person@example.com",
 				"sender": "Megasol <hello@example.com>",
 				"reply_to": "reply@example.com",
@@ -141,6 +244,34 @@ class TestAutomationExternalSafety(IntegrationTestCase):
 		self.assertIsNone(result["email_queue"])
 		sendmail.assert_not_called()
 
+	def test_email_action_rolls_back_communication_when_queue_creation_fails(self):
+		run = SimpleNamespace(record_doctype="Lead", record_name="LEAD-1")
+		config = {
+			"content_mode": "inline",
+			"recipient": {"kind": "literal", "value": "person@example.com"},
+		}
+		content = {
+			"subject": "Hello",
+			"message": "Body",
+			"raw_html": False,
+			"email_template": None,
+			"content_hash": None,
+		}
+		with (
+			patch("finbyzai.workflow_builder.external.external_actions_enabled", return_value=True),
+			patch("finbyzai.workflow_builder.external.resolve_email_content", return_value=content),
+			patch("finbyzai.workflow_builder.external._native_email_recipient_exclusion", return_value=None),
+			patch("finbyzai.workflow_builder.external._create_outbound_communication", return_value="COMMUNICATION-1"),
+			patch.object(frappe, "sendmail", return_value=None),
+			patch.object(frappe.db, "rollback") as rollback,
+			patch.object(frappe.db, "release_savepoint") as release_savepoint,
+			self.assertRaisesRegex(AutomationError, "Email Queue"),
+		):
+			queue_email(run, config, record={}, outputs={})
+
+		rollback.assert_called_once_with(save_point="automation_workflow_email")
+		release_savepoint.assert_not_called()
+
 	def test_email_action_enforces_native_global_opt_out_before_reach_topic_check(self):
 		run = SimpleNamespace(record_doctype="Lead", record_name="LEAD-1")
 		config = {
@@ -164,6 +295,60 @@ class TestAutomationExternalSafety(IntegrationTestCase):
 		self.assertEqual(result["suppression_reason"], "Globally unsubscribed")
 		reach_check.assert_not_called()
 		sendmail.assert_not_called()
+
+	def test_non_lead_email_ignores_stale_reach_topic_and_uses_native_unsubscribe(self):
+		run = SimpleNamespace(record_doctype="Customer", record_name="CUSTOMER-1")
+		config = {
+			"content_mode": "inline",
+			"recipient": {"kind": "literal", "value": "person@example.com"},
+			"subscription_topic": "Product Updates",
+		}
+		content = {"subject": "Hello", "message": "Body", "raw_html": False, "email_template": None, "content_hash": "hash"}
+		with (
+			patch("finbyzai.workflow_builder.external.external_actions_enabled", return_value=True),
+			patch("finbyzai.workflow_builder.external.resolve_email_content", return_value=content),
+			patch("finbyzai.workflow_builder.external._native_email_recipient_exclusion", return_value="Globally unsubscribed") as native_check,
+			patch("finbyzai.workflow_builder.external._reach_recipient_exclusion") as reach_check,
+			patch.object(frappe, "get_installed_apps") as installed_apps,
+			patch.object(frappe.db, "exists") as exists,
+			patch.object(frappe, "sendmail") as sendmail,
+		):
+			result = queue_email(run, config, record={}, outputs={})
+
+		self.assertTrue(result["suppressed"])
+		self.assertEqual(result["suppression_reason"], "Globally unsubscribed")
+		self.assertIsNone(result["subscription_topic"])
+		native_check.assert_called_once_with(run, "person@example.com")
+		reach_check.assert_not_called()
+		installed_apps.assert_not_called()
+		exists.assert_not_called()
+		sendmail.assert_not_called()
+
+	def test_non_lead_email_uses_global_unsubscribe_endpoint_with_exact_record_reference(self):
+		run = SimpleNamespace(record_doctype="Customer", record_name="CUSTOMER-1")
+		config = {
+			"content_mode": "inline",
+			"recipient": {"kind": "literal", "value": "person@example.com"},
+		}
+		content = {"subject": "Hello", "message": "Body", "raw_html": False, "email_template": None, "content_hash": "hash"}
+		queue = SimpleNamespace(name="EMAIL-QUEUE-1")
+		with (
+			patch("finbyzai.workflow_builder.external.external_actions_enabled", return_value=True),
+			patch("finbyzai.workflow_builder.external.resolve_email_content", return_value=content),
+			patch("finbyzai.workflow_builder.external._native_email_recipient_exclusion", return_value=None),
+			patch("finbyzai.workflow_builder.external._create_outbound_communication", return_value="COMMUNICATION-1"),
+			patch("finbyzai.workflow_builder.external.decorate_workflow_email_links", return_value=("Body", 0)),
+			patch.object(frappe, "sendmail", return_value=queue) as sendmail,
+		):
+			result = queue_email(run, config, record={}, outputs={})
+
+		self.assertFalse(result["suppressed"])
+		self.assertEqual(sendmail.call_args.kwargs["reference_doctype"], "Customer")
+		self.assertEqual(sendmail.call_args.kwargs["reference_name"], "CUSTOMER-1")
+		self.assertEqual(
+			sendmail.call_args.kwargs["unsubscribe_method"],
+			"/api/method/finbyzai.workflow_builder.integrations.unsubscribe_workflow_email",
+		)
 
 	def test_email_action_rechecks_outgoing_sender_at_execution_time(self):
 		run = SimpleNamespace(record_doctype="Lead", record_name="LEAD-1")

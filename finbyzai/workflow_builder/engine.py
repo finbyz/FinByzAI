@@ -503,6 +503,49 @@ def _append_event(run_name: str, event_type: str, *, node_id: str | None = None,
 	)
 
 
+def _cancel_open_run_artifacts(
+	run_name: str,
+	*,
+	completed_at: datetime,
+	include_running_tokens: bool = False,
+	error_code: str = "WF_RUN_CANCELLED",
+	error_message: str = "Workflow run was cancelled.",
+) -> None:
+	"""Close every durable child row when a run reaches a cancelled state."""
+	token_terminal = list(TOKEN_TERMINAL_STATUSES)
+	if not include_running_tokens:
+		token_terminal.append("RUNNING")
+	frappe.db.set_value(
+		"Automation Run Token",
+		{"run": run_name, "status": ["not in", token_terminal]},
+		{
+			"status": "CANCELLED",
+			"completed_at": completed_at,
+			"lease_owner": None,
+			"lease_until": None,
+			"error_message": error_message,
+		},
+		update_modified=False,
+	)
+	frappe.db.set_value(
+		"Automation Action Attempt",
+		{"run": run_name, "status": ["in", ["STARTED", "WAITING"]]},
+		{
+			"status": "CANCELLED",
+			"completed_at": completed_at,
+			"error_code": error_code,
+			"error_message": error_message,
+		},
+		update_modified=False,
+	)
+	frappe.db.set_value(
+		"Automation Timer",
+		{"run": run_name, "status": "ACTIVE"},
+		{"status": "CANCELLED", "released_at": completed_at},
+		update_modified=False,
+	)
+
+
 def _queue_token(token_name: str) -> None:
 	if not automation_enabled():
 		return
@@ -916,7 +959,9 @@ def _enabled_user_names(identifiers: list[str]) -> list[str]:
 	return users
 
 
-def _claim_effect(run, token, node, request_payload: dict) -> tuple[Any, bool]:
+def _claim_effect(
+	run, token, node, request_payload: dict, *, initial_status: str = "STARTED"
+) -> tuple[Any, bool]:
 	key = _effect_key(run.name, node["id"], cint(token.occurrence))
 	name = frappe.db.get_value("Automation Effect Ledger", {"effect_key": key}, "name", for_update=True)
 	if name:
@@ -929,7 +974,7 @@ def _claim_effect(run, token, node, request_payload: dict) -> tuple[Any, bool]:
 			# A failed effect is safe to retry because the provider did not accept
 			# responsibility for delivery. Re-arm the durable ledger before the
 			# worker is enqueued; UNKNOWN_COMMIT deliberately remains blocked.
-			ledger.status = "STARTED"
+			ledger.status = initial_status
 			ledger.result_json = None
 			ledger.completed_at = None
 			ledger.save(ignore_permissions=True)
@@ -939,7 +984,7 @@ def _claim_effect(run, token, node, request_payload: dict) -> tuple[Any, bool]:
 			"doctype": "Automation Effect Ledger",
 			"effect_key": key,
 			"request_hash": frappe.utils.sha256_hash(canonical_json(request_payload)),
-			"status": "STARTED",
+			"status": initial_status,
 			"run": run.name,
 			"node_id": node["id"],
 		}
@@ -1144,12 +1189,22 @@ def _execute_action(run, token, node, record, value_record, outputs: dict[str, A
 			"Automation Run",
 			filters={"workflow": target_workflow, "record_doctype": record.doctype, "record_name": record.name, "status": ["not in", list(RUN_TERMINAL_STATUSES)], "name": ("!=", run.name)},
 			pluck="name",
-			limit=500,
+			limit=0,
 		)
+		cancelled_at = now_datetime()
 		for other_run in other_runs:
-			frappe.db.set_value("Automation Timer", {"run": other_run, "status": "ACTIVE"}, "status", "CANCELLED", update_modified=False)
-			frappe.db.set_value("Automation Run Token", {"run": other_run, "status": ["not in", list(TOKEN_TERMINAL_STATUSES) + ["RUNNING"]]}, "status", "CANCELLED", update_modified=False)
-			frappe.db.set_value("Automation Run", other_run, {"status": "CANCELLED", "completed_at": now_datetime(), "error_code": "REMOVED_BY_WORKFLOW"}, update_modified=False)
+			_cancel_open_run_artifacts(
+				other_run,
+				completed_at=cancelled_at,
+				error_code="REMOVED_BY_WORKFLOW",
+				error_message="Record was removed from this workflow by another workflow action.",
+			)
+			frappe.db.set_value(
+				"Automation Run",
+				other_run,
+				{"status": "CANCELLED", "completed_at": cancelled_at, "error_code": "REMOVED_BY_WORKFLOW"},
+				update_modified=False,
+			)
 		result = {"cancelled_runs": len(other_runs), "target_workflow": target_workflow, "terminate_path": target_workflow == run.workflow}
 	elif node_type == "action.complete_goal":
 		record.check_permission("read")
@@ -1194,7 +1249,7 @@ def _execute_action(run, token, node, record, value_record, outputs: dict[str, A
 
 def _schedule_external_action(run, token, node) -> dict:
 	request_payload = {"type": node["type"], "config": node.get("config") or {}, "record_key": run.record_key}
-	ledger, completed = _claim_effect(run, token, node, request_payload)
+	ledger, completed = _claim_effect(run, token, node, request_payload, initial_status="PENDING")
 	if completed:
 		return {"status": "COMPLETE", "output": json.loads(ledger.result_json or "{}")}
 	if ledger.status == "UNKNOWN_COMMIT":
@@ -1209,6 +1264,46 @@ def _schedule_external_action(run, token, node) -> dict:
 		deduplicate=True,
 	)
 	return {"status": "WAIT_EXTERNAL", "output": {"effect": ledger.name}}
+
+
+def _claim_external_effect_delivery(ledger_name: str, token_name: str):
+	"""Atomically give one worker ownership of a queued provider call."""
+	# Lock the workflow before its run, matching the state-change path. Disabling
+	# then wins the race cleanly: a worker blocked behind cancellation observes
+	# the terminal run and cannot send.
+	token_run = frappe.db.get_value("Automation Run Token", token_name, "run")
+	if not token_run:
+		return None
+	workflow_name = frappe.db.get_value("Automation Run", token_run, "workflow")
+	if not workflow_name:
+		return None
+	workflow = frappe.get_doc("Automation Workflow", workflow_name, for_update=True)
+	run = frappe.get_doc("Automation Run", token_run, for_update=True)
+	token = frappe.get_doc("Automation Run Token", token_name, for_update=True)
+	ledger = frappe.get_doc("Automation Effect Ledger", ledger_name, for_update=True)
+	if (
+		token.run != run.name
+		or token.status != "WAITING"
+		or run.status in RUN_TERMINAL_STATUSES
+		or ledger.run != run.name
+		or ledger.node_id != token.node_id
+		or ledger.status not in {"PENDING", "STARTED"}
+		or workflow.name != run.workflow
+	):
+		return None
+	if workflow.status != "ACTIVE" or not workflow_runtime_allowed(run.workflow):
+		token.status = "HELD"
+		token.save(ignore_permissions=True)
+		return None
+	ledger.status = "PROCESSING"
+	ledger.save(ignore_permissions=True)
+	# Provider I/O happens after this transaction boundary. Competing workers can
+	# now observe PROCESSING and must return without contacting the provider.
+	# Frappe integration tests own their wrapping transaction and must remain
+	# rollback-isolated; production workers require the explicit durability point.
+	if not frappe.in_test:
+		frappe.db.commit()
+	return ledger
 
 
 def _business_hours_state(config: dict, server_now: datetime | None = None) -> dict:
@@ -1747,12 +1842,12 @@ def _terminate_for_policy(run, token, *, status: str, event_type: str, reason_co
 	token.lease_owner = None
 	token.lease_until = None
 	token.save(ignore_permissions=True)
-	frappe.db.set_value(
-		"Automation Run Token",
-		{"run": run.name, "name": ["!=", token.name], "status": ["not in", ["COMPLETED", "FAILED", "CANCELLED"]]},
-		"status", "CANCELLED", update_modified=False,
+	_cancel_open_run_artifacts(
+		run.name,
+		completed_at=now,
+		error_code="WF_POLICY_TERMINATED",
+		error_message=f"Workflow lifecycle policy ended this run: {reason_code}.",
 	)
-	frappe.db.set_value("Automation Timer", {"run": run.name, "status": "ACTIVE"}, "status", "CANCELLED", update_modified=False)
 	run.status = status
 	run.completed_at = now
 	run.current_node_id = token.node_id
@@ -1798,34 +1893,12 @@ def _terminate_run_from_record_event(
 ) -> None:
 	now = now_datetime()
 	status = "COMPLETED" if outcome == "GOAL_MET" else "CANCELLED"
-	frappe.db.set_value(
-		"Automation Run Token",
-		{"run": run.name, "status": ["not in", ["COMPLETED", "FAILED", "CANCELLED"]]},
-		{
-			"status": "CANCELLED",
-			"completed_at": now,
-			"lease_owner": None,
-			"lease_until": None,
-		},
-		update_modified=False,
-	)
-	frappe.db.set_value(
-		"Automation Action Attempt",
-		{"run": run.name, "status": ["in", ["STARTED", "WAITING"]]},
-		{
-			"status": "CANCELLED",
-			"completed_at": now,
-			"error_code": "WF_POLICY_TERMINATED",
-			"error_message": "Stopped after a relevant record change triggered lifecycle policy evaluation.",
-		},
-		update_modified=False,
-	)
-	frappe.db.set_value(
-		"Automation Timer",
-		{"run": run.name, "status": "ACTIVE"},
-		"status",
-		"CANCELLED",
-		update_modified=False,
+	_cancel_open_run_artifacts(
+		run.name,
+		completed_at=now,
+		include_running_tokens=True,
+		error_code="WF_POLICY_TERMINATED",
+		error_message="Stopped after a relevant record change triggered lifecycle policy evaluation.",
 	)
 	run.status = status
 	run.completed_at = now
@@ -2053,10 +2126,20 @@ def execute_token(token_name: str) -> None:
 		run.save(ignore_permissions=True)
 		return
 	if workflow.status != "ACTIVE":
+		cancelled_at = now_datetime()
 		token.status = "CANCELLED"
+		token.completed_at = cancelled_at
+		token.lease_owner = None
+		token.lease_until = None
 		token.save(ignore_permissions=True)
+		_cancel_open_run_artifacts(
+			run.name,
+			completed_at=cancelled_at,
+			error_code="WF_WORKFLOW_INACTIVE",
+			error_message=f"Workflow is {workflow.status.lower()}.",
+		)
 		run.status = "CANCELLED"
-		run.completed_at = now_datetime()
+		run.completed_at = cancelled_at
 		run.save(ignore_permissions=True)
 		_append_event(run.name, "RUN_CANCELLED", node_id=token.node_id)
 		return
@@ -2194,7 +2277,7 @@ def execute_external_effect(ledger_name: str, token_name: str) -> None:
 
 	# Fetch without locks first to avoid holding DB locks during network IO
 	ledger = frappe.get_doc("Automation Effect Ledger", ledger_name)
-	if ledger.status != "STARTED":
+	if ledger.status not in {"PENDING", "STARTED"}:
 		return
 	token = frappe.get_doc("Automation Run Token", token_name)
 	run = frappe.get_doc("Automation Run", token.run)
@@ -2211,6 +2294,11 @@ def execute_external_effect(ledger_name: str, token_name: str) -> None:
 
 	workflow = frappe.get_doc("Automation Workflow", run.workflow)
 	if workflow.status != "ACTIVE":
+		run = frappe.get_doc("Automation Run", run.name, for_update=True)
+		token = frappe.get_doc("Automation Run Token", token.name, for_update=True)
+		if token.status == "WAITING" and run.status not in RUN_TERMINAL_STATUSES:
+			token.status = "HELD"
+			token.save(ignore_permissions=True)
 		return
 	version = frappe.get_doc("Automation Workflow Version", run.workflow_version)
 	graph = _graph(version)
@@ -2225,6 +2313,9 @@ def execute_external_effect(ledger_name: str, token_name: str) -> None:
 		order_by="attempt_no desc",
 	)
 	attempt = frappe.get_doc("Automation Action Attempt", attempt_name) if attempt_name else None
+	ledger = _claim_external_effect_delivery(ledger.name, token.name)
+	if not ledger:
+		return
 
 	try:
 		from .external import AutomationUnknownCommitError, execute_external
@@ -2258,10 +2349,13 @@ def execute_external_effect(ledger_name: str, token_name: str) -> None:
 		run = frappe.get_doc("Automation Run", run.name, for_update=True)
 		token = frappe.get_doc("Automation Run Token", token.name, for_update=True)
 		ledger = frappe.get_doc("Automation Effect Ledger", ledger.name, for_update=True)
+		if ledger.status != "PROCESSING":
+			return
 
 		if isinstance(exc, AutomationUnknownCommitError):
 			ledger.status = "UNKNOWN_COMMIT"
 			ledger.result_json = json.dumps({"error": str(exc)}, default=str)
+			ledger.completed_at = now_datetime()
 			ledger.save(ignore_permissions=True)
 			if attempt:
 				attempt.status = "UNKNOWN_COMMIT"
@@ -2271,6 +2365,7 @@ def execute_external_effect(ledger_name: str, token_name: str) -> None:
 
 		ledger.status = "FAILED"
 		ledger.result_json = json.dumps({"error": str(exc)}, default=str)
+		ledger.completed_at = now_datetime()
 		ledger.save(ignore_permissions=True)
 
 		if attempt:
@@ -2283,7 +2378,7 @@ def execute_external_effect(ledger_name: str, token_name: str) -> None:
 	ledger = frappe.get_doc("Automation Effect Ledger", ledger.name, for_update=True)
 
 	# Verify states haven't changed while we were doing network I/O
-	if ledger.status != "STARTED" or token.status != "WAITING" or run.status in RUN_TERMINAL_STATUSES:
+	if ledger.status != "PROCESSING" or token.status != "WAITING" or run.status in RUN_TERMINAL_STATUSES:
 		return
 
 	ledger.status = "COMPLETED"
@@ -2303,28 +2398,65 @@ def execute_external_effect(ledger_name: str, token_name: str) -> None:
 def recover_stale_external_effects() -> int:
 	"""Quarantine external effects whose worker outcome can no longer be proven.
 
-	The ledger is committed before an external worker is queued. If that worker is
-	lost, or dies after provider acceptance but before recording the result, a
-	STARTED row can remain forever. Blindly enqueueing it again could duplicate an
-	email, SMS, or webhook, so stale rows become UNKNOWN_COMMIT and require the
-	existing delivered/not-delivered operator reconciliation flow.
+	A stale PENDING row has never been claimed and is safe to enqueue again. A
+	stale PROCESSING row may have reached the provider, so it becomes
+	UNKNOWN_COMMIT and requires operator reconciliation. STARTED remains the
+	conservative interpretation for rows created before the state split existed.
 	"""
 	if not automation_enabled() or not frappe.db.table_exists("Automation Effect Ledger"):
 		return 0
 	stale_after_minutes = min(max(int_setting("alert_queue_age_minutes", 15), 1), 24 * 60)
 	cutoff = add_to_date(now_datetime(), minutes=-stale_after_minutes)
 	limit = min(max(int_setting("token_batch_size", 100), 1), 500)
-	rows = frappe.get_all(
+	recovered = 0
+	pending_rows = frappe.get_all(
 		"Automation Effect Ledger",
-		filters={"status": "STARTED", "modified": ["<=", cutoff]},
+		filters={"status": "PENDING", "modified": ["<=", cutoff]},
 		fields=["name"],
 		order_by="modified asc",
 		limit=limit,
 	)
-	recovered = 0
+	for row in pending_rows:
+		ledger = frappe.get_doc("Automation Effect Ledger", row.name, for_update=True)
+		if ledger.status != "PENDING" or not ledger.modified or ledger.modified > cutoff:
+			continue
+		token_name = frappe.db.get_value(
+			"Automation Run Token",
+			{
+				"run": ledger.run,
+				"node_id": ledger.node_id,
+				"status": "WAITING",
+				"output_json": ["like", f'%"{ledger.name}"%'],
+			},
+			"name",
+			order_by="creation desc",
+		)
+		if not token_name:
+			continue
+		frappe.enqueue(
+			"finbyzai.workflow_builder.engine.execute_external_effect",
+			ledger_name=ledger.name,
+			token_name=token_name,
+			queue="default",
+			enqueue_after_commit=True,
+			job_id=f"automation-external-{ledger.name}",
+			deduplicate=True,
+		)
+		frappe.db.set_value(
+			"Automation Effect Ledger", ledger.name, "modified", now_datetime(), update_modified=False
+		)
+		recovered += 1
+
+	rows = frappe.get_all(
+		"Automation Effect Ledger",
+		filters={"status": ["in", ["PROCESSING", "STARTED"]], "modified": ["<=", cutoff]},
+		fields=["name"],
+		order_by="modified asc",
+		limit=limit,
+	)
 	for row in rows:
 		ledger = frappe.get_doc("Automation Effect Ledger", row.name, for_update=True)
-		if ledger.status != "STARTED" or not ledger.modified or ledger.modified > cutoff:
+		if ledger.status not in {"PROCESSING", "STARTED"} or not ledger.modified or ledger.modified > cutoff:
 			continue
 		message = _(
 			"External action remained in progress beyond {0} minutes. Its delivery state is unknown; reconcile it as delivered or not delivered before continuing."
@@ -2606,21 +2738,20 @@ def recover_orphaned_active_runs() -> int:
 			if not workflow_exists
 			else _("Pinned automation workflow version no longer exists or belongs to another workflow.")
 		)
-		frappe.db.set_value(
-			"Automation Run Token",
-			{"run": run.name, "status": ["not in", list(TOKEN_TERMINAL_STATUSES)]},
-			{"status": "CANCELLED", "lease_owner": None, "lease_until": None, "error_message": message},
-			update_modified=False,
-		)
-		frappe.db.set_value(
-			"Automation Timer", {"run": run.name, "status": "ACTIVE"}, "status", "CANCELLED", update_modified=False
+		completed_at = now_datetime()
+		_cancel_open_run_artifacts(
+			run.name,
+			completed_at=completed_at,
+			include_running_tokens=True,
+			error_code=error_code,
+			error_message=message,
 		)
 		frappe.db.set_value(
 			"Automation Run",
 			run.name,
 			{
 				"status": "FAILED",
-				"completed_at": now_datetime(),
+				"completed_at": completed_at,
 				"error_code": error_code,
 				"error_message": message,
 			},
@@ -2710,16 +2841,16 @@ def cancel_run_record(run_name: str) -> dict:
 	run.check_permission("read")
 	if run.status in RUN_TERMINAL_STATUSES:
 		return {"run_id": run.name, "status": run.status}
+	cancelled_at = now_datetime()
 	run.status = "CANCELLED"
-	run.completed_at = now_datetime()
+	run.completed_at = cancelled_at
 	run.save(ignore_permissions=True)
 	increment_metric(run.workflow, run.workflow_version, "cancelled_runs")
-	frappe.db.set_value(
-		"Automation Run Token",
-		{"run": run.name, "status": ["not in", ["RUNNING", "COMPLETED", "FAILED", "CANCELLED"]]},
-		"status",
-		"CANCELLED",
-		update_modified=False,
+	_cancel_open_run_artifacts(
+		run.name,
+		completed_at=cancelled_at,
+		error_code="WF_OPERATOR_CANCELLED",
+		error_message="Workflow run was cancelled by an operator.",
 	)
 	_append_event(run.name, "RUN_CANCELLED")
 	_resolve_subflow_if_any(run)
@@ -2736,7 +2867,7 @@ def apply_response_policy(record_doctype: str, record_name: str, payload: dict |
 			"status": ["not in", list(RUN_TERMINAL_STATUSES)],
 		},
 		fields=["name", "workflow", "workflow_version"],
-		limit=500,
+		limit=0,
 	)
 	stopped = 0
 	mark_read = False
@@ -2749,22 +2880,15 @@ def apply_response_policy(record_doctype: str, record_name: str, payload: dict |
 		run = frappe.get_doc("Automation Run", row.name, for_update=True)
 		if run.status in RUN_TERMINAL_STATUSES:
 			continue
-		frappe.db.set_value(
-			"Automation Timer",
-			{"run": run.name, "status": "ACTIVE"},
-			"status",
-			"CANCELLED",
-			update_modified=False,
-		)
-		frappe.db.set_value(
-			"Automation Run Token",
-			{"run": run.name, "status": ["not in", list(TOKEN_TERMINAL_STATUSES) + ["RUNNING"]]},
-			"status",
-			"CANCELLED",
-			update_modified=False,
+		cancelled_at = now_datetime()
+		_cancel_open_run_artifacts(
+			run.name,
+			completed_at=cancelled_at,
+			error_code="RESPONSE_RECEIVED",
+			error_message="Workflow stopped because the enrolled record responded.",
 		)
 		run.status = "CANCELLED"
-		run.completed_at = now_datetime()
+		run.completed_at = cancelled_at
 		run.error_code = "RESPONSE_RECEIVED"
 		run.error_message = _("Workflow stopped because the enrolled record responded.")
 		run.save(ignore_permissions=True)
@@ -2823,8 +2947,9 @@ def reconcile_external_effect(ledger_name: str, resolution: str) -> dict:
 		token.status = "READY"
 		token.output_json = json.dumps({"external_completed": True, "result": result})
 	else:
-		ledger.status = "STARTED"
+		ledger.status = "PENDING"
 		ledger.result_json = None
+		ledger.completed_at = None
 		ledger.save(ignore_permissions=True)
 		token.status = "WAITING"
 	token.error_message = None

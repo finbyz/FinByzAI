@@ -85,12 +85,7 @@ type MetadataCacheEntry<T> = { pending: Promise<T>; expiresAt: number }
 const METADATA_CACHE_TTL_MS = 60_000
 const doctypeSearchCache = new Map<string, MetadataCacheEntry<DocTypeCatalogItem[]>>()
 const fieldCatalogCache = new Map<string, MetadataCacheEntry<FieldCatalogResponse>>()
-const linkSearchCache = new Map<string, Promise<LinkSearchResult[]>>()
-
-function remember<T>(cache: Map<string, Promise<T>>, key: string, pending: Promise<T>, limit = 150) {
-  if (cache.size >= limit) cache.delete(cache.keys().next().value as string)
-  cache.set(key, pending)
-}
+const linkSearchCache = new Map<string, MetadataCacheEntry<LinkSearchResult[]>>()
 
 function rememberMetadata<T>(cache: Map<string, MetadataCacheEntry<T>>, key: string, pending: Promise<T>, limit: number) {
   if (cache.size >= limit) cache.delete(cache.keys().next().value as string)
@@ -100,6 +95,7 @@ function rememberMetadata<T>(cache: Map<string, MetadataCacheEntry<T>>, key: str
 export function invalidateMetadataCaches() {
   doctypeSearchCache.clear()
   fieldCatalogCache.clear()
+  linkSearchCache.clear()
 }
 
 export function searchDoctypes(permissionType: MetadataPermissionType, search = '', workflowId?: string): Promise<DocTypeCatalogItem[]> {
@@ -146,12 +142,16 @@ export function searchLink(
 ): Promise<LinkSearchResult[]> {
   const normalized = search.trim()
   const filters = options.filters || {}
-  const key = JSON.stringify([doctype, normalized.toLocaleLowerCase(), filters, options.referenceDoctype, options.linkFieldname])
+  const pageLength = options.pageLength || 10
+  const key = JSON.stringify([doctype, normalized.toLocaleLowerCase(), filters, options.referenceDoctype, options.linkFieldname, pageLength])
+  const cached = linkSearchCache.get(key)
+  if (cached && cached.expiresAt > Date.now()) return cached.pending
+  linkSearchCache.delete(key)
   if (!linkSearchCache.has(key)) {
     const args: Record<string, unknown> = {
       doctype,
       txt: normalized,
-      page_length: options.pageLength || 10,
+      page_length: pageLength,
       filters: JSON.stringify(filters),
       reference_doctype: options.referenceDoctype,
       link_fieldname: options.linkFieldname,
@@ -164,7 +164,7 @@ export function searchLink(
       linkSearchCache.delete(key)
       throw error
     })
-    remember(linkSearchCache, key, pending)
+    rememberMetadata(linkSearchCache, key, pending, 150)
   }
-  return linkSearchCache.get(key)!
+  return linkSearchCache.get(key)!.pending
 }

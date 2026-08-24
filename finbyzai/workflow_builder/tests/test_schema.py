@@ -27,6 +27,7 @@ from finbyzai.workflow_builder.registry import (
 	workflow_object_profile,
 )
 from finbyzai.workflow_builder.schema import (
+	abandoned_cart_threshold_hours,
 	condition_fields,
 	empty_graph,
 	evaluate_expression,
@@ -44,6 +45,17 @@ def predicate(field, operator, value=None):
 
 
 class TestAutomationSchema(IntegrationTestCase):
+	def test_abandoned_cart_threshold_supports_hours_days_and_safe_limits(self):
+		self.assertEqual(abandoned_cart_threshold_hours({}), 24)
+		self.assertEqual(
+			abandoned_cart_threshold_hours({"abandoned_after_value": 2, "abandoned_after_unit": "days"}),
+			48,
+		)
+		with self.assertRaises(AutomationError):
+			abandoned_cart_threshold_hours({"abandoned_after_value": 0, "abandoned_after_unit": "hours"})
+		with self.assertRaises(AutomationError):
+			abandoned_cart_threshold_hours({"abandoned_after_value": 91, "abandoned_after_unit": "days"})
+
 	def test_business_event_catalog_is_scoped_to_enrolled_doctype_and_usage(self):
 		lead_trigger_topics = {row["topic"] for row in business_event_catalog("Lead", "trigger")}
 		opportunity_trigger_topics = {row["topic"] for row in business_event_catalog("Opportunity", "trigger")}
@@ -66,6 +78,10 @@ class TestAutomationSchema(IntegrationTestCase):
 		self.assertIn("commerce.order.abandoned", customer_trigger_topics)
 		self.assertNotIn("commerce.order.created", sales_order_trigger_topics)
 		self.assertIn("email.clicked", sales_order_wait_topics)
+		self.assertIn("email.hard_bounced", lead_trigger_topics)
+		self.assertIn("email.soft_bounced", lead_trigger_topics)
+		self.assertIn("email.opened", lead_trigger_topics)
+		self.assertNotIn("email.complained", lead_trigger_topics)
 		self.assertEqual(workflow_object_profile("Opportunity")["primary_doctype"], "Opportunity")
 		lead_list = next(row for row in business_event_catalog("Lead", "trigger") if row["topic"] == "crm.contact.list.joined")
 		self.assertEqual(lead_list["label"], "Joined a list")
@@ -78,6 +94,9 @@ class TestAutomationSchema(IntegrationTestCase):
 		self.assertIn("subscription_topic", {field["fieldname"] for field in unsubscribe["filter_fields"]})
 		customer_unsubscribe = next(row for row in business_event_catalog("Customer", "trigger") if row["topic"] == "email.unsubscribed")
 		self.assertNotIn("subscription_topic", {field["fieldname"] for field in customer_unsubscribe["filter_fields"]})
+		email_type = next(field for field in customer_unsubscribe["filter_fields"] if field["fieldname"] == "email_type")
+		self.assertEqual(email_type["options"], "global\nrecord")
+		self.assertIn("global opt-out tied to the exact enrolled record", customer_unsubscribe["setup_note"])
 
 		customer_graph = empty_graph("Customer", "trigger.event")
 		customer_graph["nodes"][0]["config"] = {

@@ -47,6 +47,7 @@ import { Inspector } from '../components/Inspector'
 import { HelpTooltip } from '../components/HelpTooltip'
 import { PolicyConditionEditor } from '../components/InspectorHelpers'
 import { AsyncCombobox, type ComboboxOption } from '../components/AsyncCombobox'
+import { useConfirmDialog } from '../components/useConfirmDialog'
 import { NodeCatalog } from '../components/NodeCatalog'
 import { SimulationOutcome } from '../components/SimulationOutcome'
 import { ThemeToggle } from '../components/ThemeToggle'
@@ -119,6 +120,38 @@ export function Status({ value }: { value: string }) {
         ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-500/10 dark:text-amber-300'
         : 'border-[var(--border-color)] bg-[var(--subtle-fg)] text-[var(--text-muted)]'
   return <span className={`status-pill ${tone}`}>{value}</span>
+}
+
+export type ReenrollmentPolicy = 'NEVER' | 'AFTER_COMPLETION' | 'ALWAYS'
+
+const reenrollmentOptions: Array<{ value: ReenrollmentPolicy; title: string; description: string }> = [
+  { value: 'NEVER', title: 'Only once', description: 'Each record can enter this workflow only once.' },
+  { value: 'AFTER_COMPLETION', title: 'After completion', description: 'Allow a new run after the previous run has finished.' },
+  { value: 'ALWAYS', title: 'Every matching event', description: 'Allow every distinct matching event to start a new run.' },
+]
+
+export function ReenrollmentPolicySettings({ value, onChange }: { value: ReenrollmentPolicy; onChange(value: ReenrollmentPolicy): void }) {
+  return (
+    <section className="rounded-xl border border-[var(--border-color)] bg-white/60 p-4 backdrop-blur-md dark:bg-white/5 lg:col-span-2">
+      <h3 className="text-heading text-sm font-bold">Enrollment frequency</h3>
+      <p className="text-muted mt-1 text-[10px] leading-4">Choose whether the same record may enter this workflow again when another matching event occurs.</p>
+      <div className="mt-4 grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Re-enrollment policy">
+        {reenrollmentOptions.map((option) => {
+          const selected = value === option.value
+          return (
+            <label className={`cursor-pointer rounded-lg border p-3 transition ${selected ? 'border-brand-300 bg-brand-50 dark:border-brand-700 dark:bg-brand-500/10' : 'border-[var(--border-color)] bg-[var(--subtle-fg)]'}`} key={option.value}>
+              <span className="flex items-center gap-2">
+                <input type="radio" name="workflow-reenrollment-policy" value={option.value} checked={selected} onChange={() => onChange(option.value)} />
+                <strong className="text-heading text-[11px]">{option.title}</strong>
+              </span>
+              <span className="text-muted mt-1.5 block pl-5 text-[9.5px] leading-4">{option.description}</span>
+            </label>
+          )
+        })}
+      </div>
+      <p className="text-muted mt-3 text-[9.5px] leading-4">This is a versioned setting. Save and publish the resulting draft before it affects new enrollments. Duplicate delivery of the same event is still ignored.</p>
+    </section>
+  )
 }
 
 export function formatDate(value?: string) {
@@ -281,6 +314,7 @@ export function WorkflowListPage() {
   const [error, setError] = useState('')
   const [deleting, setDeleting] = useState<WorkflowSummary>()
   const [moving, setMoving] = useState<WorkflowSummary>()
+  const confirmation = useConfirmDialog()
   const navigate = useNavigate()
   const load = useCallback(async (start = 0, append = false, signal?: AbortSignal) => {
 	const sequence = ++workflowRequestSequence.current
@@ -315,7 +349,12 @@ export function WorkflowListPage() {
   const canOperate = hasRole('Automation Operator', 'Automation Publisher')
   const isSystemManager = hasRole('System Manager')
   const setWorkflowState = async (workflowId: string, status: 'ACTIVE' | 'PAUSED' | 'DISABLED') => {
-    if (status === 'DISABLED' && !window.confirm('Disable this workflow? New enrollments stop and all active runs and timers are cancelled. Published history remains available.')) return
+    if (status === 'DISABLED' && !await confirmation.ask({
+      title: 'Disable this workflow?',
+      description: 'New enrollments will stop. Active runs and waiting timers will be cancelled, while published history remains available.',
+      confirmLabel: 'Disable workflow',
+      tone: 'danger',
+    })) return
     try {
       await call('set_state', mutationEnvelope(workflowId, { status }), true)
       await load()
@@ -389,6 +428,7 @@ export function WorkflowListPage() {
       {creating && <CreateDialog close={() => setCreating(false)} created={(id) => navigate(`/${id}`)} />}
       {deleting && <DeleteWorkflowDialog workflow={deleting} close={() => setDeleting(undefined)} deleted={() => { setDeleting(undefined); void load() }} />}
       {moving && <MoveWorkflowDialog workflow={moving} close={() => setMoving(undefined)} moved={async (folder) => { await call('set_workflow_folder', mutationEnvelope(moving.name, { folder }), true); setMoving(undefined); await load() }} />}
+      {confirmation.dialog}
     </div>
   )
 }
@@ -404,6 +444,16 @@ export function CommunicationSettingsButton({ menuItem = false, onActivated }: {
     communication: { ...communication, ...values },
   })
   return <><button className={menuItem ? 'editor-more-item' : 'btn-core btn-ghost'} title="Configure senders and response handling" onClick={() => { setOpen(true); onActivated?.() }}><Send size={14} /><span><strong>Communication</strong>{menuItem && <small>Senders and response handling</small>}</span></button>{open && createPortal(<div className="dialog-backdrop fixed inset-0 z-50 grid place-items-center p-4" role="dialog" aria-modal="true" aria-labelledby="communication-settings-title" onClick={(event) => { if (event.target === event.currentTarget) setOpen(false) }}><div className="dialog-card flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl"><div className="hero-glow flex items-start justify-between border-b border-[var(--border-color)] px-5 py-5"><div><p className="text-[10px] font-bold uppercase tracking-[0.12em] text-brand-600">Workflow communication</p><h2 id="communication-settings-title" className="text-heading mt-1 text-xl font-bold">Senders and response handling</h2><p className="text-muted mt-1 text-xs">These settings are saved with the draft and pinned to every published version.</p></div><button className="icon-button" onClick={() => setOpen(false)} aria-label="Close communication settings"><X size={17} /></button></div><div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5"><section className="grid gap-3 rounded-xl border border-[var(--border-color)] p-4 sm:grid-cols-2"><label className="text-heading text-[10px] font-semibold">Default sender name<input className={`${field} mt-1.5`} value={communication.default_sender_name || ''} onChange={(event) => update({ default_sender_name: event.target.value })} placeholder="Finbyz Sales" /></label><div><label className="text-heading text-[10px] font-semibold">Authorized sender email</label><AsyncCombobox ariaLabel="Authorized sender email" value={communication.default_sender_email || ''} onChange={(default_sender_email) => update({ default_sender_email })} loadOptions={(search) => call<{ rows: ComboboxOption[] }>('list_email_senders', { search, page_length: 20 }).then((result) => result.rows)} placeholder="Choose enabled Email Account…" /></div><label className="text-heading text-[10px] font-semibold sm:col-span-2">Default SMS sender name / number<input className={`${field} mt-1.5`} value={communication.default_sms_sender || ''} onChange={(event) => update({ default_sms_sender: event.target.value })} placeholder="FINBYZ or +41…" /><span className="text-muted mt-1 block font-normal">The configured provider must allow this sender identity.</span></label></section><section className="space-y-2 rounded-xl border border-[var(--border-color)] p-4"><label className="flex items-start gap-3 rounded-lg bg-[var(--subtle-fg)] p-3"><input className="mt-0.5" type="checkbox" checked={Boolean(communication.stop_on_response)} onChange={(event) => update({ stop_on_response: event.target.checked })} /><span><strong className="text-heading block text-[11px]">Stop when this record responds</strong><span className="text-muted mt-0.5 block text-[10px] leading-4">An incoming Frappe Communication linked to the exact enrolled record cancels its active runs.</span></span></label><label className="flex items-start gap-3 rounded-lg bg-[var(--subtle-fg)] p-3"><input className="mt-0.5" type="checkbox" checked={Boolean(communication.mark_responses_read)} onChange={(event) => update({ mark_responses_read: event.target.checked })} /><span><strong className="text-heading block text-[11px]">Mark matching response as read</strong><span className="text-muted mt-0.5 block text-[10px] leading-4">Clear the linked Communication's unread notification when stop-on-response applies.</span></span></label></section></div><div className="flex justify-end border-t border-[var(--border-color)] px-5 py-4"><button className={primary} onClick={() => setOpen(false)}>Done</button></div></div></div>, document.body)}</>
+}
+
+export function EnrollmentFrequencyButton({ menuItem = false, onActivated }: { menuItem?: boolean; onActivated?(): void } = {}) {
+  const doc = useWorkflowDocument()
+  const actions = useWorkflowActions()
+  const [open, setOpen] = useState(false)
+  const value = doc.settings.reenrollment || 'NEVER'
+  useDialogA11y(open, () => setOpen(false), 'Enrollment frequency')
+  const update = (reenrollment: ReenrollmentPolicy) => actions.updateSettings({ ...doc.settings, reenrollment })
+  return <><button className={menuItem ? 'editor-more-item' : 'btn-core btn-ghost'} title="Choose whether records may enter this workflow again" onClick={() => { setOpen(true); onActivated?.() }}><Zap size={14} /><span><strong>Enrollment frequency</strong>{menuItem && <small>Control when records may re-enter</small>}</span></button>{open && createPortal(<div className="dialog-backdrop fixed inset-0 z-50 grid place-items-center p-4" role="dialog" aria-modal="true" aria-labelledby="enrollment-frequency-title" onClick={(event) => { if (event.target === event.currentTarget) setOpen(false) }}><div className="dialog-card flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl"><div className="hero-glow flex items-start justify-between border-b border-[var(--border-color)] px-5 py-5"><div><p className="text-[10px] font-bold uppercase tracking-[0.12em] text-brand-600">Enrollment settings</p><h2 id="enrollment-frequency-title" className="text-heading mt-1 text-xl font-bold">Enrollment frequency</h2><p className="text-muted mt-1 text-xs">Decide whether a record can start another run after it has already enrolled.</p></div><button className="icon-button" onClick={() => setOpen(false)} aria-label="Close enrollment frequency"><X size={17} /></button></div><div className="min-h-0 flex-1 overflow-y-auto p-5"><ReenrollmentPolicySettings value={value} onChange={update} /></div><div className="flex items-center justify-between gap-3 border-t border-[var(--border-color)] px-5 py-4"><p className="text-muted text-[10px]">After changing this setting, save and publish the new draft version.</p><button className={primary} onClick={() => setOpen(false)}>Done</button></div></div></div>, document.body)}</>
 }
 
 interface WorkflowCommentRow {
@@ -500,6 +550,7 @@ export function EditorMoreMenu() {
   return <div>
     <button ref={buttonRef} className="btn-core btn-ghost" aria-haspopup="menu" aria-expanded={open} onClick={() => { if (!open) positionMenu(); setOpen((value) => !value) }}><Ellipsis size={15} /><span className="max-xl:hidden">More</span></button>
     {createPortal(<div ref={menuRef} className="editor-more-menu" data-open={open ? 'true' : 'false'} role="menu" style={position}>
+	  <EnrollmentFrequencyButton menuItem onActivated={() => setOpen(false)} />
 	  <button className="editor-more-item" onClick={() => { setOpen(false); actions.toggle('policiesOpen', true) }}><Settings2 size={14} /><span><strong>Workflow settings</strong><small>Eligibility, timing, goals and suppressions</small></span></button>
 	  <CommunicationSettingsButton menuItem onActivated={() => setOpen(false)} />
 	  {showEnrollmentPage && <Link className="editor-more-item" to={`/${doc.workflowId}/enrollment`} onClick={() => setOpen(false)}><CalendarClock size={14} /><span><strong>{enrollmentLabel}</strong><small>Manage enrollment operations</small></span></Link>}
@@ -755,7 +806,7 @@ function Editor() {
 
 export function WorkflowEditorPage() {
   const { workflowId = '' } = useParams()
-  return <WorkflowProvider workflowId={workflowId}><Editor /></WorkflowProvider>
+  return <WorkflowProvider key={workflowId} workflowId={workflowId}><Editor /></WorkflowProvider>
 }
 
 export function RunsPage() {
@@ -865,6 +916,7 @@ export function RunDetailPage() {
   const [detail, setDetail] = useState<RunDetail>()
   const [error, setError] = useState('')
   const [traceLoading, setTraceLoading] = useState('')
+  const confirmation = useConfirmDialog()
   const load = useCallback(async () => {
     setError('')
     try {
@@ -879,7 +931,12 @@ export function RunDetailPage() {
   const status = String(detail.run.status)
 	const runTrace = projectRunTrace(detail.graph, detail.tokens)
   const mutateRun = async (method: 'cancel_run' | 'retry_run') => {
-	if (method === 'cancel_run' && !window.confirm(`Cancel run ${runId}? Waiting tokens and timers will be cancelled.`)) return
+	if (method === 'cancel_run' && !await confirmation.ask({
+	  title: `Cancel run ${runId}?`,
+	  description: 'Waiting tokens and timers will be cancelled. Completed effects are not reversed.',
+	  confirmLabel: 'Cancel run',
+	  tone: 'danger',
+	})) return
     try {
       await call(method, { run_id: runId }, true)
       await load()
@@ -915,6 +972,7 @@ export function RunDetailPage() {
         <div className="mt-5 grid gap-5 lg:grid-cols-2"><section className="surface-flat overflow-hidden rounded-xl"><div className="border-b border-[var(--border-color)] px-5 py-4"><h2 className="text-heading text-sm font-bold">Enrollment evidence</h2><p className="text-muted mt-1 text-[10px]">Why this record entered the pinned version, without storing sensitive document values.</p></div>{detail.enrollment_decisions?.length ? <div className="divide-y divide-[var(--border-color)]">{detail.enrollment_decisions.map((row) => <div className="p-4" key={row.name}><div className="flex items-center justify-between gap-3"><div><strong className="text-heading text-[11px]">{row.reason_code}</strong><p className="text-light mt-0.5 text-[9px]">{row.source} · {formatDate(row.decided_at)}</p></div><Status value={row.decision} /></div>{row.evidence_json && <pre className="text-muted mt-2 overflow-auto rounded-lg bg-[var(--subtle-fg)] p-2 text-[9px]">{safeJsonEvidence(row.evidence_json)}</pre>}</div>)}</div> : <p className="p-8 text-center text-xs text-[var(--text-muted)]">Legacy run: no first-class decision evidence.</p>}{traceMore('enrollment_decisions')}</section><section className="surface-flat overflow-hidden rounded-xl"><div className="border-b border-[var(--border-color)] px-5 py-4"><h2 className="text-heading text-sm font-bold">Node attempts</h2><p className="text-muted mt-1 text-[10px]">Every execution and retry attempt, including permanent and ambiguous failures.</p></div>{detail.attempts?.length ? <div className="divide-y divide-[var(--border-color)]">{detail.attempts.map((row) => <div className="flex items-start justify-between gap-3 p-4" key={row.name}><div><strong className="text-heading block text-[11px]">{row.node_id} · attempt {row.attempt_no}</strong><p className="text-light mt-0.5 text-[9px]">{formatDate(row.started_at)}{row.error_code ? ` · ${row.error_code}` : ''}</p>{row.error_message && <p className="mt-1 text-[10px] text-red-600">{row.error_message}</p>}</div><Status value={row.status} /></div>)}</div> : <p className="p-8 text-center text-xs text-[var(--text-muted)]">No node attempts recorded.</p>}{traceMore('attempts')}</section></div>
         {detail.policy_evaluations?.length ? <section className="surface-flat mt-5 overflow-hidden rounded-xl"><div className="border-b border-[var(--border-color)] px-5 py-4"><div className="flex items-center gap-2"><ShieldCheck className="text-brand-500" size={16} /><h2 className="text-heading text-sm font-bold">Lifecycle reevaluations</h2></div><p className="text-muted mt-1 text-[10px]">Relevant record changes checked against the immutable policy pinned to this run.</p></div><div className="divide-y divide-[var(--border-color)]">{detail.policy_evaluations.map((row) => <div className="flex flex-col justify-between gap-3 p-4 sm:flex-row sm:items-center" key={row.name}><div><strong className="text-heading block text-[11px]">{row.reason_code}</strong><p className="text-light mt-0.5 text-[9px]">{formatDate(row.evaluated_at)} · event {row.event_id}</p>{formatJsonList(row.changed_fields_json) && <p className="text-muted mt-1 text-[10px]">Changed fields: {formatJsonList(row.changed_fields_json)}</p>}</div><Status value={row.outcome} /></div>)}</div>{traceMore('policy_evaluations')}</section> : null}
       </main>
+      {confirmation.dialog}
     </div>
   )
 }
@@ -985,6 +1043,7 @@ export function OperationsPage() {
   const [operationHasMore, setOperationHasMore] = useState({ outbox: false, incidents: false, deadLetters: false })
   const [loadingSection, setLoadingSection] = useState('')
   const [operationMutation, setOperationMutation] = useState('')
+  const confirmation = useConfirmDialog()
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
@@ -1049,7 +1108,12 @@ export function OperationsPage() {
 	}
   }
   const mutateEvent = async (method: 'retry_outbox_event' | 'discard_outbox_event', eventId: string) => {
-	if (method === 'discard_outbox_event' && !window.confirm(`Discard outbox event ${eventId}? It will not be processed.`)) return
+	if (method === 'discard_outbox_event' && !await confirmation.ask({
+	  title: `Discard outbox event ${eventId}?`,
+	  description: 'This event will be marked as discarded and will not be processed.',
+	  confirmLabel: 'Discard event',
+	  tone: 'danger',
+	})) return
 	await performOperation(`${method}:${eventId}`, async () => {
 	  await call(method, { event_id: eventId }, true)
 	  await load()
@@ -1071,7 +1135,12 @@ export function OperationsPage() {
   }
   const reconcileExternal = async (name: string, resolution: 'DELIVERED' | 'NOT_DELIVERED') => {
 	const consequence = resolution === 'DELIVERED' ? 'mark the remote effect delivered and continue the run' : 'assert it was not delivered and retry the effect'
-	if (!window.confirm(`Reconcile ${name}? This will ${consequence}.`)) return
+	if (!await confirmation.ask({
+	  title: `Reconcile ${name}?`,
+	  description: `This will ${consequence}. Only continue after checking the external provider.`,
+	  confirmLabel: resolution === 'DELIVERED' ? 'Mark delivered' : 'Confirm safe retry',
+	  tone: 'warning',
+	})) return
 	await performOperation(`reconcile:${name}`, async () => { await call('reconcile_dead_letter', { dead_letter_id: name, resolution }, true); await load() }, 'Unable to reconcile external effect')
   }
   const toggleDeadLetter = (name: string) => setSelectedDeadLetters((current) => {
@@ -1083,7 +1152,12 @@ export function OperationsPage() {
 	await performOperation('bulk-recover', async () => { await call('bulk_retry_dead_letters', { dead_letter_ids: [...selectedDeadLetters] }, true); await load() }, 'Unable to bulk recover')
   }
   const bulkDiscardDeadLetters = async () => {
-	if (!window.confirm(`Discard ${selectedDeadLetters.size} selected recovery item${selectedDeadLetters.size === 1 ? '' : 's'}? They will not be retried.`)) return
+	if (!await confirmation.ask({
+	  title: `Discard ${selectedDeadLetters.size} recovery item${selectedDeadLetters.size === 1 ? '' : 's'}?`,
+	  description: 'The selected items will be closed and cannot be retried from this recovery queue.',
+	  confirmLabel: 'Discard selected',
+	  tone: 'danger',
+	})) return
 	await performOperation('bulk-discard', async () => { await call('bulk_discard_dead_letters', { dead_letter_ids: [...selectedDeadLetters] }, true); await load() }, 'Unable to bulk discard')
   }
   const closeIncident = async (name: string) => {
@@ -1105,6 +1179,7 @@ export function OperationsPage() {
         </section>
         {snapshot?.failed_attempts.length ? <section className="mt-6 surface-flat rounded-xl p-5"><h2 className="text-heading text-sm font-bold">Failed and ambiguous effects</h2><div className="mt-3 grid gap-2">{snapshot.failed_attempts.map((attempt) => <Link className="rounded-lg border border-[var(--border-color)] bg-white/60 dark:bg-white/5 backdrop-blur-md p-3 hover:border-brand-300" to={`/runs/${attempt.run}`} key={attempt.name}><div className="flex items-center justify-between gap-3"><div><strong className="text-heading block text-[11px]">{attempt.node_id}</strong><span className="text-light text-[9px]">{attempt.run} · {attempt.error_code || 'No code'}</span></div><Status value={attempt.status} /></div></Link>)}</div></section> : null}
       </main>
+      {confirmation.dialog}
     </div>
   )
 }

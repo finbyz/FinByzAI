@@ -175,6 +175,53 @@ class TestAutomationEvents(IntegrationTestCase):
 		self.assertEqual(result["enrolled"], [])
 		enroll_event.assert_not_called()
 
+	def test_abandoned_cart_event_enrolls_only_the_matching_configured_threshold(self):
+		record = frappe._dict(doctype="Customer", name="CUSTOMER-1")
+		subscriptions = [
+			frappe._dict(
+				workflow=f"WF-{hours}",
+				workflow_version=f"WFV-{hours}",
+				config_json=frappe.as_json(
+					{
+						"event_topic": "commerce.order.abandoned",
+						"abandoned_after_value": hours,
+						"abandoned_after_unit": "hours",
+					}
+				),
+			)
+			for hours in (6, 24)
+		]
+		with (
+			patch.object(engine, "release_event_waiters") as release,
+			patch.object(frappe, "get_doc", return_value=record),
+			patch.object(frappe, "get_list", return_value=subscriptions),
+			patch.object(
+				frappe.db,
+				"get_value",
+				side_effect=lambda _doctype, workflow, *_args, **_kwargs: frappe._dict(
+					status="ACTIVE", active_version=f"WFV-{workflow.removeprefix('WF-')}"
+				),
+			),
+			patch.object(engine, "enroll", return_value="RUN-6") as enroll_event,
+		):
+			result = events.signal_business_event(
+				"commerce.order.abandoned",
+				{"event_id": "shopping-cart:CART-1:abandoned:6h", "abandoned_after_hours": 6},
+				record_doctype="Customer",
+				record_name="CUSTOMER-1",
+			)
+
+		self.assertEqual(result["released"], 0)
+		self.assertEqual(result["enrolled"], [{"workflow": "WF-6", "run_id": "RUN-6"}])
+		release.assert_not_called()
+		enroll_event.assert_called_once_with(
+			"WF-6",
+			"Customer",
+			"CUSTOMER-1",
+			source="EVENT:commerce.order.abandoned",
+			occurrence_key="commerce.order.abandoned:shopping-cart:CART-1:abandoned:6h",
+		)
+
 	def test_business_event_signal_indexes_the_exact_workflow_email_message(self):
 		with patch.object(engine, "release_event_waiters", return_value=1) as release:
 			result = events.signal_business_event(
@@ -393,6 +440,315 @@ class TestAutomationEvents(IntegrationTestCase):
 		self.assertEqual([call.args[0] for call in emit.call_args_list], ["communication.responded", "email.clicked"])
 		self.assertEqual(emit.call_args_list[1].args[3]["email_queue"], "EMAIL-QUEUE-1")
 
+	def test_communication_adapter_emits_hard_and_soft_bounce_transitions(self):
+		for delivery_status, expected_topic in (
+			("Bounced", "email.hard_bounced"),
+			("Soft-Bounced", "email.soft_bounced"),
+		):
+			with self.subTest(delivery_status=delivery_status):
+				doc = frappe._dict(
+					doctype="Communication",
+					name=f"COMM-{delivery_status}",
+					reference_doctype="Lead",
+					reference_name="LEAD-1",
+					sent_or_received="Sent",
+					communication_medium="Email",
+					sender="sender@example.com",
+					delivery_status=delivery_status,
+					message_id="provider-message-1",
+					subject="Nurture",
+				)
+				doc.get_doc_before_save = lambda: frappe._dict(delivery_status="Sent")
+				with (
+					patch.object(integrations.frappe.db, "get_value", return_value="EMAIL-QUEUE-1"),
+					patch.object(integrations, "_signal") as emit,
+				):
+					integrations.capture_communication_event(doc, "on_update")
+
+				emit.assert_called_once()
+				self.assertEqual(emit.call_args.args[:3], (expected_topic, "Lead", "LEAD-1"))
+				self.assertEqual(emit.call_args.args[3]["email_queue"], "EMAIL-QUEUE-1")
+				self.assertEqual(
+					emit.call_args.args[4],
+					f"communication:COMM-{delivery_status}:delivery:{delivery_status}",
+				)
+
+	def test_communication_adapter_does_not_repeat_unchanged_delivery_status(self):
+		doc = frappe._dict(
+			doctype="Communication",
+			name="COMM-BOUNCE",
+			reference_doctype="Lead",
+			reference_name="LEAD-1",
+			sent_or_received="Sent",
+			delivery_status="Bounced",
+		)
+		doc.get_doc_before_save = lambda: frappe._dict(delivery_status="Bounced")
+		with patch.object(integrations, "_signal") as emit:
+			integrations.capture_communication_event(doc, "on_update")
+
+		emit.assert_not_called()
+
+	def test_inbound_delivery_reports_update_the_exact_sent_message_and_emit_bounces(self):
+		for subject, delivery_status, expected_topic in (
+			("Delivery Status Notification (Failure)", "Bounced", "email.hard_bounced"),
+			("Delivery Status Notification (Delay)", "Soft-Bounced", "email.soft_bounced"),
+		):
+			with self.subTest(subject=subject):
+				incoming = frappe._dict(
+					doctype="Communication",
+					name=f"REPORT-{delivery_status}",
+					sent_or_received="Received",
+					sender="mailer-daemon@googlemail.com",
+					subject=subject,
+					in_reply_to="COMM-SENT-1",
+				)
+				incoming.get_doc_before_save = lambda: None
+				outbound = frappe._dict(
+					name="COMM-SENT-1",
+					sent_or_received="Sent",
+					reference_doctype="Lead",
+					reference_name="LEAD-1",
+					delivery_status="Sent",
+					message_id="message-1",
+					subject="Offer",
+					sender="sender@example.com",
+				)
+				with (
+					patch.object(
+						integrations.frappe.db,
+						"get_value",
+						side_effect=[outbound, "EMAIL-QUEUE-1"],
+					),
+					patch.object(integrations.frappe.db, "set_value") as set_value,
+					patch.object(integrations, "_signal") as emit,
+				):
+					integrations.capture_communication_event(incoming, "after_insert")
+
+				set_value.assert_called_once_with(
+					"Communication",
+					"COMM-SENT-1",
+					"delivery_status",
+					delivery_status,
+					update_modified=False,
+				)
+				emit.assert_called_once()
+				self.assertEqual(emit.call_args.args[:3], (expected_topic, "Lead", "LEAD-1"))
+				self.assertEqual(emit.call_args.args[3]["delivery_report"], f"REPORT-{delivery_status}")
+
+	def test_delivery_report_is_never_treated_as_a_customer_reply(self):
+		doc = frappe._dict(
+			doctype="Communication",
+			name="REPORT-UNMATCHED",
+			reference_doctype="Lead",
+			reference_name="LEAD-1",
+			sent_or_received="Received",
+			sender="postmaster@example.com",
+			subject="Undeliverable: Offer",
+			in_reply_to="UNKNOWN-COMMUNICATION",
+		)
+		doc.get_doc_before_save = lambda: None
+		with (
+			patch.object(integrations.frappe.db, "get_value", side_effect=[None, None]),
+			patch.object(integrations, "_signal") as emit,
+		):
+			integrations.capture_communication_event(doc, "after_insert")
+
+		emit.assert_not_called()
+
+	def test_outbound_frappe_communication_links_are_tracked_before_queueing(self):
+		original = '<p><a href="https://example.com/offer">Offer</a></p>'
+		doc = frappe._dict(
+			doctype="Communication",
+			name="COMM-MANUAL-1",
+			reference_doctype="Lead",
+			reference_name="LEAD-1",
+			sent_or_received="Sent",
+			communication_medium="Email",
+			content=original,
+			delivery_status="",
+		)
+		doc.get_doc_before_save = lambda: None
+		tracked = '<p><a href="https://site.test/tracked">Offer</a></p>'
+		with (
+			patch(
+				"finbyzai.workflow_builder.tracking.decorate_workflow_email_links",
+				return_value=(tracked, 1),
+			) as decorate,
+			patch.object(integrations.frappe.db, "set_value") as set_value,
+		):
+			integrations.capture_communication_event(doc, "after_insert")
+
+		decorate.assert_called_once_with(original, "COMM-MANUAL-1")
+		self.assertEqual(doc.content, tracked)
+		set_value.assert_called_once_with(
+			"Communication", "COMM-MANUAL-1", "content", tracked, update_modified=False
+		)
+
+	def test_visual_template_communication_adds_open_pixel_before_raw_queueing(self):
+		doc = frappe._dict(
+			doctype="Communication",
+			name="COMM-VISUAL-1",
+			reference_doctype="Lead",
+			reference_name="LEAD-1",
+			sent_or_received="Sent",
+			communication_medium="Email",
+			email_template="Visual campaign",
+			content="<html><body><p>No links required</p></body></html>",
+			delivery_status="",
+		)
+		doc.get_doc_before_save = lambda: None
+		with (
+			patch.object(integrations.frappe, "get_cached_value", return_value=1),
+			patch.object(integrations.frappe.db, "set_value") as set_value,
+		):
+			integrations.capture_communication_event(doc, "after_insert")
+
+		self.assertEqual(doc.content.count("<!--email_open_check-->"), 1)
+		self.assertLess(doc.content.index("<!--email_open_check-->"), doc.content.lower().index("</body>"))
+		set_value.assert_called_once_with(
+			"Communication", "COMM-VISUAL-1", "content", doc.content, update_modified=False
+		)
+
+	def test_installed_email_tracking_event_emits_for_its_exact_linked_record(self):
+		doc = frappe._dict(
+			doctype="Email Tracking Event",
+			name="TRACK-1",
+			event_type="Clicked",
+			communication="COMM-1",
+			lead="LEAD-FALLBACK",
+			contact=None,
+			url="https://example.com/offer",
+		)
+		communication = frappe._dict(
+			reference_doctype="Lead",
+			reference_name="LEAD-1",
+			subject="Offer",
+			sender="sender@example.com",
+			message_id="provider-message-1",
+		)
+		with (
+			patch.object(
+				integrations.frappe.db,
+				"get_value",
+				side_effect=[communication, "EMAIL-QUEUE-1"],
+			),
+			patch.object(integrations, "_signal") as emit,
+		):
+			integrations.capture_email_tracking_event(doc)
+
+		emit.assert_called_once()
+		self.assertEqual(emit.call_args.args[:3], ("email.clicked", "Lead", "LEAD-1"))
+		self.assertEqual(emit.call_args.args[3]["email_queue"], "EMAIL-QUEUE-1")
+		self.assertEqual(emit.call_args.args[3]["link_url"], "https://example.com/offer")
+
+	def test_installed_email_tracking_maps_open_and_bounce_events(self):
+		communication = frappe._dict(
+			reference_doctype="Lead",
+			reference_name="LEAD-1",
+			subject="Offer",
+			sender="sender@example.com",
+			message_id="provider-message-1",
+		)
+		for event_type, expected_topic in (
+			("Opened", "email.opened"),
+			("Bounced", "email.hard_bounced"),
+			("Soft-Bounced", "email.soft_bounced"),
+		):
+			with self.subTest(event_type=event_type):
+				doc = frappe._dict(
+					doctype="Email Tracking Event",
+					name=f"TRACK-{event_type}",
+					event_type=event_type,
+					communication="COMM-1",
+					lead=None,
+					contact=None,
+					url=None,
+				)
+				with (
+					patch.object(
+						integrations.frappe.db,
+						"get_value",
+						side_effect=[communication, "EMAIL-QUEUE-1"],
+					),
+					patch.object(integrations, "_signal") as emit,
+				):
+					integrations.capture_email_tracking_event(doc)
+
+				emit.assert_called_once()
+				self.assertEqual(emit.call_args.args[:3], (expected_topic, "Lead", "LEAD-1"))
+				self.assertEqual(emit.call_args.args[3]["email_queue"], "EMAIL-QUEUE-1")
+
+	def test_complaint_event_is_not_produced(self):
+		self.assertNotIn("Marked As Spam", integrations.EMAIL_DELIVERY_TOPICS)
+		doc = frappe._dict(
+			doctype="Communication",
+			name="COMM-SPAM",
+			reference_doctype="Lead",
+			reference_name="LEAD-1",
+			sent_or_received="Sent",
+			delivery_status="Marked As Spam",
+		)
+		doc.get_doc_before_save = lambda: frappe._dict(delivery_status="Sent")
+		with patch.object(integrations, "_signal") as emit:
+			integrations.capture_communication_event(doc, "on_update")
+
+		emit.assert_not_called()
+
+	def test_reach_campaign_tracking_row_does_not_duplicate_topic_unsubscribe(self):
+		doc = frappe._dict(
+			doctype="Email Tracking Event",
+			name="TRACK-UNSUBSCRIBE-1",
+			event_type="Unsubscribed",
+			marketing_campaign_recipient="RECIPIENT-1",
+			communication="COMM-1",
+			lead="LEAD-1",
+			contact=None,
+			url=None,
+		)
+		with patch.object(integrations, "_signal") as emit:
+			integrations.capture_email_tracking_event(doc)
+
+		emit.assert_not_called()
+
+	def test_global_email_unsubscribe_emits_for_its_exact_non_lead_record(self):
+		doc = frappe._dict(
+			doctype="Email Unsubscribe",
+			name="UNSUBSCRIBE-1",
+			email="customer@example.com",
+			reference_doctype="Customer",
+			reference_name="CUSTOMER-1",
+			global_unsubscribe=1,
+		)
+		with patch.object(integrations, "_signal") as emit:
+			integrations.capture_email_unsubscribe(doc)
+
+		emit.assert_called_once()
+		self.assertEqual(emit.call_args.args[:3], ("email.unsubscribed", "Customer", "CUSTOMER-1"))
+		self.assertEqual(emit.call_args.args[3]["email_type"], "global")
+
+	def test_non_lead_workflow_unsubscribe_creates_global_opt_out_with_exact_reference(self):
+		unsubscribe_doc = MagicMock()
+		with (
+			patch.object(integrations.frappe.db, "exists", return_value=True),
+			patch.object(integrations.frappe, "get_doc", return_value=unsubscribe_doc) as get_doc,
+			patch.object(integrations.frappe.db, "commit") as commit,
+			patch.object(integrations.frappe, "respond_as_web_page") as respond,
+		):
+			integrations.unsubscribe_workflow_email(
+				"Customer", "CUSTOMER-1", "CUSTOMER@EXAMPLE.COM"
+			)
+
+		get_doc.assert_called_once_with({
+			"doctype": "Email Unsubscribe",
+			"email": "customer@example.com",
+			"reference_doctype": "Customer",
+			"reference_name": "CUSTOMER-1",
+			"global_unsubscribe": 1,
+		})
+		unsubscribe_doc.insert.assert_called_once_with(ignore_permissions=True)
+		commit.assert_called_once()
+		respond.assert_called_once()
+
 	def test_abandoned_cart_adapter_emits_only_unconverted_customer_portal_carts(self):
 		rows = [
 			frappe._dict(name="QTN-LEAD", quotation_to="Lead", party_name="LEAD-1", contact_person="CONTACT-1", modified=now_datetime()),
@@ -409,6 +765,7 @@ class TestAutomationEvents(IntegrationTestCase):
 		self.assertEqual(count, 1)
 		emit.assert_called_once()
 		self.assertEqual(emit.call_args.args[1:3], ("Customer", "CUSTOMER-1"))
+		self.assertEqual(emit.call_args.args[3]["abandoned_after_hours"], 24)
 		query = get_all.call_args.kwargs
 		self.assertEqual(query["order_by"], "modified desc, name desc")
 		self.assertEqual(query["filters"]["quotation_to"], "Customer")
@@ -429,6 +786,24 @@ class TestAutomationEvents(IntegrationTestCase):
 			self.assertEqual(integrations.capture_abandoned_shopping_carts(), 0)
 		quotation_pages = [call for call in get_all.call_args_list if "start" in call.kwargs]
 		self.assertEqual([call.kwargs["start"] for call in quotation_pages], [0, 500])
+
+	def test_abandoned_cart_adapter_uses_all_active_workflow_thresholds(self):
+		subscriptions = [
+			frappe._dict(config_json=frappe.as_json({"event_topic": "commerce.order.abandoned", "abandoned_after_value": 6, "abandoned_after_unit": "hours"})),
+			frappe._dict(config_json=frappe.as_json({"event_topic": "commerce.order.abandoned", "abandoned_after_value": 2, "abandoned_after_unit": "days"})),
+		]
+
+		def rows(doctype, **_kwargs):
+			return subscriptions if doctype == "Automation Trigger Subscription" else []
+
+		with (
+			patch.object(integrations, "_runtime_ready", return_value=True),
+			patch.object(integrations.frappe, "get_all", side_effect=rows) as get_all,
+		):
+			self.assertEqual(integrations.capture_abandoned_shopping_carts(), 0)
+
+		quotation_queries = [call for call in get_all.call_args_list if call.args[0] == "Quotation"]
+		self.assertEqual(len(quotation_queries), 3)
 
 	def test_reach_topic_preference_bridge_emits_only_new_lead_opt_outs(self):
 		before = {"Product news": "ROW-OLD"}
@@ -467,6 +842,15 @@ class TestAutomationEvents(IntegrationTestCase):
 		self.assertEqual(stopped, 1)
 		self.assertEqual(frappe.db.get_value("Automation Run", run_name, "status"), "CANCELLED")
 		self.assertEqual(frappe.db.get_value("Automation Timer", timer_name, "status"), "CANCELLED")
+		self.assertIsNotNone(frappe.db.get_value("Automation Timer", timer_name, "released_at"))
+		waiting_token = frappe.db.get_value(
+			"Automation Run Token",
+			{"run": run_name, "node_id": "delay"},
+			["status", "completed_at"],
+			as_dict=True,
+		)
+		self.assertEqual(waiting_token.status, "CANCELLED")
+		self.assertIsNotNone(waiting_token.completed_at)
 
 	def test_no_subscription_creates_no_outbox_or_queue_wake(self):
 		with patch.object(events, "_matching_subscriptions", return_value=[]), patch.object(
@@ -716,10 +1100,13 @@ class TestAutomationEvents(IntegrationTestCase):
 		self.assertEqual(events.process_outbox_event(event_name), 0)
 		self.assertEqual(frappe.db.get_value("Automation Run", run_name, "status"), "COMPLETED")
 		self.assertEqual(frappe.db.get_value("Automation Timer", timer_name, "status"), "CANCELLED")
-		self.assertIsNone(frappe.db.get_value("Automation Timer", timer_name, "released_at"))
+		self.assertIsNotNone(frappe.db.get_value("Automation Timer", timer_name, "released_at"))
 		self.assertEqual(
 			frappe.db.get_value("Automation Run Token", {"run": run_name, "node_id": "delay"}, "status"),
 			"CANCELLED",
+		)
+		self.assertIsNotNone(
+			frappe.db.get_value("Automation Run Token", {"run": run_name, "node_id": "delay"}, "completed_at")
 		)
 		evaluation = frappe.get_doc("Automation Policy Evaluation", {"run": run_name, "outbox_event": event_name})
 		self.assertEqual(evaluation.outcome, "GOAL_MET")
@@ -746,6 +1133,7 @@ class TestAutomationEvents(IntegrationTestCase):
 		events.process_outbox_event(event_name)
 		self.assertEqual(frappe.db.get_value("Automation Run", run_name, "status"), "CANCELLED")
 		self.assertEqual(frappe.db.get_value("Automation Timer", timer_name, "status"), "CANCELLED")
+		self.assertIsNotNone(frappe.db.get_value("Automation Timer", timer_name, "released_at"))
 		self.assertEqual(
 			frappe.db.get_value("Automation Policy Evaluation", {"run": run_name}, "outcome"),
 			"ELIGIBILITY_LOST",

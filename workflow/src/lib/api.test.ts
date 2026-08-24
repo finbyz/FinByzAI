@@ -32,6 +32,19 @@ describe('workflow API client', () => {
     expect(String(fetchMock.mock.calls[0][1]?.body)).toContain('enabled')
   })
 
+  it('does not reuse a shorter Link search result for a larger requested page', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ message: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    )
+
+    await searchLink('Lead', 'page-size-cache-test', { pageLength: 10 })
+    await searchLink('Lead', 'page-size-cache-test', { pageLength: 20 })
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({ page_length: 10 })
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toMatchObject({ page_length: 20 })
+  })
+
   it('loads field metadata under the workflow execution-user contract', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ message: { doctype: 'Sales Order API Test', available: true, fields: [] } }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
     await fetchFieldCatalog('Sales Order API Test', 'create', 'AWF-API-TEST')
@@ -52,6 +65,21 @@ describe('workflow API client', () => {
     invalidateMetadataCaches()
 
     await expect(searchDoctypes('read', 'metadata-refresh-test')).resolves.toEqual([{ name: 'Customer' }])
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('invalidates cached Link results with the rest of permission-sensitive metadata', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: [{ value: 'LEAD-0001' }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: [{ value: 'LEAD-0002' }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+
+    await expect(searchLink('Lead', 'link-refresh-test')).resolves.toEqual([{ value: 'LEAD-0001' }])
+    await expect(searchLink('Lead', 'link-refresh-test')).resolves.toEqual([{ value: 'LEAD-0001' }])
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    invalidateMetadataCaches()
+
+    await expect(searchLink('Lead', 'link-refresh-test')).resolves.toEqual([{ value: 'LEAD-0002' }])
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 })

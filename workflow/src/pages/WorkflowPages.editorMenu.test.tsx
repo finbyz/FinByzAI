@@ -21,7 +21,7 @@ vi.mock('../state/WorkflowContext', () => ({
 	WorkflowProvider: ({ children }: { children: ReactNode }) => children,
 }))
 
-import { CommunicationSettingsButton, EditorMoreMenu } from './WorkflowPages'
+import { CommunicationSettingsButton, EditorMoreMenu, EnrollmentFrequencyButton } from './WorkflowPages'
 
 describe('EditorMoreMenu overlays', () => {
 	it('portals the menu and opened utility drawer outside the scrolling editor toolbar', async () => {
@@ -51,5 +51,15 @@ describe('Editor header dialogs', () => {
 		const dialog = screen.getByRole('dialog', { name: 'Senders and response handling' })
 		expect(dialog.parentElement).toBe(document.body)
 		expect(within(dialog).getByText('The configured provider must allow this sender identity.')).toBeInTheDocument()
+	})
+
+	it('lets a published workflow create a re-enrollment settings change without opening the publish dialog first', () => {
+		render(<EnrollmentFrequencyButton />)
+
+		fireEvent.click(screen.getByRole('button', { name: /Enrollment frequency/ }))
+		const dialog = screen.getByRole('dialog', { name: 'Enrollment frequency' })
+		fireEvent.click(within(dialog).getByRole('radio', { name: /Every matching event/ }))
+
+		expect(mocks.updateSettings).toHaveBeenCalledWith({ communication: {}, reenrollment: 'ALWAYS' })
 	})
 })

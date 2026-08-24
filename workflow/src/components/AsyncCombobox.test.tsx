@@ -84,4 +84,20 @@ describe('AsyncCombobox', () => {
     await user.click(screen.getByRole('button', { name: 'Clear selection' }))
     expect(onChange).toHaveBeenCalledWith('')
   })
+
+  it('discards a stale display label when the controlled value changes externally', () => {
+    const props = {
+      ariaLabel: 'Dependent record',
+      onChange: vi.fn(),
+      loadOptions: () => Promise.resolve([]),
+      debounceMs: 0,
+    }
+    const { rerender } = render(<AsyncCombobox {...props} value="LEAD-0001" />)
+
+    expect(screen.getByRole('combobox', { name: 'Dependent record' })).toHaveValue('LEAD-0001')
+
+    rerender(<AsyncCombobox {...props} value="LEAD-0002" />)
+
+    expect(screen.getByRole('combobox', { name: 'Dependent record' })).toHaveValue('LEAD-0002')
+  })
 })

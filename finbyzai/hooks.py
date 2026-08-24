@@ -163,6 +163,9 @@ doc_events = {
 		"after_insert": "finbyzai.workflow_builder.integrations.capture_communication_event",
 		"on_update": "finbyzai.workflow_builder.integrations.capture_communication_event",
 	},
+	"Email Tracking Event": {
+		"after_insert": "finbyzai.workflow_builder.integrations.capture_email_tracking_event",
+	},
 	"Email Unsubscribe": {
 		"after_insert": "finbyzai.workflow_builder.integrations.capture_email_unsubscribe",
 	},
@@ -218,6 +221,9 @@ scheduler_events = {
 # 	"frappe.desk.doctype.event.event.get_events": "finbyzai.event.get_events"
 # }
 override_whitelisted_methods = {
+	"frappe.core.doctype.communication.email.mark_email_as_seen": (
+		"finbyzai.workflow_builder.tracking.mark_workflow_email_as_seen"
+	),
 	"finbyzreach.email_marketing.update_subscription_preferences": (
 		"finbyzai.workflow_builder.integrations.update_reach_subscription_preferences"
 	),

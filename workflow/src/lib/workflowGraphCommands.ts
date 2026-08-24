@@ -51,10 +51,48 @@ export function replaceWorkflowTrigger(graph: WorkflowGraph, item: NodeCatalogIt
 export function removeWorkflowNodes(graph: WorkflowGraph, nodeIds: string[]): WorkflowGraph {
   const removed = new Set(nodeIds.filter((nodeId) => nodeId !== graph.start_node_id))
   if (!removed.size || !graph.nodes.some((node) => removed.has(node.id))) return graph
+
+	const boundaryIncoming = graph.edges.filter((edge) => !removed.has(edge.source) && removed.has(edge.target))
+	const outsideTargets = (nodeId: string, visited = new Set<string>()): Set<string> => {
+		if (visited.has(nodeId)) return new Set()
+		visited.add(nodeId)
+		const targets = new Set<string>()
+		for (const edge of graph.edges.filter((candidate) => candidate.source === nodeId)) {
+			if (removed.has(edge.target)) {
+				for (const target of outsideTargets(edge.target, new Set(visited))) targets.add(target)
+			} else {
+				targets.add(edge.target)
+			}
+		}
+		return targets
+	}
+	const healedTargets = new Map<string, string>()
+	for (const incoming of boundaryIncoming) {
+		const targets = [...outsideTargets(incoming.target)]
+		// Deleting one branching step cannot safely guess which of several paths
+		// should become the continuation. The UI offers an explicit section delete
+		// for that case instead of leaving every child orphaned.
+		if (targets.length > 1) return graph
+		if (targets[0]) healedTargets.set(incoming.id, targets[0])
+	}
+
+	const edges = graph.edges.flatMap((edge) => {
+		if (!removed.has(edge.source) && removed.has(edge.target)) {
+			const target = healedTargets.get(edge.id)
+			return target ? [{ ...edge, target }] : []
+		}
+		return removed.has(edge.source) || removed.has(edge.target) ? [] : [edge]
+	})
+	const outputKeys = new Set<string>()
+	for (const edge of edges) {
+		const key = `${edge.source}:${edge.source_handle}`
+		if (outputKeys.has(key)) return graph
+		outputKeys.add(key)
+	}
   return {
     ...graph,
     nodes: graph.nodes.filter((node) => !removed.has(node.id)),
-    edges: graph.edges.filter((edge) => !removed.has(edge.source) && !removed.has(edge.target)),
+    edges,
   }
 }
 

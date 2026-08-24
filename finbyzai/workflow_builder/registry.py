@@ -43,7 +43,7 @@ NODE_OUTPUT_PATHS = {
 	"action.create_todo": ["doctype", "name", "allocated_to"],
 	"action.add_comment": ["comment"],
 	"action.notify_user": ["for_user", "recipients", "recipient_count"],
-	"action.send_email": ["email_queue", "recipient", "sender", "reply_to", "email_template", "content_hash", "subscription_topic", "suppressed", "suppression_reason"],
+	"action.send_email": ["email_queue", "communication", "recipient", "sender", "reply_to", "email_template", "content_hash", "subscription_topic", "suppressed", "suppression_reason"],
 	"action.send_sms": ["recipient", "status", "status_code", "consent_check"],
 	"action.webhook": ["status_code", "response_hash"],
 	"action.instagram_message": ["recipient_id", "status_code", "response_hash"],
@@ -179,21 +179,10 @@ BUSINESS_EVENT_CATALOG = [
 		],
 	},
 	{
-		"topic": "email.complained",
-		"label": "Email complaint received",
-		"category": "Email",
-		"description": "A recipient reported an email as spam or abuse.",
-		"filter_fields": [
-			{"fieldname": "email_queue", "label": "Workflow email message", "fieldtype": "Data"},
-			{"fieldname": "email_id", "label": "Specific email", "fieldtype": "Data"},
-			{"fieldname": "email_type", "label": "Email type", "fieldtype": "Data"},
-		],
-	},
-	{
 		"topic": "email.unsubscribed",
 		"label": "Email unsubscribed",
 		"category": "Email",
-		"description": "A contact unsubscribed from an email purpose or type.",
+		"description": "An email recipient unsubscribed globally, from a record, or from a Lead topic.",
 		"filter_fields": [
 			{"fieldname": "email_queue", "label": "Workflow email message", "fieldtype": "Data"},
 			{"fieldname": "email_id", "label": "Specific email", "fieldtype": "Data"},
@@ -229,6 +218,7 @@ BUSINESS_EVENT_CATALOG = [
 		"filter_fields": [
 			{"fieldname": "store_id", "label": "Store", "fieldtype": "Data"},
 			{"fieldname": "cart_id", "label": "Cart", "fieldtype": "Data"},
+			{"fieldname": "abandoned_after_hours", "label": "Idle threshold (hours)", "fieldtype": "Int"},
 		],
 	},
 ]
@@ -306,7 +296,7 @@ BUSINESS_EVENT_CONTEXT = {
 		"source_node_types": ["action.send_email"],
 		"producer_status": "native",
 		"source_app": "Frappe Communication",
-		"setup_note": "Emitted when an email provider updates a linked Communication delivery status to Bounced.",
+		"setup_note": "Emitted when a provider updates a linked Communication to Bounced or an imported failure delivery report correlates to the exact sent Communication.",
 	},
 	"email.soft_bounced": {
 		"trigger_traits": {"email_recipient"},
@@ -315,7 +305,7 @@ BUSINESS_EVENT_CONTEXT = {
 		"source_node_types": ["action.send_email"],
 		"producer_status": "native",
 		"source_app": "Frappe Communication",
-		"setup_note": "Emitted when an email provider updates a linked Communication delivery status to Soft-Bounced.",
+		"setup_note": "Emitted when a provider updates a linked Communication to Soft-Bounced or an imported delay delivery report correlates to the exact sent Communication.",
 	},
 	"email.clicked": {
 		"trigger_traits": {"email_recipient"},
@@ -332,17 +322,8 @@ BUSINESS_EVENT_CONTEXT = {
 		"source_modes": ["enrolled_record", "action_output"],
 		"source_node_types": ["action.send_email"],
 		"producer_status": "native",
-		"source_app": "Frappe Communication",
-		"setup_note": "Emitted when an email provider updates a linked Communication delivery status to Opened.",
-	},
-	"email.complained": {
-		"trigger_traits": {"email_recipient"},
-		"wait_traits": {"record"},
-		"source_modes": ["enrolled_record", "action_output"],
-		"source_node_types": ["action.send_email"],
-		"producer_status": "native",
-		"source_app": "Frappe Communication",
-		"setup_note": "Emitted when an email provider updates a linked Communication delivery status to Marked As Spam.",
+		"source_app": "FinbyzAI tracking / Frappe Communication",
+		"setup_note": "Emitted once when the tracked open pixel loads, when a tracked link records the first open, or when an installed tracker creates an Opened event for the exact Communication.",
 	},
 	"email.unsubscribed": {
 		"trigger_traits": {"email_recipient"},
@@ -376,7 +357,7 @@ BUSINESS_EVENT_CONTEXT = {
 		"source_modes": ["enrolled_record"],
 		"producer_status": "native",
 		"source_app": "ERPNext Shopping Cart",
-		"setup_note": "A Customer Portal Shopping Cart quotation linked to the enrolled Customer emits once after remaining unchanged for 24 hours without conversion to a Sales Order.",
+		"setup_note": "A Customer Portal Shopping Cart quotation linked to the enrolled Customer emits after the trigger's configured idle time without conversion to a Sales Order. Existing workflows default to 24 hours.",
 	},
 }
 
@@ -1110,7 +1091,7 @@ def business_event_catalog(primary_doctype: str | None = None, usage: str = "all
 					field["options"] = "global\nrecord"
 			context = dict(context)
 			context["source_app"] = "Frappe Email Unsubscribe / Communication"
-			context["setup_note"] = "Emitted from a Frappe Email Unsubscribe record or a linked Communication delivery status of Recipient Unsubscribed."
+			context["setup_note"] = "Workflow email links create a global opt-out tied to the exact enrolled record. Existing record-specific Frappe opt-outs and linked Communication unsubscribe statuses are also supported."
 		definition.update(
 			{
 				"available_for": available_for,
