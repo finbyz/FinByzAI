@@ -27,6 +27,7 @@ import { createPortal } from 'react-dom'
 import { AsyncCombobox, type ComboboxOption } from './AsyncCombobox'
 import { MultiValueInput } from './MultiValueInput'
 import { HelpTooltip } from './HelpTooltip'
+import { DeleteWorkflowStepButton } from './DeleteWorkflowStepButton'
 import { useDialogA11y } from './useDialogA11y'
 import { call, fetchFieldCatalog, invalidateMetadataCaches, searchDoctypes, searchLink } from '../lib/api'
 import { availableOutputNodes, conditionToFilterGroups, emptyPredicate, filterGroupsToCondition, isRequiredAuthoringValueMissing, outputCatalog, parseCondition, parseWebhookPayload, type NodeOutputCatalog } from '../lib/inspectorAuthoring'
@@ -180,6 +181,13 @@ export function SendEmailEditor({
 		return () => { active = false }
 	}, [contentMode, templateName, workflowId])
 
+	useEffect(() => {
+		if (primaryDoctype === 'Lead' || !String(config.subscription_topic || '').trim()) return
+		const nextConfig = { ...config }
+		delete nextConfig.subscription_topic
+		update(nextConfig, 'subscription_topic:remove-inapplicable')
+	}, [config, primaryDoctype, update])
+
 	const previewEmail = async () => {
 		setPreviewLoading(true)
 		setPreviewError('')
@@ -232,7 +240,7 @@ export function SendEmailEditor({
 		</InspectorSection>
 		<InspectorSection title="Recipient and sending details" description="Choose who receives the message and optionally override workflow-level sender defaults.">
 			{recipientEditor}
-			<div data-config-path="subscription_topic"><label className={labelClass}>Reach subscription topic <span className="font-normal">(optional)</span></label><AsyncCombobox ariaLabel="Reach subscription topic" value={String(config.subscription_topic || '')} onChange={(subscription_topic) => update({ ...config, subscription_topic }, 'subscription_topic')} loadOptions={(search) => searchLink('Subscription Topic', search, { filters: { disabled: 0 }, pageLength: 20 }).then((rows) => rows.map((row) => ({ value: row.value, label: row.label || row.value, description: row.description })))} placeholder="Search active Reach topics…" /><Hint>Global Frappe and CRM opt-outs are always enforced. Choose a topic when the resolved recipient belongs to a Lead whose Reach campaign preferences must also be respected. Workflow emails do not alter Reach’s preference page.</Hint></div>
+			{primaryDoctype === 'Lead' ? <div data-config-path="subscription_topic"><label className={labelClass}>Reach subscription topic <span className="font-normal">(optional)</span></label><AsyncCombobox ariaLabel="Reach subscription topic" value={String(config.subscription_topic || '')} onChange={(subscription_topic) => update({ ...config, subscription_topic }, 'subscription_topic')} loadOptions={(search) => searchLink('Subscription Topic', search, { filters: { disabled: 0 }, pageLength: 20 }).then((rows) => rows.map((row) => ({ value: row.value, label: row.label || row.value, description: row.description })))} placeholder="Search active Reach topics…" /><Hint>Global Frappe and CRM opt-outs are always enforced. Choose a topic to also respect this Lead’s FinbyzReach campaign preferences. Workflow emails do not alter Reach’s preference page.</Hint></div> : <Hint>The unsubscribe link globally opts out this recipient and triggers Email unsubscribed for this exact {primaryDoctype || 'record'}. Existing global and record-specific opt-outs are also enforced. FinbyzReach topics are Lead-only.</Hint>}
 			<div className="grid grid-cols-2 gap-2"><div><label className={labelClass}>From name <span className="font-normal">(optional)</span></label><input className={inputClass} value={String(config.sender_name || '')} onChange={(event) => update({ ...config, sender_name: event.target.value }, 'sender_name')} placeholder="Workflow default" /></div><div><label className={labelClass}>From email <span className="font-normal">(optional)</span></label><AsyncCombobox ariaLabel="From email" value={String(config.sender_email || '')} onChange={(sender_email) => update({ ...config, sender_email }, 'sender_email')} loadOptions={(search) => call<{ rows: ComboboxOption[] }>('list_email_senders', { search, page_length: 20 }).then((result) => result.rows)} placeholder="Use workflow default" /></div></div>
 			<div><label className={labelClass}>Reply-To <span className="font-normal">(optional)</span></label><input type="email" className={inputClass} value={String(config.reply_to || '')} onChange={(event) => update({ ...config, reply_to: event.target.value }, 'reply_to')} placeholder="replies@example.com" /></div>
 		</InspectorSection>
@@ -301,10 +309,25 @@ function EventCriteriaEditor({ topic, value, events, onChange }: { topic: string
 	return <div className="space-y-2"><div className="flex items-center justify-between"><span className={labelClass}>Event criteria</span><button type="button" className="btn-core btn-ghost !min-h-7 !px-2 !text-[9px]" onClick={() => onChange(null)}>Clear</button></div><ConditionExpressionEditor expression={parseCondition(value)} fields={fields} depth={0} onChange={onChange} /></div>
 }
 
+export function AbandonedCartTimingEditor({ config, onChange }: { config: NodeConfig; onChange(config: NodeConfig): void }) {
+	const unit = String(config.abandoned_after_unit || 'hours') === 'days' ? 'days' : 'hours'
+	const rawValue = Number(config.abandoned_after_value ?? 24)
+	const value = Number.isFinite(rawValue) ? rawValue : 24
+	const max = unit === 'days' ? 90 : 2160
+	const changeUnit = (nextUnit: 'hours' | 'days') => {
+		const hours = value * (unit === 'days' ? 24 : 1)
+		const nextValue = nextUnit === 'days' ? Math.max(1, Math.ceil(hours / 24)) : hours
+		onChange({ ...config, abandoned_after_value: nextValue, abandoned_after_unit: nextUnit })
+	}
+	return <div className="rounded-lg border border-[var(--border-color)] bg-[var(--subtle-fg)] p-3"><label className={labelClass}>Mark the cart abandoned after</label><div className="mt-1.5 grid grid-cols-[minmax(0,1fr)_120px] gap-2"><input aria-label="Cart idle duration" type="number" min={1} max={max} step={1} className={inputClass} value={value} onChange={(event) => onChange({ ...config, abandoned_after_value: Number(event.target.value), abandoned_after_unit: unit })} /><select aria-label="Cart idle duration unit" className={inputClass} value={unit} onChange={(event) => changeUnit(event.target.value as 'hours' | 'days')}><option value="hours">Hours</option><option value="days">Days</option></select></div><Hint>The hourly scheduler enrolls the Customer after this cart has remained unchanged for the selected time. Placing the order prevents enrollment.</Hint></div>
+}
+
 interface EnrollmentEventEntry {
 	id: string
 	event_topic: string
 	event_filter?: ConditionExpression | null
+	abandoned_after_value?: number
+	abandoned_after_unit?: 'hours' | 'days'
 }
 
 function EventEnrollmentEditor({ config, typeVersion, events, recordFields, primaryDoctype, update }: { config: NodeConfig; typeVersion: number; events: BusinessEventType[]; recordFields: FieldCatalogItem[]; primaryDoctype?: string; update(config: NodeConfig, key: string): void }) {
@@ -316,7 +339,8 @@ function EventEnrollmentEditor({ config, typeVersion, events, recordFields, prim
 	const setEntries = (next: EnrollmentEventEntry[], key: string) => {
 		if (legacy) {
 			const entry = next[0] || { id: 'legacy-event', event_topic: '', event_filter: null }
-			update({ ...config, event_topic: entry.event_topic, event_filter: entry.event_filter || null }, key)
+			const { id: _entryId, ...entryConfig } = entry
+			update({ ...config, ...entryConfig, event_filter: entry.event_filter || null }, key)
 			return
 		}
 		update({ ...config, events: next }, key)
@@ -327,6 +351,7 @@ function EventEnrollmentEditor({ config, typeVersion, events, recordFields, prim
 		<InspectorSection title={`Configure event ${selectedIndex + 1} of ${entries.length}`} description={`Each event card is an independent OR enrollment path for this ${primaryDoctype || 'record'}. Filters here refine only this event.`}>
 			<section className="space-y-3" data-config-path={legacy ? 'event_topic' : `events.${selectedIndex}`}>
 				<div><label className={labelClass}>What should happen?</label><EventTopicPicker value={selectedEntry.event_topic} events={events} onChange={(event_topic) => setEntries(entries.map((item, index) => index === selectedIndex ? { ...item, event_topic, event_filter: null } : item), `events:${selectedIndex}:topic`)} /><EventContextNotice topic={selectedEntry.event_topic} events={events} usage="trigger" /></div>
+				{selectedEntry.event_topic === 'commerce.order.abandoned' && <AbandonedCartTimingEditor config={selectedEntry as unknown as NodeConfig} onChange={(next) => setEntries(entries.map((item, index) => index === selectedIndex ? { ...item, ...next } as EnrollmentEventEntry : item), `events:${selectedIndex}:abandonment`)} />}
 				<EventCriteriaEditor topic={selectedEntry.event_topic} value={selectedEntry.event_filter} events={events} onChange={(event_filter) => setEntries(entries.map((item, index) => index === selectedIndex ? { ...item, event_filter } : item), `events:${selectedIndex}:filter`)} />
 			</section>
 			<Hint>Only occurrences received after this workflow version is published can enroll a record. Customer Portal and Aircall events use their installed adapters and exact record mappings.</Hint>
@@ -353,7 +378,7 @@ function MultiTriggerEditor({ config, typeVersion, events, fields, primaryDoctyp
 		<div className="space-y-3" data-config-path={`triggers.${selectedIndex}`}>
 			<div><label className={labelClass}>Enrollment moment</label><select className={inputClass} value={selectedEntry.type} onChange={(event) => replace(selectedIndex, { type: event.target.value, config: defaultConfig(event.target.value) })}><option value="trigger.document_insert">{primaryDoctype || 'Record'} is created</option><option value="trigger.document_change">{primaryDoctype || 'Record'} changes</option>{typeVersion < 2 && <option value="trigger.filter_criteria">Record meets criteria (legacy mixed mode)</option>}<option value="trigger.event">Installed business event occurs</option></select></div>
 			{selectedEntry.type === 'trigger.document_change' && <div><label className={labelClass}>Only when these fields change <span className="text-muted font-normal">(optional)</span></label><MultiValueInput values={(Array.isArray(entryConfig.watch_fields) ? entryConfig.watch_fields : []).map(String)} onChange={(watch_fields) => replace(selectedIndex, { config: { ...entryConfig, watch_fields } })} loadOptions={async (search) => fields.filter((field) => !search || `${field.label} ${field.fieldname}`.toLowerCase().includes(search.toLowerCase())).map((field) => ({ value: field.fieldname, label: field.label, description: field.fieldtype }))} placeholder="Any field change" ariaLabel={`Trigger ${selectedIndex + 1} watched fields`} /></div>}
-			{selectedEntry.type === 'trigger.event' && <div><label className={labelClass}>Business event</label><EventTopicPicker value={String(entryConfig.event_topic || '')} events={events} onChange={(event_topic) => replace(selectedIndex, { config: { ...entryConfig, event_topic, event_filter: null } })} /><EventContextNotice topic={String(entryConfig.event_topic || '')} events={events} usage="trigger" /><div className="mt-3"><EventCriteriaEditor topic={String(entryConfig.event_topic || '')} value={entryConfig.event_filter} events={events} onChange={(event_filter) => replace(selectedIndex, { config: { ...entryConfig, event_filter } })} /></div></div>}
+			{selectedEntry.type === 'trigger.event' && <div><label className={labelClass}>Business event</label><EventTopicPicker value={String(entryConfig.event_topic || '')} events={events} onChange={(event_topic) => replace(selectedIndex, { config: { ...entryConfig, event_topic, event_filter: null } })} /><EventContextNotice topic={String(entryConfig.event_topic || '')} events={events} usage="trigger" />{String(entryConfig.event_topic || '') === 'commerce.order.abandoned' && <div className="mt-3"><AbandonedCartTimingEditor config={entryConfig} onChange={(config) => replace(selectedIndex, { config })} /></div>}<div className="mt-3"><EventCriteriaEditor topic={String(entryConfig.event_topic || '')} value={entryConfig.event_filter} events={events} onChange={(event_filter) => replace(selectedIndex, { config: { ...entryConfig, event_filter } })} /></div></div>}
 			<div><div className="mb-2 flex items-center justify-between"><label className={labelClass}>Record filters <span className="text-muted font-normal">(optional)</span></label>{Boolean(entryConfig.condition) && <button type="button" className="btn-core btn-ghost !min-h-7 !px-2 !text-[9px]" onClick={() => replace(selectedIndex, { config: { ...entryConfig, condition: null } })}>Clear</button>}</div>{entryConfig.condition ? <ConditionExpressionEditor expression={parseCondition(entryConfig.condition)} fields={fields} primaryDoctype={primaryDoctype} depth={0} onChange={(condition) => replace(selectedIndex, { config: { ...entryConfig, condition } })} /> : <button type="button" className="btn-core btn-secondary w-full !text-[10px]" onClick={() => replace(selectedIndex, { config: { ...entryConfig, condition: emptyPredicate() } })}><Plus size={12} />Add record filter</button>}</div>
 		</div>
 		<Hint>Use Add new trigger on the canvas for another OR path. Historical events do not enroll records; publish first or use a controlled backfill.</Hint>
@@ -767,7 +792,7 @@ export function Inspector({ width, minWidth, maxWidth, expanded, onWidthChange, 
           </div>
 			<div className="flex shrink-0 gap-1">
 			  <button type="button" className="icon-button" disabled={!canToggleWidth} onClick={onToggleExpanded} aria-label={expanded ? 'Restore step settings sidebar width' : 'Expand step settings sidebar'} title={expanded ? 'Use standard panel width' : 'Make panel wider'}>{expanded ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}</button>
-			  {node.id !== graph?.start_node_id && <details className="inspector-step-menu"><summary className="icon-button" aria-label="More step actions" title="More step actions"><Ellipsis size={16} /></summary><div className="inspector-step-menu__popover"><button type="button" onClick={(event) => { actions.copyNode(node.id); (event.currentTarget.closest('details') as HTMLDetailsElement).open = false }}><Copy size={14} />Copy this step</button><button type="button" onClick={(event) => { actions.duplicateNode(node.id); (event.currentTarget.closest('details') as HTMLDetailsElement).open = false }}><Plus size={14} />Duplicate below</button><button type="button" onClick={(event) => { actions.copySection(node.id); (event.currentTarget.closest('details') as HTMLDetailsElement).open = false }}><Network size={14} />Copy this path</button><button type="button" onClick={(event) => { actions.duplicateSection(node.id); (event.currentTarget.closest('details') as HTMLDetailsElement).open = false }}><Network size={14} />Duplicate this path</button><button type="button" data-danger="true" onClick={() => actions.removeNode(node.id)}><Trash2 size={14} />Delete this step</button></div></details>}
+			  {node.id !== graph?.start_node_id && <details className="inspector-step-menu"><summary className="icon-button" aria-label="More step actions" title="More step actions"><Ellipsis size={16} /></summary><div className="inspector-step-menu__popover"><button type="button" onClick={(event) => { actions.copyNode(node.id); (event.currentTarget.closest('details') as HTMLDetailsElement).open = false }}><Copy size={14} />Copy this step</button><button type="button" onClick={(event) => { actions.duplicateNode(node.id); (event.currentTarget.closest('details') as HTMLDetailsElement).open = false }}><Plus size={14} />Duplicate below</button><button type="button" onClick={(event) => { actions.copySection(node.id); (event.currentTarget.closest('details') as HTMLDetailsElement).open = false }}><Network size={14} />Copy this path</button><button type="button" onClick={(event) => { actions.duplicateSection(node.id); (event.currentTarget.closest('details') as HTMLDetailsElement).open = false }}><Network size={14} />Duplicate this path</button><DeleteWorkflowStepButton node={node} data-danger="true"><Trash2 size={14} />Delete this step</DeleteWorkflowStepButton></div></details>}
 			</div>
         </div>
       </div>

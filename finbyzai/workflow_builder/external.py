@@ -7,6 +7,8 @@ import json
 import re
 import socket
 import ssl
+from email import policy
+from email.parser import Parser
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -21,6 +23,7 @@ from .configuration import external_actions_enabled
 from .emailing import resolve_email_content
 from .errors import AutomationError, AutomationTransientError
 from .schema import resolve_value
+from .tracking import decorate_workflow_email_links, ensure_workflow_open_tracking
 
 
 MAX_WEBHOOK_RESPONSE_BYTES = 1024 * 1024
@@ -176,6 +179,110 @@ def _reach_recipient_exclusion(recipient: str, subscription_topic: str | None = 
 	return checker(recipient, subscription_topic or None)
 
 
+def _create_outbound_communication(
+	run,
+	*,
+	sender: str,
+	recipient: str,
+	subject: str,
+	message: str,
+	email_template: str | None,
+) -> str:
+	"""Create the standard Frappe timeline record for a workflow email.
+
+	Email Queue references alone are not rendered by either Frappe's native
+	timeline or the installed CRM activity workspace. Frappe's own Notification
+	implementation creates an Automated Message Communication first and passes
+	its name into ``sendmail``; workflow email must preserve the same invariant.
+	"""
+	from frappe.core.doctype.communication.email import _make as make_communication
+
+	result = make_communication(
+		doctype=run.record_doctype,
+		name=run.record_name,
+		content=message,
+		subject=subject,
+		sender=sender or None,
+		recipients=[recipient],
+		communication_medium="Email",
+		send_email=False,
+		email_template=email_template or None,
+		communication_type="Automated Message",
+		add_signature=False,
+	)
+	communication_name = str((result or {}).get("name") or "")
+	if not communication_name:
+		raise AutomationError(_("Frappe did not create an outbound Communication record."))
+
+	# Store the same outgoing account resolution Frappe uses for manually sent
+	# and Notification emails. Delivery status is then maintained by Email Queue.
+	frappe.get_doc("Communication", communication_name).get_outgoing_email_account()
+	return communication_name
+
+
+def repair_email_queue_communication(queue_name: str) -> str | None:
+	"""Attach a missing Communication to one legacy workflow Email Queue row.
+
+	The exact sent MIME body is used, so this is a historical data repair rather
+	than a newly rendered template or a second email delivery. Existing valid
+	Communication links are returned unchanged, making the operation idempotent.
+	"""
+	if not queue_name or not frappe.db.exists("Email Queue", queue_name):
+		return None
+	queue = frappe.get_doc("Email Queue", queue_name)
+	if queue.communication and frappe.db.exists("Communication", queue.communication):
+		return str(queue.communication)
+	if not queue.reference_doctype or not queue.reference_name:
+		return None
+	if not frappe.db.exists(queue.reference_doctype, queue.reference_name):
+		return None
+
+	mail = Parser(policy=policy.default).parsestr(str(queue.message or ""))
+	body = mail.get_body(preferencelist=("html", "plain")) if mail.is_multipart() else mail
+	content = str(body.get_content() if body else "") or str(queue.message or "")
+	subject = str(mail.get("Subject") or _("Workflow email"))
+	recipients = [str(row.recipient or "").strip() for row in queue.recipients if row.recipient]
+	if not recipients:
+		return None
+
+	communication_name = _create_outbound_communication(
+		frappe._dict(record_doctype=queue.reference_doctype, record_name=queue.reference_name),
+		sender=str(queue.sender or ""),
+		recipient=recipients[0],
+		subject=subject,
+		message=content,
+		email_template=None,
+	)
+	delivery_status = {
+		"Not Sent": "Sending",
+		"Sending": "Sending",
+		"Sent": "Sent",
+		"Partially Sent": "Sent",
+		"Error": "Error",
+	}.get(str(queue.status or ""), "")
+	frappe.db.set_value(
+		"Communication",
+		communication_name,
+		{
+			"communication_date": queue.creation,
+			"creation": queue.creation,
+			"owner": queue.owner,
+			"message_id": queue.message_id,
+			"email_account": queue.email_account,
+			"delivery_status": delivery_status,
+		},
+		update_modified=False,
+	)
+	frappe.db.set_value(
+		"Email Queue",
+		queue.name,
+		"communication",
+		communication_name,
+		update_modified=False,
+	)
+	return communication_name
+
+
 def queue_email(run, config: dict, *, record, outputs: dict[str, Any], workflow_settings: dict | None = None) -> dict:
 	if not external_actions_enabled():
 		raise AutomationError(_("External workflow actions are disabled in Automation Settings."))
@@ -200,7 +307,15 @@ def queue_email(run, config: dict, *, record, outputs: dict[str, Any], workflow_
 	reply_to = str(config.get("reply_to") or "").strip()
 	if reply_to and not validate_email_address(reply_to, throw=False):
 		raise AutomationError(_("Email Reply-To address is invalid."))
-	subscription_topic = str(config.get("subscription_topic") or "").strip()
+	# FinbyzReach stores topic preferences exclusively on Lead records. Ignore a
+	# stale topic left in an older non-Lead graph and keep applying the native
+	# global/reference unsubscribe checks below. New drafts are rejected by
+	# authoring validation before publication.
+	subscription_topic = (
+		str(config.get("subscription_topic") or "").strip()
+		if run.record_doctype == "Lead"
+		else ""
+	)
 	if subscription_topic:
 		if "finbyzreach" not in frappe.get_installed_apps():
 			raise AutomationError(_("Finbyz Reach is required for topic-based email preferences."))
@@ -212,6 +327,7 @@ def queue_email(run, config: dict, *, record, outputs: dict[str, Any], workflow_
 	if suppression_reason:
 		return {
 			"email_queue": None,
+			"communication": None,
 			"recipient": recipient,
 			"sender": sender or None,
 			"reply_to": reply_to or None,
@@ -221,24 +337,67 @@ def queue_email(run, config: dict, *, record, outputs: dict[str, Any], workflow_
 			"suppressed": True,
 			"suppression_reason": str(suppression_reason),
 		}
-	queue = frappe.sendmail(
-		recipients=[recipient],
-		sender=sender,
-		reply_to=reply_to or None,
-		subject=subject,
-		content=message,
-		delayed=True,
-		reference_doctype=run.record_doctype,
-		reference_name=run.record_name,
-		add_unsubscribe_link=1,
-		unsubscribe_message=_("Unsubscribe"),
-		raw_html=bool(content["raw_html"]),
-		add_css=not bool(content["raw_html"]),
-	)
-	if not queue or not getattr(queue, "name", None):
-		raise AutomationError(_("Frappe did not create an Email Queue record."))
+	# Keep Communication and Email Queue atomic. Without the Communication link,
+	# a successfully delivered workflow email disappears from the record activity
+	# timeline; without the savepoint, a queueing failure could leave a false
+	# timeline entry behind.
+	savepoint = "automation_workflow_email"
+	frappe.db.savepoint(savepoint)
+	try:
+		communication_name = _create_outbound_communication(
+			run,
+			sender=sender,
+			recipient=recipient,
+			subject=subject,
+			message=message,
+			email_template=content.get("email_template"),
+		)
+		delivery_message, tracked_link_count = decorate_workflow_email_links(
+			message,
+			communication_name,
+		)
+		if bool(content["raw_html"]):
+			delivery_message = ensure_workflow_open_tracking(delivery_message)
+		if delivery_message != message:
+			frappe.db.set_value(
+				"Communication",
+				communication_name,
+				"content",
+				delivery_message,
+				update_modified=False,
+			)
+		sendmail_options = {
+			"recipients": [recipient],
+			"sender": sender,
+			"reply_to": reply_to or None,
+			"subject": subject,
+			"content": delivery_message,
+			"delayed": True,
+			"reference_doctype": run.record_doctype,
+			"reference_name": run.record_name,
+			"communication": communication_name,
+			"add_unsubscribe_link": 1,
+			"unsubscribe_message": _("Unsubscribe"),
+			"raw_html": bool(content["raw_html"]),
+			"add_css": not bool(content["raw_html"]),
+		}
+		if run.record_doctype != "Lead":
+			sendmail_options["unsubscribe_method"] = (
+				"/api/method/finbyzai.workflow_builder.integrations.unsubscribe_workflow_email"
+			)
+		queue = frappe.sendmail(
+			**sendmail_options,
+		)
+		if not queue or not getattr(queue, "name", None):
+			raise AutomationError(_("Frappe did not create an Email Queue record."))
+	except Exception:
+		frappe.db.rollback(save_point=savepoint)
+		raise
+	else:
+		frappe.db.release_savepoint(savepoint)
 	return {
 		"email_queue": queue.name,
+		"communication": communication_name,
 		"recipient": recipient,
 		"sender": sender or None,
 		"reply_to": reply_to or None,
