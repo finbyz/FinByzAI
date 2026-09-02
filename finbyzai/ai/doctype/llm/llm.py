@@ -19,7 +19,7 @@ class LLM(Document):
 	@property
 	def llm(self):
 		provider = frappe.get_doc("LLM Provider", self.provider)
-		base_url = self.base_url or provider.base_url
+		base_url = provider.base_url
 
 		kwargs = {
 			"api_key": provider.get_password("api_key"),
@@ -45,7 +45,7 @@ class LLM(Document):
 
 	def get_embeding_function(self):
 		provider = frappe.get_doc("LLM Provider", self.provider)
-		base_url = self.base_url or provider.base_url
+		base_url = provider.base_url
 
 		kwargs = {
 			"model": self.name,
