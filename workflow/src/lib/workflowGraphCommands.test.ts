@@ -282,6 +282,28 @@ describe('fast graph authoring commands', () => {
 		expect(suggestedNodePlacement(sourceGraph, branch.id)).toMatchObject({ afterNodeId: branch.id, sourceHandle: 'english' })
 	})
 
+	it('treats AI outcomes as guided structural paths', () => {
+		const generate = { id: 'ai-generate', type: 'action.ai_generate', type_version: 1, position: { x: 200, y: 200 }, config: {} } as const
+		const support = { id: 'ai-support', type: 'action.ai_support_agent', type_version: 1, position: { x: 200, y: 400 }, config: {} } as const
+		const approval = { id: 'approval', type: 'action.human_approval', type_version: 1, position: { x: 200, y: 600 }, config: {} } as const
+		expect(workflowNodeSourceHandles(generate)).toEqual(['success', 'low_confidence', 'failure'])
+		expect(workflowNodeContinuationHandle(generate)).toBe('success')
+		expect(workflowNodeSourceHandles(support)).toEqual(['respond', 'handoff', 'failure'])
+		expect(workflowNodeContinuationHandle(support)).toBe('respond')
+		expect(workflowNodeSourceHandles(approval)).toEqual(['approved', 'rejected'])
+		expect(workflowNodeContinuationHandle(approval)).toBe('approved')
+
+		const sourceGraph = {
+			...graph,
+			nodes: [graph.nodes[0], generate, graph.nodes[1]],
+			edges: [
+				{ id: 'start-ai', source: 'trigger-1', source_handle: 'default', target: generate.id },
+				{ id: 'ai-success', source: generate.id, source_handle: 'success', target: 'end-1' },
+			],
+		} as WorkflowGraph
+		expect(suggestedNodePlacement(sourceGraph, generate.id)).toMatchObject({ afterNodeId: generate.id, sourceHandle: 'low_confidence' })
+	})
+
 	it('suggests the visually last unfinished path when nothing is selected', () => {
 		const lower = { id: 'lower', type: 'action.add_comment', type_version: 1, position: { x: 200, y: 600 }, config: {} } as const
 		const sourceGraph = { ...graph, nodes: [graph.nodes[0], lower], edges: [{ id: 'start', source: 'trigger-1', source_handle: 'default', target: lower.id }] } as WorkflowGraph

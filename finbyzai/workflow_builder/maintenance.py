@@ -8,6 +8,8 @@ from frappe.utils import cint, get_datetime, now_datetime
 
 RUN_CHILD_DOCTYPES = (
 	"Automation Action Attempt",
+	"Automation AI Attempt",
+	"Automation Human Approval",
 	"Automation Timer",
 	"Automation Run Token",
 	"Automation Run Event",
@@ -44,6 +46,16 @@ def log_cleanup_batch_size() -> int:
 	except Exception:
 		configured = 500
 	return min(max(configured, 100), 5000)
+
+
+def ai_evidence_retention_days() -> int:
+	try:
+		configured = cint(
+			frappe.db.get_single_value("Automation Settings", "ai_evidence_retention_days", cache=False) or 180
+		)
+	except Exception:
+		configured = 180
+	return min(max(configured, 30), 3650)
 
 
 def _expired_names(
@@ -129,6 +141,39 @@ def purge_expired_automation_logs(limit: int | None = None) -> dict[str, int]:
 		if names:
 			frappe.db.delete(doctype, {"name": ["in", names]})
 		counts[result_key] = len(names)
+
+	ai_cutoff = now_datetime() - timedelta(days=ai_evidence_retention_days())
+	ai_names: list[str] = []
+	if frappe.db.table_exists("Automation AI Attempt"):
+		attempt = frappe.qb.DocType("Automation AI Attempt")
+		ai_names = list(
+			frappe.qb.from_(attempt)
+			.select(attempt.name)
+			.where(
+				(attempt.completed_at < ai_cutoff)
+				& attempt.status.isin(("COMPLETED", "LOW_CONFIDENCE", "HANDOFF", "FAILED"))
+				& (attempt.run.isnull() | (attempt.run == ""))
+			)
+			.orderby(attempt.completed_at)
+			.limit(batch_size)
+			.run(pluck=True)
+		)
+	if ai_names:
+		frappe.db.delete("Automation AI Attempt", {"name": ["in", ai_names]})
+	counts["ai_attempts"] = len(ai_names)
+
+	# Support-session summaries are model memory, not permanent business records.
+	# Expire even waiting sessions after the configured AI evidence window; a
+	# future message starts a new issue-scoped session without stale context.
+	session_names = _expired_names(
+		"Automation AI Support Session",
+		"modified",
+		ai_cutoff,
+		batch_size,
+	)
+	if session_names:
+		frappe.db.delete("Automation AI Support Session", {"name": ["in", session_names]})
+	counts["ai_support_sessions"] = len(session_names)
 
 	incident_names = _expired_names(
 		"Automation Incident", "resolved_at", cutoff, batch_size, statuses=("RESOLVED",)

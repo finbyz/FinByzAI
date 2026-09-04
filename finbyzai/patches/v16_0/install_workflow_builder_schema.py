@@ -8,6 +8,10 @@ from finbyzai.workflow_builder.setup import (
 
 
 WORKFLOW_DOCTYPES = (
+	"automation_ai_attempt",
+	"automation_ai_profile_version",
+	"automation_ai_support_session",
+	"automation_human_approval",
 	"automation_action_attempt",
 	"automation_audit_event",
 	"automation_backfill_job",

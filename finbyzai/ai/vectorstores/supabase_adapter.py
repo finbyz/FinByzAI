@@ -25,7 +25,7 @@ class SupabaseAdapter(BaseVectorStore):
     def search(self, query, k=5):
         docs_and_scores = self.vs.similarity_search_with_score(query, k=k)
         return [
-            {"id": d.metadata.get("id"), "score": score, "metadata": d.metadata}
+            {"id": d.metadata.get("id"), "score": score, "metadata": d.metadata, "content": d.page_content}
             for d, score in docs_and_scores
         ]
 

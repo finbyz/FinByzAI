@@ -88,6 +88,9 @@ function nodeOutputHandles(node: WorkflowNode): Array<{ handle: string; label: s
 		? [{ handle: 'default', label: 'Next action' }]
 		: [{ handle: 'event', label: 'Event happened' }, { handle: 'timeout', label: 'Time ran out' }]
 	if (node.type === 'condition.switch') return [...(Array.isArray(node.config.cases) ? node.config.cases : []).flatMap((item) => typeof item === 'object' && item ? [{ handle: String((item as Record<string, unknown>).handle || ''), label: String((item as Record<string, unknown>).value || '') }] : []), { handle: 'default', label: 'Default' }]
+	if (node.type === 'action.ai_generate') return [{ handle: 'success', label: 'Success' }, { handle: 'low_confidence', label: 'Needs review' }, { handle: 'failure', label: 'Failed' }]
+	if (node.type === 'action.ai_support_agent') return [{ handle: 'respond', label: 'Response eligible' }, { handle: 'handoff', label: 'Human review' }, { handle: 'failure', label: 'Failed' }]
+	if (node.type === 'action.human_approval') return [{ handle: 'approved', label: 'Approved' }, { handle: 'rejected', label: 'Rejected' }]
 	if (['end.complete', 'action.delete_record', 'action.go_to'].includes(node.type)) return []
 	return [{ handle: 'default', label: 'Next action' }]
 }
@@ -164,6 +167,9 @@ export function nodeSummary(node: WorkflowNode, primaryDoctype: string) {
   if (node.type === 'action.add_comment') return config.content ? String(config.content) : 'Write to the record timeline'
   if (node.type === 'action.notify_user') return config.subject ? String(config.subject) : 'Send an internal notification'
   if (node.type === 'action.send_email') return config.email_template ? `Send ${String(config.email_template)}` : config.content_mode === 'inline' ? 'Send a quick email' : 'Choose an Email Template'
+  if (node.type === 'action.ai_generate') return ({ summarize: 'Summarize approved record context', classify_extract: 'Classify and extract structured fields', draft_reply: 'Draft a reply for review', grounded_answer: 'Answer from approved knowledge' } as Record<string, string>)[String(config.mode || '')] || 'Choose an AI task'
+  if (node.type === 'action.ai_support_agent') return `${String(config.response_policy || 'draft_only').replaceAll('_', ' ')} · ${Number(config.max_automatic_turns || 3)} turn limit`
+  if (node.type === 'action.human_approval') return config.reviewer ? `Review by ${String(config.reviewer)} · expires in ${Number(config.expires_days || 7)} days` : 'Choose an approval reviewer'
   if (node.type === 'action.send_sms') return 'Submit a consent-aware SMS to the configured gateway'
   if (node.type === 'action.webhook') return config.url ? `POST to ${String(config.url)}` : 'Choose an allowlisted HTTPS endpoint'
   if (node.type === 'action.call_subflow') return config.subflow_id ? `Call ${String(config.subflow_id)}` : 'Execute another workflow as a subflow'
@@ -357,28 +363,29 @@ EnrollmentBoundary.displayName = 'EnrollmentBoundary'
 const WorkflowNodeCard = memo(({ data, selected }: NodeProps<WorkflowFlowNode>) => {
 	const actions = useWorkflowActions()
 	const node = data.workflowNode
-	const branchOutputs = ['condition.if_else', 'condition.random_split', 'condition.deduplicate', 'condition.switch'].includes(node.type) || (node.type === 'delay.until_event' && (node.type_version < 2 || Boolean(node.config.branch_on_timeout))) ? nodeOutputHandles(node) : []
+	const branchOutputs = ['condition.if_else', 'condition.random_split', 'condition.deduplicate', 'condition.switch', 'action.ai_generate', 'action.ai_support_agent', 'action.human_approval'].includes(node.type) || (node.type === 'delay.until_event' && (node.type_version < 2 || Boolean(node.config.branch_on_timeout))) ? nodeOutputHandles(node) : []
 	const nodeWidth = branchOutputs.length > 3 ? Math.min(1440, Math.max(252, branchOutputs.length * 84)) : undefined
   const trigger = node.type.startsWith('trigger.')
   const Icon = nodeIcons[node.type] || Zap
   const kind = nodeKind(node.type)
+	const issueLabel = `${data.issueCount} issue${data.issueCount === 1 ? '' : 's'}`
   return (
 	    <article className={`workflow-node workflow-node--${kind}`} style={nodeWidth ? { width: nodeWidth } : undefined} data-invalid={data.issueCount > 0 ? 'true' : 'false'} data-selected={selected ? 'true' : 'false'} data-manual-links={data.manualConnections ? 'true' : 'false'} data-connected={data.connected ? 'true' : 'false'}>
       <span className="workflow-node__rail" aria-hidden />
 	  <div className="workflow-node__quick-actions nodrag nopan"><button type="button" title="Clone this action" aria-label={`Clone ${nodeLabels[node.type] || node.type}`} onClick={(event) => { event.stopPropagation(); actions.duplicateNode(node.id) }}><Copy size={12} /></button><DeleteWorkflowStepButton node={node} title="Delete this action" aria-label={`Delete ${nodeLabels[node.type] || node.type}`}><Trash2 size={12} /></DeleteWorkflowStepButton></div>
       {!trigger && <Handle type="target" position={Position.Top} className={`workflow-handle ${data.manualConnections ? '' : 'workflow-handle--guided'}`} />}
-      <div className="px-4 pb-3.5 pt-4">
-        <div className="flex items-start gap-3">
-          <span className="workflow-node__icon grid size-9 shrink-0 place-items-center rounded-[10px]">
-            <Icon size={17} strokeWidth={2.1} aria-hidden />
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="workflow-node__eyebrow text-[10px] font-bold uppercase tracking-[0.12em]">{kind}{node.type === 'action.round_robin' ? node.type_version === 1 ? ' · legacy v1' : ' · rotating v2' : ''}</p>
-            <h3 className="text-heading mt-0.5 truncate text-[13px] font-bold leading-5">{nodeLabels[node.type] || node.type}</h3>
-          </div>
-		  {!data.connected ? <span className="workflow-node__unconnected flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-[9px] font-bold" title="This step is not connected to the enrollment trigger"><Unplug size={10} />Not connected</span> : data.issueCount > 0 && <span className="flex shrink-0 items-center gap-1 rounded-full bg-red-50 px-2 py-1 text-[9px] font-bold text-red-600 dark:bg-red-500/15 dark:text-red-300" title={`${data.issueCount} validation issue${data.issueCount === 1 ? '' : 's'}`}><AlertTriangle size={10} />{data.issueCount}</span>}
-        </div>
-        <p className="text-muted mt-3 line-clamp-2 min-h-9 text-[11px] leading-[18px]">{nodeSummary(node, data.primaryDoctype)}</p>
+	  <div className="workflow-node__body">
+		<div className="workflow-node__heading">
+		  <span className="workflow-node__icon">
+			<Icon size={17} strokeWidth={2.1} aria-hidden />
+		  </span>
+		  <div className="workflow-node__title">
+			<p className="workflow-node__eyebrow">{kind}{node.type === 'action.round_robin' ? node.type_version === 1 ? ' · legacy v1' : ' · rotating v2' : ''}</p>
+			<h3 title={nodeLabels[node.type] || node.type}>{nodeLabels[node.type] || node.type}</h3>
+		  </div>
+		  {!data.connected ? <span className="workflow-node__status workflow-node__status--disconnected" title="This step is not connected to the enrollment trigger"><Unplug size={11} />Not connected</span> : data.issueCount > 0 && <span className="workflow-node__status workflow-node__status--invalid" title={`${issueLabel}. Open the step to review.`}><AlertTriangle size={11} />{issueLabel}</span>}
+		</div>
+		<div className="workflow-node__summary"><p>{nodeSummary(node, data.primaryDoctype)}</p></div>
 		{data.metric && data.metric.reached > 0 && <div className="workflow-node__metric" title={`${data.metric.completed} completed, ${data.metric.failed} failed, ${data.metric.waiting} waiting`}><span>{data.metric.reached.toLocaleString()} reached</span>{data.metric.failed > 0 && <span className="workflow-node__metric-error">{data.metric.failed.toLocaleString()} failed</span>}</div>}
       </div>
 		{branchOutputs.length ? (
@@ -391,9 +398,9 @@ const WorkflowNodeCard = memo(({ data, selected }: NodeProps<WorkflowFlowNode>) 
 				})}
 			</div>
       ) : !['end.complete', 'action.delete_record', 'action.go_to'].includes(node.type) ? (
-        <div className="workflow-node__footer h-2 rounded-b-xl" aria-hidden>
-          <Handle id="default" type="source" position={Position.Bottom} className={`workflow-handle ${data.manualConnections ? '' : 'workflow-handle--guided'}`} />
-        </div>
+		<div className="workflow-node__footer workflow-node__footer--continuation" aria-hidden>
+		  <Handle id="default" type="source" position={Position.Bottom} className={`workflow-handle ${data.manualConnections ? '' : 'workflow-handle--guided'}`} />
+		</div>
       ) : (
         <div className="workflow-node__footer flex items-center gap-1.5 rounded-b-xl px-4 py-2 text-[10px] font-semibold text-emerald-600">
           <CheckCircle2 size={12} /> End of path

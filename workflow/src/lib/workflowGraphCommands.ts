@@ -136,7 +136,7 @@ export function catalogNode(item: NodeCatalogItem, id: string, position: Positio
 }
 
 export function canUseDefaultOutput(node?: WorkflowNode): boolean {
-	return Boolean(node && !node.type.startsWith('condition.') && (node.type !== 'delay.until_event' || (node.type_version >= 2 && !node.config.branch_on_timeout)) && !['end.complete', 'action.delete_record', 'action.go_to'].includes(node.type))
+	return Boolean(node && !node.type.startsWith('condition.') && !['action.ai_generate', 'action.ai_support_agent', 'action.human_approval'].includes(node.type) && (node.type !== 'delay.until_event' || (node.type_version >= 2 && !node.config.branch_on_timeout)) && !['end.complete', 'action.delete_record', 'action.go_to'].includes(node.type))
 }
 
 export function workflowNodeSourceHandles(node?: WorkflowNode): string[] {
@@ -150,6 +150,9 @@ export function workflowNodeSourceHandles(node?: WorkflowNode): string[] {
 	if (node.type === 'condition.deduplicate') return ['duplicate', 'unique']
 	if (node.type === 'condition.switch') return [...(Array.isArray(node.config.cases) ? node.config.cases : []).flatMap((item) => typeof item === 'object' && item ? [String((item as Record<string, unknown>).handle || '')] : []), 'default'].filter(Boolean)
 	if (node.type === 'delay.until_event' && (node.type_version < 2 || node.config.branch_on_timeout)) return ['event', 'timeout']
+	if (node.type === 'action.ai_generate') return ['success', 'low_confidence', 'failure']
+	if (node.type === 'action.ai_support_agent') return ['respond', 'handoff', 'failure']
+	if (node.type === 'action.human_approval') return ['approved', 'rejected']
 	return ['default']
 }
 
@@ -163,6 +166,9 @@ export function workflowNodeContinuationHandle(node?: WorkflowNode): string | un
 	if (node.type === 'condition.deduplicate') return 'unique'
 	if (node.type === 'delay.until_event') return 'event'
 	if (node.type === 'condition.random_split') return workflowNodeSourceHandles(node)[0]
+	if (node.type === 'action.ai_generate') return 'success'
+	if (node.type === 'action.ai_support_agent') return 'respond'
+	if (node.type === 'action.human_approval') return 'approved'
 	return undefined
 }
 

@@ -10,6 +10,7 @@
   "primary_doctype",
   "graph_json",
   "settings_json",
+  "ai_profiles_json",
   "graph_hash",
   "published_by",
   "published_at",
@@ -46,6 +47,12 @@
    "fieldname": "settings_json",
    "fieldtype": "JSON",
    "label": "Settings JSON"
+  },
+  {
+   "fieldname": "ai_profiles_json",
+   "fieldtype": "JSON",
+   "label": "Pinned AI Profiles",
+   "read_only": 1
   },
   {
    "fieldname": "graph_hash",
