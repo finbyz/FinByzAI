@@ -264,11 +264,12 @@ class TestDeadlocks(IntegrationTestCase):
 			try:
 				frappe.init(site=site_name)
 				frappe.connect()
-				member = engine._next_round_robin_member(
-					SimpleNamespace(workflow_version=published["version"]),
-					node,
-					["first@example.com", "second@example.com"],
-				)
+				with engine.execution_principal("Administrator", {"trace_id": "round-robin-test"}):
+					member = engine._next_round_robin_member(
+						SimpleNamespace(workflow_version=published["version"]),
+						node,
+						["first@example.com", "second@example.com"],
+					)
 				frappe.db.commit()
 				results.append(member)
 			except Exception as exc:

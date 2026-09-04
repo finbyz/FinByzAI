@@ -24,13 +24,10 @@ from finbyzai.workflow_builder.authoring import (
 	validate_workflow_draft,
 )
 from finbyzai.workflow_builder.engine import (
-	_SET_USER_LOCAL_FIELDS,
-	_assert_worker_execution,
 	_business_hours_state,
 	cancel_run_record,
 	_enabled_user_names,
 	_execute_node,
-	_execution_identity,
 	_hold_for_execution_window,
 	_reserve_drip_slot,
 	_round_robin_users,
@@ -40,6 +37,12 @@ from finbyzai.workflow_builder.engine import (
 	release_due_timers,
 	release_event_waiters,
 	recover_stale_external_effects,
+)
+from finbyzai.workflow_builder.principal import (
+	_assert_worker_execution,
+	current_automation_context,
+	current_execution_user,
+	execution_principal,
 )
 from finbyzai.workflow_builder.errors import AutomationConflictError, AutomationError, AutomationPermissionError
 from finbyzai.workflow_builder.registry import field_catalog_result
@@ -295,9 +298,10 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		published = publish_workflow(created["workflow"], 0)
 		run = SimpleNamespace(workflow_version=published["version"])
 		node = {"id": frappe.generate_hash(length=10)}
-		first = _reserve_drip_slot(run, node, {"batch_size": 2, "interval_seconds": 3600})
-		second = _reserve_drip_slot(run, node, {"batch_size": 2, "interval_seconds": 3600})
-		third = _reserve_drip_slot(run, node, {"batch_size": 2, "interval_seconds": 3600})
+		with execution_principal("Administrator", {"trace_id": "drip-test"}):
+			first = _reserve_drip_slot(run, node, {"batch_size": 2, "interval_seconds": 3600})
+			second = _reserve_drip_slot(run, node, {"batch_size": 2, "interval_seconds": 3600})
+			third = _reserve_drip_slot(run, node, {"batch_size": 2, "interval_seconds": 3600})
 		self.assertTrue(first["released"])
 		self.assertTrue(second["released"])
 		self.assertFalse(third["released"])
@@ -420,6 +424,18 @@ class TestAutomationAuthoring(IntegrationTestCase):
 				("history_retention_days", 180),
 				("log_cleanup_interval_hours", 24),
 				("log_cleanup_batch_size", 500),
+				("ai_max_context_characters", 50000),
+				("ai_max_thread_messages", 20),
+				("ai_max_output_tokens", 2048),
+				("ai_default_timeout_seconds", 60),
+				("ai_daily_token_budget", 1000000),
+				("ai_max_provider_retries", 2),
+				("ai_authoring_max_output_tokens", 4096),
+				("ai_authoring_daily_request_budget", 200),
+				("ai_circuit_failure_threshold", 5),
+				("ai_circuit_cooldown_minutes", 10),
+				("ai_test_requests_per_10_minutes", 10),
+				("ai_evidence_retention_days", 180),
 			},
 		)
 
@@ -538,31 +554,38 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		self.assertEqual(result["path"], [])
 		self.assertIn("MISSING_EVENT_TOPIC", {issue["code"] for issue in result["issues"]})
 
-	def test_execution_identity_restores_complete_session_and_nested_context(self):
-		local_snapshot = {field: getattr(frappe.local, field, None) for field in _SET_USER_LOCAL_FIELDS}
+	def test_execution_principal_is_task_local_and_never_mutates_session(self):
 		previous_user = frappe.session.user
 		previous_sid = frappe.session.sid
 		previous_data = frappe.session.data
-		previous_context = {"trace_id": "outer-trace", "recursion_depth": 3}
-		frappe.flags.automation_context = previous_context
+		fake_user = "workflow-executor@example.com"
+		original_get_value = frappe.db.get_value
 
-		with self.assertRaisesRegex(RuntimeError, "action failure"):
-			with _execution_identity(
-				"Guest", {"trace_id": "inner-trace", "causation_id": "inner-cause", "recursion_depth": 4}
+		def get_value(doctype, name, fields=None, **kwargs):
+			if doctype == "User" and name == fake_user:
+				return frappe._dict(enabled=1, user_type="System User")
+			return original_get_value(doctype, name, fields, **kwargs)
+
+		with (
+			patch.object(frappe.db, "get_value", side_effect=get_value),
+			patch.object(frappe, "set_user", side_effect=AssertionError("set_user must not be called")),
+			self.assertRaisesRegex(RuntimeError, "action failure"),
+		):
+			with execution_principal(
+				fake_user, {"trace_id": "inner-trace", "causation_id": "inner-cause", "recursion_depth": 4}
 			):
-				self.assertEqual(frappe.session.user, "Guest")
-				self.assertEqual(frappe.flags.automation_context["trace_id"], "inner-trace")
+				self.assertEqual(current_execution_user(), fake_user)
+				self.assertEqual(current_automation_context()["trace_id"], "inner-trace")
+				self.assertEqual(frappe.session.user, previous_user)
 				raise RuntimeError("action failure")
 
 		self.assertEqual(frappe.session.user, previous_user)
 		self.assertEqual(frappe.session.sid, previous_sid)
 		self.assertIs(frappe.session.data, previous_data)
-		self.assertIs(frappe.flags.automation_context, previous_context)
-		for field, value in local_snapshot.items():
-			self.assertIs(getattr(frappe.local, field, None), value)
-		frappe.flags.pop("automation_context", None)
+		self.assertIsNone(current_execution_user(required=False))
+		self.assertEqual(dict(current_automation_context()), {})
 
-	def test_execution_identity_rejects_non_worker_production_calls(self):
+	def test_execution_principal_rejects_non_worker_production_calls(self):
 		previous_job = getattr(frappe.local, "job", None)
 		frappe.local.job = None
 		try:
@@ -760,8 +783,9 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		self.assertEqual(concat["output"]["value"], "0|False")
 		date_field = next(field.fieldname for field in frappe.get_meta("Lead").fields if field.fieldtype in {"Date", "Datetime"})
 		record[date_field] = None
-		with self.assertRaisesRegex(AutomationError, "has no date value"):
-			_execute_node(run, frappe._dict(output_json=None, name="TOKEN"), {"id": "until", "type": "delay.until_date", "config": {"field": date_field}}, record, record, {})
+		with execution_principal("Administrator", {"trace_id": "date-test"}):
+			with self.assertRaisesRegex(AutomationError, "has no date value"):
+				_execute_node(run, frappe._dict(output_json=None, name="TOKEN"), {"id": "until", "type": "delay.until_date", "config": {"field": date_field}}, record, record, {})
 		with patch.object(engine, "get_system_timezone", return_value="UTC"):
 			state = _business_hours_state({"timezone": "Asia/Kolkata", "start_time": "09:00", "end_time": "17:00", "weekdays": [0, 1, 2, 3, 4]}, datetime(2026, 8, 14, 18, 0))
 		self.assertEqual(state, {"released": False, "due_at": "2026-08-17 03:30:00", "timezone": "Asia/Kolkata"})
@@ -863,13 +887,19 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		record = frappe._dict(doctype="Lead", name="LEAD-TEST", customer="CUST-TEST")
 		linked_record = MagicMock()
 		linked_record.get.return_value = "Acme"
-		with patch.object(frappe, "get_doc", return_value=linked_record):
+		linked_record.doctype = "Customer"
+		linked_record.name = "CUST-TEST"
+		with (
+			execution_principal("Administrator", {"trace_id": "associated-test"}),
+			patch.object(frappe, "get_doc", return_value=linked_record),
+			patch.object(frappe, "has_permission", return_value=True) as has_permission,
+		):
 			result = _execute_node(
 				MagicMock(), MagicMock(),
 				{"id": "associated", "type": "transform.associated_record", "config": {"reference_field": "customer", "fetch_field": "customer_name"}},
 				record, record, {},
 			)
-		linked_record.check_permission.assert_called_once_with("read")
+		has_permission.assert_any_call("Customer", ptype="read", doc=linked_record, user="Administrator")
 		self.assertEqual(result["output"]["value"], "Acme")
 
 	def test_reenrollment_policy_keeps_occurrence_idempotency(self):

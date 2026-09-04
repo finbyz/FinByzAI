@@ -12,11 +12,13 @@ from frappe.utils import cint, validate_email_address
 
 from . import authoring, bulk, collaboration, emailing, engine, events, external, observability, registry, webhooks
 from .configuration import (
+	ai_actions_enabled,
 	automation_enabled,
 	external_actions_enabled,
 	workflow_runtime_allowed,
 )
 from .errors import AutomationError, AutomationPermissionError, AutomationConflictError
+from .principal import preview_principal
 from .schema import parse_object, validate_graph
 
 
@@ -102,6 +104,44 @@ def get_node_types(workflow_id: str | None = None):
 			execution_user=execution_user,
 		)
 	}
+
+
+@frappe.whitelist()
+def get_ai_authoring_catalog(workflow_id: str):
+	registry.require_builder()
+	workflow = frappe.get_doc("Automation Workflow", workflow_id)
+	workflow.check_permission("read")
+	from .ai_support import ai_authoring_catalog
+
+	return ai_authoring_catalog(
+		execution_user=workflow.execution_user,
+		primary_doctype=workflow.primary_doctype,
+	)
+
+
+@frappe.whitelist()
+def get_ai_workflow_authoring_status(workflow_id: str):
+	registry.require_builder()
+	workflow = frappe.get_doc("Automation Workflow", workflow_id)
+	workflow.check_permission("read")
+	from .ai_authoring import authoring_status
+
+	return authoring_status(workflow.primary_doctype, workflow.execution_user)
+
+
+@frappe.whitelist(methods=["POST"])
+def generate_ai_workflow_draft(envelope=None, workflow_id=None, prompt=None, graph=None):
+	"""Generate a non-mutating, permission-scoped workflow draft proposal."""
+	registry.require_builder()
+	data = _envelope(envelope, workflow_id=workflow_id, prompt=prompt, graph=graph)
+	payload = data["payload"]
+	from .ai_authoring import generate_draft
+
+	return generate_draft(
+		data.get("workflow_id"),
+		payload.get("prompt", data.get("prompt")),
+		payload.get("graph", data.get("graph")),
+	)
 
 
 def _email_workflow(workflow_id: str, ptype: str = "read"):
@@ -583,6 +623,66 @@ def test_node(envelope=None, workflow_id=None, record_name=None, node_id=None, g
 
 
 @frappe.whitelist(methods=["POST"])
+def test_ai_node(envelope=None, workflow_id=None, record_name=None, node_id=None, graph=None, confirm_cost=None):
+	"""Run one AI-only test after an explicit billable-call confirmation."""
+	registry.require_builder()
+	data = _envelope(
+		envelope,
+		workflow_id=workflow_id,
+		record_name=record_name,
+		node_id=node_id,
+		graph=graph,
+		confirm_cost=confirm_cost,
+	)
+	payload = data["payload"]
+	if not cint(payload.get("confirm_cost", data.get("confirm_cost"))):
+		raise AutomationError(_("Confirm the billable AI provider call before running this test."))
+	workflow = frappe.get_doc("Automation Workflow", data.get("workflow_id"))
+	workflow.check_permission("read")
+	graph_value = payload.get("graph", data.get("graph"))
+	if graph_value is None:
+		graph_value = authoring.get_workflow_draft(workflow.name)["draft"]["graph"]
+	validation = validate_graph(graph_value, primary_doctype=workflow.primary_doctype)
+	if not validation["valid"]:
+		return {"valid": False, "issues": validation["issues"], "mutated": False}
+	selected = str(payload.get("node_id") or data.get("node_id") or "")
+	node = next(
+		(
+			item
+			for item in validation["graph"].get("nodes") or []
+			if isinstance(item, dict) and str(item.get("id") or "") == selected
+		),
+		None,
+	)
+	if not node or node.get("type") not in {"action.ai_generate", "action.ai_support_agent"}:
+		raise AutomationError(_("Choose an AI workflow step to test."))
+	record = frappe.get_doc(workflow.primary_doctype, payload.get("record_name") or data.get("record_name"))
+	record.check_permission("read")
+	if not frappe.has_permission(
+		workflow.primary_doctype,
+		ptype="read",
+		doc=record,
+		user=workflow.execution_user,
+	):
+		raise AutomationPermissionError(_("Workflow execution user cannot read this record."))
+	from .ai_support import test_ai_action
+
+	actor = frappe.session.user
+	with preview_principal(
+		workflow.execution_user,
+		{"trace_id": "ai-test", "causation_id": "ai-test", "recursion_depth": 0},
+	):
+		result = test_ai_action(
+			str(node["type"]),
+			node.get("config") or {},
+			workflow=workflow,
+			record=record,
+			invoked_by=actor,
+		)
+	return {"valid": True, "issues": [], **result}
+
+
+@frappe.whitelist(methods=["POST"])
 def publish(envelope=None, workflow_id=None, draft_revision=None, activate=1, reenrollment=None):
 	registry.require_publisher()
 	data = _envelope(envelope, workflow_id=workflow_id, draft_revision=draft_revision, activate=activate, reenrollment=reenrollment)
@@ -731,6 +831,18 @@ def runtime_preflight(workflow_id: str | None = None):
 				"message": _("This draft uses external actions, but their independent kill switch is disabled."),
 			}
 		)
+	ai_node_types = {
+		str(node.get("type"))
+		for node in (draft_graph.get("nodes") or [])
+		if isinstance(node, dict) and str(node.get("type")) in {"action.ai_generate", "action.ai_support_agent"}
+	}
+	if ai_node_types and not ai_actions_enabled():
+		issues.append(
+			{
+				"code": "AI_ACTIONS_DISABLED",
+				"message": _("This draft uses AI actions, but their independent kill switch is disabled."),
+			}
+		)
 	if external_actions_enabled():
 		for node_type in sorted(external_node_types):
 			transport = transport_by_node[node_type]
@@ -747,6 +859,7 @@ def runtime_preflight(workflow_id: str | None = None):
 		"settings": {
 			"enabled": automation_enabled(),
 			"external_actions_enabled": external_actions_enabled(),
+			"ai_actions_enabled": ai_actions_enabled(),
 		},
 		"workers": workers,
 		"health": health,
@@ -1045,6 +1158,38 @@ def set_workflow_comment_resolved(comment_id: str, resolved: int = 1):
 def delete_workflow_comment(comment_id: str):
 	registry.require_builder()
 	return collaboration.delete_comment(comment_id)
+
+
+@frappe.whitelist()
+def list_human_approvals(workflow_id: str | None = None, status: str = "PENDING", start: int = 0, page_length: int = 50):
+	from .approvals import list_approvals
+
+	return list_approvals(
+		workflow=workflow_id,
+		status=status,
+		start=cint(start),
+		page_length=cint(page_length),
+	)
+
+
+@frappe.whitelist(methods=["POST"])
+def resolve_human_approval(envelope=None, approval_id=None, decision=None, final_text=None, comment=None):
+	data = _envelope(
+		envelope,
+		approval_id=approval_id,
+		decision=decision,
+		final_text=final_text,
+		comment=comment,
+	)
+	payload = data["payload"]
+	from .approvals import resolve_approval
+
+	return resolve_approval(
+		str(data.get("approval_id") or payload.get("approval_id") or ""),
+		str(payload.get("decision", data.get("decision")) or ""),
+		final_text=payload.get("final_text", data.get("final_text")),
+		comment=payload.get("comment", data.get("comment")),
+	)
 
 
 @frappe.whitelist(methods=["POST"])

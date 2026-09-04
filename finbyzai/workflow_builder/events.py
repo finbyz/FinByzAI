@@ -23,6 +23,7 @@ from .constants import (
 from .engine import active_policy_dependency_fields, enroll, reevaluate_active_run_policies
 from .errors import AutomationError, AutomationTransientError
 from .observability import record_enrollment_decision, record_incident
+from .principal import current_automation_context
 from .registry import configured_blocked_doctypes
 from .schema import (
 	ABANDONED_CART_DEFAULT_HOURS,
@@ -302,7 +303,7 @@ def _capture(doc, event_type: str) -> None:
 	)
 	if not subscriptions and not policy_dependencies and not native_wait_events:
 		return
-	context = getattr(frappe.flags, "automation_context", {}) or {}
+	context = current_automation_context()
 	recursion_depth = cint(context.get("recursion_depth"))
 	if recursion_depth >= int_setting("max_recursion_depth", MAX_RECURSION_DEPTH):
 		return

@@ -10,6 +10,20 @@ WORKFLOW_MODULE = "Workflow Builder"
 
 
 INDEXES = {
+	"Automation AI Attempt": [
+		(["status", "creation"], "idx_automation_ai_attempt_status"),
+		(["run", "node_id"], "idx_automation_ai_attempt_run_node"),
+		(["workflow_version", "creation"], "idx_automation_ai_attempt_version"),
+	],
+	"Automation AI Support Session": [
+		(["workflow", "state", "modified"], "idx_automation_ai_session_workflow"),
+		(["record_doctype", "record_name", "modified"], "idx_automation_ai_session_record"),
+	],
+	"Automation Human Approval": [
+		(["reviewer", "status", "creation"], "idx_automation_approval_reviewer"),
+		(["workflow", "status", "creation"], "idx_automation_approval_workflow"),
+		(["run", "node_id"], "idx_automation_approval_run_node"),
+	],
 	"Automation Workflow": [
 		(["status", "modified"], "idx_automation_workflow_status"),
 		(["primary_doctype", "status"], "idx_automation_workflow_doctype_status"),
@@ -95,6 +109,10 @@ INDEXES = {
 }
 
 UNIQUES = {
+	"Automation AI Profile Version": [(["config_hash"], "uq_automation_ai_profile_hash")],
+	"Automation AI Attempt": [(["effect_key"], "uq_automation_ai_attempt_effect")],
+	"Automation AI Support Session": [(["session_key"], "uq_automation_ai_session_key")],
+	"Automation Human Approval": [(["approval_key"], "uq_automation_human_approval_key")],
 	"Automation Workflow": [(["creation_key"], "uq_automation_workflow_creation_key")],
 	"Automation Workflow Draft": [(["workflow"], "uq_automation_draft_workflow")],
 	"Automation Workflow Version": [(["workflow", "version_no"], "uq_automation_version_number")],
@@ -149,6 +167,18 @@ def ensure_automation_settings_defaults() -> None:
 		"history_retention_days": 180,
 		"log_cleanup_interval_hours": 24,
 		"log_cleanup_batch_size": 500,
+		"ai_max_context_characters": 50000,
+		"ai_max_thread_messages": 20,
+		"ai_max_output_tokens": 2048,
+		"ai_default_timeout_seconds": 60,
+		"ai_daily_token_budget": 1000000,
+		"ai_max_provider_retries": 2,
+		"ai_authoring_max_output_tokens": 4096,
+		"ai_authoring_daily_request_budget": 200,
+		"ai_circuit_failure_threshold": 5,
+		"ai_circuit_cooldown_minutes": 10,
+		"ai_test_requests_per_10_minutes": 10,
+		"ai_evidence_retention_days": 180,
 	}
 	for fieldname, default in defaults.items():
 		if not cint(frappe.db.get_single_value("Automation Settings", fieldname, cache=False)):
