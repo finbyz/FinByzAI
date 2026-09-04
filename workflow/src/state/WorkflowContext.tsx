@@ -383,6 +383,7 @@ interface WorkflowActions {
   updateNodeAndRemoveEdges(nodeId: string, config: Record<string, unknown>, edgeIds: string[], commandKey?: string): void
   updateNodeVersion(nodeId: string, typeVersion: 1 | 2): void
   updateSettings(settings: WorkflowSettings): void
+  replaceGraph(graph: WorkflowGraph, commandKey?: string): void
   moveNode(nodeId: string, position: { x: number; y: number }): void
   relocateNode(nodeId: string, edgeId: string, position: { x: number; y: number }): void
   removeNode(nodeId: string): void
@@ -797,6 +798,13 @@ export function WorkflowProvider({ workflowId, children }: { workflowId: string;
     updateSettings(settings) {
       if (documentRef.current.conflict) return
       documentDispatch({ type: 'REPLACE_SETTINGS', settings })
+    },
+    replaceGraph(graph, commandKey = 'replace-graph') {
+      const current = documentRef.current.graph
+      if (!current || graph.primary_doctype !== current.primary_doctype || graph.schema_version !== 1) return
+      mutate(arrangeWorkflowGraph(structuredClone(graph)), commandKey)
+      editorDispatch({ type: 'SELECT' })
+      editorDispatch({ type: 'CANCEL_INSERT' })
     },
     moveNode(nodeId, position) {
       const current = documentRef.current.graph

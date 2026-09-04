@@ -158,6 +158,9 @@ describe('Workflow card summaries', () => {
 		expect(nodeSummary(node('action.create_note', { title: 'Call summary' }), 'Lead')).toBe('Create note: Call summary')
 		expect(nodeSummary(node('action.copy_record', {}), 'Lead')).toBe('Create a new Lead from this record')
 		expect(nodeSummary(node('action.asana', { operation: 'create_task' }), 'Lead')).toBe('Create an Asana task')
+		expect(nodeSummary(node('action.ai_generate', { mode: 'grounded_answer' }), 'Issue')).toBe('Answer from approved knowledge')
+		expect(nodeSummary(node('action.ai_support_agent', { response_policy: 'approval_required', max_automatic_turns: 4 }), 'Issue')).toBe('approval required · 4 turn limit')
+		expect(nodeSummary(node('action.human_approval', { reviewer: 'reviewer@example.com', expires_days: 5 }), 'Issue')).toBe('Review by reviewer@example.com · expires in 5 days')
 		expect(nodeSummary(node('action.unassign_record', {}), 'Lead')).not.toContain('ends successfully')
 	})
 

@@ -707,7 +707,32 @@ def send_frappe_sms(run, config: dict, *, record, outputs: dict[str, Any], workf
 	return result
 
 
-def execute_external(node_type: str, run, config: dict, *, record, outputs: dict[str, Any], effect_key: str, workflow_settings: dict | None = None) -> dict:
+def execute_external(
+	node_type: str,
+	run,
+	config: dict,
+	*,
+	record,
+	outputs: dict[str, Any],
+	effect_key: str,
+	workflow_settings: dict | None = None,
+	node_id: str | None = None,
+	token_name: str | None = None,
+) -> dict:
+	if node_type in {"action.ai_generate", "action.ai_support_agent"}:
+		if not node_id or not token_name:
+			raise AutomationError(_("Persisted AI action context is incomplete."))
+		from .ai_support import execute_ai_action
+
+		return execute_ai_action(
+			node_type,
+			run,
+			config,
+			record=record,
+			effect_key=effect_key,
+			node_id=node_id,
+			token_name=token_name,
+		)
 	if node_type == "action.send_email":
 		output = queue_email(run, config, record=record, outputs=outputs, workflow_settings=workflow_settings)
 	elif node_type == "action.webhook":

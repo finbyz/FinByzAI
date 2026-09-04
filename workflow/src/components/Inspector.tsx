@@ -29,10 +29,10 @@ import { MultiValueInput } from './MultiValueInput'
 import { HelpTooltip } from './HelpTooltip'
 import { DeleteWorkflowStepButton } from './DeleteWorkflowStepButton'
 import { useDialogA11y } from './useDialogA11y'
-import { call, fetchFieldCatalog, invalidateMetadataCaches, searchDoctypes, searchLink } from '../lib/api'
+import { call, fetchFieldCatalog, invalidateMetadataCaches, mutationEnvelope, searchDoctypes, searchLink } from '../lib/api'
 import { availableOutputNodes, conditionToFilterGroups, emptyPredicate, filterGroupsToCondition, isRequiredAuthoringValueMissing, outputCatalog, parseCondition, parseWebhookPayload, type NodeOutputCatalog } from '../lib/inspectorAuthoring'
 import { useWorkflowActions, useWorkflowDocument, useWorkflowEditor } from '../state/WorkflowContext'
-import type { BusinessEventType, ConditionExpression, ConditionPredicate, FieldCatalogItem, NodeCatalogItem, NodeConfig, ValidationIssue, WorkflowNode, WorkflowObjectProfile, WorkflowValueSpec } from '../types'
+import type { BusinessEventType, ConditionExpression, ConditionPredicate, FieldCatalogItem, NodeCatalogItem, NodeConfig, ValidationIssue, WorkflowGraph, WorkflowNode, WorkflowObjectProfile, WorkflowValueSpec } from '../types'
 
 import {
   inputClass,
@@ -253,6 +253,126 @@ export function SendEmailEditor({
 			<Hint>Test sends are prefixed with [TEST], bypass workflow enrollment, never send to the enrolled record automatically, and are limited to 10 per user every 10 minutes.</Hint>
 		</InspectorSection>
 		{preview && createPortal(<div className="dialog-backdrop fixed inset-0 z-[100] grid place-items-center p-4" role="dialog" aria-modal="true" aria-label="Email preview" onMouseDown={(event) => { if (event.target === event.currentTarget) closePreview() }}><div ref={previewDialogRef} tabIndex={-1} className="dialog-card flex h-[min(860px,92vh)] w-[min(1100px,96vw)] flex-col overflow-hidden rounded-2xl"><header className="flex items-center justify-between gap-3 border-b border-[var(--border-color)] px-4 py-3"><div className="min-w-0"><span className="text-light text-[9px] font-bold uppercase tracking-[0.12em]">Email preview</span><h3 className="text-heading truncate text-sm font-bold">{preview.subject}</h3>{preview.preheader && <p className="text-muted mt-0.5 truncate text-[10px]">{preview.preheader}</p>}</div><div className="flex items-center gap-2"><div className="flex rounded-lg border border-[var(--border-color)] p-1"><button type="button" className={`icon-button !size-7 ${previewDevice === 'desktop' ? '!bg-brand-50 !text-brand-700' : ''}`} onClick={() => setPreviewDevice('desktop')} aria-label="Desktop preview"><Monitor size={13} /></button><button type="button" className={`icon-button !size-7 ${previewDevice === 'mobile' ? '!bg-brand-50 !text-brand-700' : ''}`} onClick={() => setPreviewDevice('mobile')} aria-label="Mobile preview"><Smartphone size={13} /></button></div><button type="button" className="icon-button" onClick={closePreview} aria-label="Close email preview"><X size={16} /></button></div></header><div className="min-h-0 flex-1 overflow-auto bg-slate-100 p-5 dark:bg-slate-950"><iframe sandbox="" title="Rendered email" className="mx-auto block h-full min-h-[620px] rounded-xl border-0 bg-white shadow-xl transition-[width]" style={{ width: previewDevice === 'mobile' ? 390 : '100%', maxWidth: previewDevice === 'mobile' ? 390 : 900 }} srcDoc={preview.html} /></div></div></div>, document.body)}
+	</>
+}
+
+interface AiAuthoringCatalog {
+	profiles: Array<{ name: string; title?: string; agent_type?: string; llm?: string; knowledge_base?: string }>
+	knowledge_bases: Array<{ name: string; title?: string; description?: string }>
+	support_agent_available: boolean
+	limits: { max_context_characters: number; max_thread_messages: number; max_output_tokens: number; default_timeout_seconds: number }
+}
+
+interface AiTestResult {
+	valid: boolean
+	handle: 'success' | 'low_confidence' | 'respond' | 'handoff' | 'failure'
+	mutated: false
+	billable: true
+	output: {
+		status: string
+		summary?: string
+		draft_reply?: string | null
+		answer?: string | null
+		confidence: number
+		decision?: string
+		handoff_reason?: string | null
+		citations?: Array<{ source_id: string; title?: string; locator?: string }>
+		knowledge_gaps?: string[]
+		attempt_id: string
+		usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }
+	}
+}
+
+function AiActionEditor({
+	node,
+	config,
+	workflowId,
+	primaryDoctype,
+	graph,
+	readFields,
+	update,
+}: {
+	node: WorkflowNode
+	config: NodeConfig
+	workflowId: string
+	primaryDoctype: string
+	graph: WorkflowGraph
+	readFields: FieldCatalogItem[]
+	update(config: NodeConfig, key: string): void
+}) {
+	const support = node.type === 'action.ai_support_agent'
+	const [catalog, setCatalog] = useState<AiAuthoringCatalog | null>(null)
+	const [catalogError, setCatalogError] = useState('')
+	const [sampleRecord, setSampleRecord] = useState('')
+	const [costConfirmed, setCostConfirmed] = useState(false)
+	const [testing, setTesting] = useState(false)
+	const [testError, setTestError] = useState('')
+	const [testResult, setTestResult] = useState<AiTestResult | null>(null)
+
+	useEffect(() => {
+		let active = true
+		setCatalog(null)
+		setCatalogError('')
+		void call<AiAuthoringCatalog>('get_ai_authoring_catalog', { workflow_id: workflowId })
+			.then((result) => { if (active) setCatalog(result) })
+			.catch((reason) => { if (active) setCatalogError(reason instanceof Error ? reason.message : 'Unable to load AI configuration') })
+		return () => { active = false }
+	}, [workflowId])
+
+	const profiles = catalog?.profiles || []
+	const knowledgeBases = catalog?.knowledge_bases || []
+	const selectedProfile = profiles.find((profile) => profile.name === String(config.ai_profile || ''))
+	const fieldValues = (Array.isArray(config.field_allowlist) ? config.field_allowlist : []).map(String)
+	const mode = support ? 'grounded_answer' : String(config.mode || 'summarize')
+	const needsKnowledge = support || mode === 'grounded_answer'
+	const canTest = Boolean(sampleRecord && costConfirmed && config.ai_profile && fieldValues.length && (!needsKnowledge || config.knowledge_base))
+	const setProfile = (ai_profile: string) => {
+		const profile = profiles.find((candidate) => candidate.name === ai_profile)
+		update({ ...config, ai_profile, knowledge_base: config.knowledge_base || profile?.knowledge_base || '' }, 'ai_profile')
+	}
+	const runTest = async () => {
+		if (!canTest) return
+		setTesting(true)
+		setTestError('')
+		setTestResult(null)
+		try {
+			setTestResult(await call<AiTestResult>('test_ai_node', mutationEnvelope(workflowId, {
+				record_name: sampleRecord,
+				node_id: node.id,
+				graph,
+				confirm_cost: 1,
+			}), true))
+		} catch (reason) {
+			setTestError(reason instanceof Error ? reason.message : 'AI test failed')
+		} finally {
+			setTesting(false)
+			setCostConfirmed(false)
+		}
+	}
+	return <>
+		<InspectorSection title={support ? 'AI support decision' : 'AI task'} description={support ? 'Analyze one Issue conversation turn and route it to an eligible-response or human-review path.' : 'Generate structured output from only the record fields and knowledge you explicitly approve.'}>
+			{catalogError && <p className="rounded-lg border border-red-200 bg-red-50 p-2.5 text-[10px] text-red-700 dark:bg-red-500/10 dark:text-red-300">{catalogError}</p>}
+			<div data-config-path="ai_profile"><label className={labelClass}>Approved AI Agent</label><AsyncCombobox ariaLabel="Approved AI Agent" value={String(config.ai_profile || '')} onChange={setProfile} loadOptions={async (search) => profiles.filter((profile) => !search || `${profile.title || profile.name} ${profile.name} ${profile.llm || ''}`.toLowerCase().includes(search.toLowerCase())).map((profile) => ({ value: profile.name, label: profile.title || profile.name, description: `${profile.llm || 'Text model'}${profile.knowledge_base ? ` · ${profile.knowledge_base}` : ''}` }))} placeholder={catalog ? 'Choose an approved AI Agent…' : 'Loading AI Agents…'} /></div>
+			{selectedProfile && <Hint title="Published behavior is pinned">Publishing stores an immutable copy of this agent’s text instructions, model selection, parameters, and knowledge manifest. Provider secrets remain in Frappe and are never copied into the workflow.</Hint>}
+			{!support && <div data-config-path="mode"><label className={labelClass}>What should AI produce?</label><select className={inputClass} value={mode} onChange={(event) => update({ ...config, mode: event.target.value, knowledge_base: event.target.value === 'grounded_answer' ? config.knowledge_base || selectedProfile?.knowledge_base || '' : config.knowledge_base }, 'mode')}><option value="summarize">Structured summary</option><option value="classify_extract">Classification and extracted values</option><option value="draft_reply">Reply draft for a person</option><option value="grounded_answer">Answer from approved knowledge</option></select></div>}
+			{needsKnowledge && <div data-config-path="knowledge_base"><label className={labelClass}>Approved Knowledge Base</label><AsyncCombobox ariaLabel="Approved Knowledge Base" value={String(config.knowledge_base || '')} onChange={(knowledge_base) => update({ ...config, knowledge_base }, 'knowledge_base')} loadOptions={async (search) => knowledgeBases.filter((kb) => !search || `${kb.title || kb.name} ${kb.name}`.toLowerCase().includes(search.toLowerCase())).map((kb) => ({ value: kb.name, label: kb.title || kb.name, description: kb.description || kb.name }))} placeholder={catalog ? 'Choose an indexed Knowledge Base…' : 'Loading Knowledge Bases…'} /><Hint>Grounded answers without a verified citation always go to human review. A changed knowledge base requires workflow review and republishing.</Hint></div>}
+			<div data-config-path="field_allowlist"><label className={labelClass}>Record fields AI may read</label><MultiValueInput values={fieldValues} onChange={(field_allowlist) => update({ ...config, field_allowlist }, 'field_allowlist')} loadOptions={async (search) => readFields.filter((field) => (field.capabilities?.scalar_read ?? !['Table', 'Table MultiSelect'].includes(field.fieldtype)) && (!search || `${field.label} ${field.fieldname}`.toLowerCase().includes(search.toLowerCase()))).map((field) => ({ value: field.fieldname, label: field.label, description: `${field.fieldtype} · ${field.fieldname}` }))} placeholder="Search permitted scalar fields…" ariaLabel="AI context fields" /><Hint>Only these fields leave Frappe. Secret-like field names are rejected server-side and secret-looking text is redacted before the provider call.</Hint></div>
+			{primaryDoctype === 'Issue' && <label className="text-body flex items-start gap-2 text-[10.5px]"><input className="mt-0.5" type="checkbox" checked={Boolean(config.include_thread)} onChange={(event) => update({ ...config, include_thread: event.target.checked ? 1 : 0 }, 'include_thread')} /><span>Include recent linked Communications <span className="text-light block text-[9.5px]">Only messages linked directly to this Issue are included.</span></span></label>}
+			<div><label className={labelClass}>Workflow-specific instructions <span className="font-normal">(optional)</span></label><textarea className={`${inputClass} min-h-24 resize-y`} rows={4} maxLength={10000} value={String(config.instructions || '')} onChange={(event) => update({ ...config, instructions: event.target.value }, 'instructions')} placeholder="Explain the business labels, tone, and boundaries for this step…" /></div>
+		</InspectorSection>
+		<InspectorSection title="Safety and routing" description="Low confidence, risk, missing evidence, and provider failure use explicit workflow paths.">
+			<div className="grid grid-cols-2 gap-2"><div data-config-path="confidence_threshold"><label className={labelClass}>Minimum confidence</label><input type="number" min="0" max="1" step="0.05" className={inputClass} value={Number(config.confidence_threshold ?? (support ? 0.8 : 0.75))} onChange={(event) => update({ ...config, confidence_threshold: Number(event.target.value) }, 'confidence_threshold')} /></div>{support && <div data-config-path="max_automatic_turns"><label className={labelClass}>Turn limit</label><input type="number" min="1" max="20" step="1" className={inputClass} value={Number(config.max_automatic_turns || 3)} onChange={(event) => update({ ...config, max_automatic_turns: Number(event.target.value) }, 'max_automatic_turns')} /></div>}</div>
+			{support && <div data-config-path="response_policy"><label className={labelClass}>Response policy</label><select className={inputClass} value={String(config.response_policy || 'draft_only')} onChange={(event) => update({ ...config, response_policy: event.target.value }, 'response_policy')}><option value="draft_only">Draft only — always human review</option><option value="approval_required">Human approval required</option><option value="eligible_auto_response">Allow eligible response path</option></select></div>}
+			<details className="rounded-xl border border-[var(--border-color)] p-3"><summary className="cursor-pointer text-[10.5px] font-semibold text-heading">Advanced limits</summary><div className="mt-3 grid grid-cols-2 gap-2"><div><label className={labelClass}>Timeout (seconds)</label><input type="number" min="10" max="300" className={inputClass} value={Number(config.timeout_seconds || catalog?.limits.default_timeout_seconds || 60)} onChange={(event) => update({ ...config, timeout_seconds: Number(event.target.value) }, 'timeout_seconds')} /></div><div><label className={labelClass}>Maximum output tokens</label><input type="number" min="128" max={catalog?.limits.max_output_tokens || 2048} step="128" className={inputClass} value={Number(config.max_tokens || Math.min(1024, catalog?.limits.max_output_tokens || 2048))} onChange={(event) => update({ ...config, max_tokens: Number(event.target.value) }, 'max_tokens')} /></div></div><div className="mt-3"><label className={labelClass}>Provider failure</label><select className={inputClass} value={String(config.failure_mode || 'branch')} onChange={(event) => update({ ...config, failure_mode: event.target.value }, 'failure_mode')}><option value="branch">Follow Failed path</option><option value="fail_workflow">Fail and retry workflow action</option></select></div></details>
+			<Hint title="Required outcomes">{support ? 'Connect Response eligible, Human review, and Failed.' : 'Connect Success, Needs review, and Failed.'} Publication is blocked until all three are connected.</Hint>
+		</InspectorSection>
+		<InspectorSection title="Test this AI step" description={`Use one real ${primaryDoctype} with the same permissions and provider path as runtime. No record or downstream action is changed.`}>
+			<div><label className={labelClass}>Test record</label><AsyncCombobox ariaLabel={`AI test ${primaryDoctype} record`} value={sampleRecord} onChange={(value) => { setSampleRecord(value); setTestResult(null); setTestError('') }} loadOptions={(search) => searchLink(primaryDoctype, search, { pageLength: 15 }).then((rows) => rows.map((row) => ({ value: row.value, label: row.label || row.value, description: row.description })))} placeholder={`Search ${primaryDoctype} records…`} /></div>
+			<label className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[10px] leading-4 text-amber-900 dark:border-amber-900 dark:bg-amber-500/10 dark:text-amber-200"><input className="mt-0.5" type="checkbox" checked={costConfirmed} onChange={(event) => setCostConfirmed(event.target.checked)} /><span>I understand this sends the approved context to the configured provider and may incur cost.</span></label>
+			<button type="button" className="btn-core btn-secondary w-full !text-[10.5px]" disabled={!canTest || testing} onClick={() => void runTest()}>{testing ? <LoaderCircle className="animate-spin" size={13} /> : <Sparkles size={13} />}{testing ? 'Running AI test…' : 'Run billable AI-only test'}</button>
+			{testError && <p className="rounded-lg border border-red-200 bg-red-50 p-2.5 text-[10px] text-red-700 dark:bg-red-500/10 dark:text-red-300">{testError}</p>}
+			{testResult && <div className="space-y-2 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 dark:border-emerald-900 dark:bg-emerald-500/10"><div className="flex items-center justify-between gap-3"><strong className="text-[10.5px] text-emerald-900 dark:text-emerald-200">Path: {testResult.handle.replaceAll('_', ' ')}</strong><span className="text-[9.5px] font-semibold text-emerald-800 dark:text-emerald-300">{Math.round((testResult.output.confidence || 0) * 100)}% confidence</span></div><p className="whitespace-pre-wrap text-[10px] leading-4 text-emerald-950 dark:text-emerald-100">{testResult.output.answer || testResult.output.draft_reply || testResult.output.summary || 'Structured output validated successfully.'}</p>{testResult.output.handoff_reason && <p className="text-[9.5px] font-semibold text-amber-800 dark:text-amber-300">Review reason: {testResult.output.handoff_reason}</p>}<p className="text-[9px] text-emerald-800 dark:text-emerald-300">{testResult.output.citations?.length || 0} verified citation(s) · {Number(testResult.output.usage?.input_tokens || 0) + Number(testResult.output.usage?.output_tokens || 0)} recorded tokens · Attempt {testResult.output.attempt_id}</p></div>}
+		</InspectorSection>
 	</>
 }
 
@@ -613,13 +733,13 @@ export function Inspector({ width, minWidth, maxWidth, expanded, onWidthChange, 
 
   useEffect(() => {
     let active = true
-    void call<{ node_types: NodeCatalogItem[] }>('get_node_types').then((result) => {
+	void call<{ node_types: NodeCatalogItem[] }>('get_node_types', { workflow_id: workflowId }).then((result) => {
       if (active) setNodeTypes(result.node_types || [])
     }).catch(() => {
       if (active) setNodeTypes([])
     })
     return () => { active = false }
-  }, [])
+  }, [workflowId])
 
   useEffect(() => {
     if (!primaryDoctype) return
@@ -825,6 +945,8 @@ export function Inspector({ width, minWidth, maxWidth, expanded, onWidthChange, 
 		{node.type === 'action.complete_goal' && <InspectorSection title="Complete goal" description="Record a named goal and end this path successfully.">{text('goal', 'Goal name', false, 'Goal reached')}<Hint>You can also use the workflow-wide goal condition when completion should be driven by record fields.</Hint></InspectorSection>}
 		{node.type === 'action.go_to' && <InspectorSection title="Go to an existing step" description="Continue at one existing step so paths can converge without duplicating actions."><div><label className={labelClass}>Destination step</label><select className={inputClass} value={String(config.target_node_id || '')} onChange={(event) => update({ ...config, target_node_id: event.target.value }, 'target_node_id')}><option value="">Choose a step…</option>{graph?.nodes.filter((candidate) => candidate.id !== node.id && candidate.id !== graph.start_node_id).map((candidate) => <option value={candidate.id} key={candidate.id}>{nodeLabels[candidate.type]} · {candidate.id.slice(0, 8)}</option>)}</select></div><Hint>The server treats this as a real graph link, rejects loops, and does not allow a second outgoing edge from this step.</Hint></InspectorSection>}
 		{node.type === 'action.notify_user' && <InspectorSection title="Internal notification" description="Send a notification inside Frappe without exposing record data externally."><div><label className={labelClass}>Audience</label><select className={inputClass} value={String(config.audience || 'specific')} onChange={(event) => update({ ...config, audience: event.target.value }, 'audience')}><option value="specific">Specific user</option><option value="assigned">Users assigned to this record</option><option value="all">All enabled system users</option></select></div>{String(config.audience || 'specific') === 'specific' && <div><label className={labelClass}>Recipient user</label><AsyncCombobox ariaLabel="Recipient user" value={String(config.for_user || '')} onChange={(value) => update({ ...config, for_user: value }, 'for_user')} loadOptions={loadUsers} placeholder="Search enabled users…" /></div>}{text('subject', 'Subject', false, 'What happened?')}{text('message', 'Message', true, 'Add useful context for the recipient…')}{config.audience === 'all' && <Hint>Safety limit: at most 500 enabled System Users receive one notification each.</Hint>}</InspectorSection>}
+		{(node.type === 'action.ai_generate' || node.type === 'action.ai_support_agent') && graph && <AiActionEditor node={node} config={config} workflowId={workflowId} primaryDoctype={primaryDoctype || ''} graph={graph} readFields={scalarReadFields} update={update} />}
+		{node.type === 'action.human_approval' && <InspectorSection title="Human approval" description="Pause this run until an assigned teammate reviews the prepared draft. Approved text becomes available to later actions; this step never sends it by itself."><div data-config-path="reviewer"><label className={labelClass}>Reviewer</label><AsyncCombobox ariaLabel="Approval reviewer" value={String(config.reviewer || '')} onChange={(reviewer) => update({ ...config, reviewer }, 'reviewer')} loadOptions={loadUsers} placeholder="Search enabled System Users…" /></div>{text('title', 'Review title', false, 'Review workflow draft')}{text('instructions', 'Instructions for reviewer', true, 'What should the reviewer check?')}{bindingEditor('draft_text', 'Draft to review')}{bindingEditor('evidence', 'Evidence for reviewer (optional)')}{bindingEditor('ai_attempt', 'AI attempt ID (optional)')}<div className="grid grid-cols-2 items-end gap-2"><div><label className={labelClass}>Expires after days</label><input className={inputClass} type="number" min="1" max="30" value={Number(config.expires_days || 7)} onChange={(event) => update({ ...config, expires_days: Number(event.target.value) }, 'expires_days')} /></div><label className="text-body flex items-center gap-2 pb-2 text-[11px]"><input type="checkbox" checked={Boolean(config.allow_edit ?? true)} onChange={(event) => update({ ...config, allow_edit: event.target.checked ? 1 : 0 }, 'allow_edit')} />Reviewer may edit</label></div><Hint>Connect both Approved and Rejected paths before publishing. Use final_text from the Approved path in a later Send email or Update record action.</Hint></InspectorSection>}
         {node.type === 'action.send_email' && <SendEmailEditor config={config} workflowId={workflowId} primaryDoctype={primaryDoctype || ''} update={update} recipientEditor={bindingEditor('recipient', 'Recipient email')} subjectOverrideEditor={bindingEditor('subject_override', 'Subject override (optional)')} subjectEditor={bindingEditor('subject', 'Subject')} messageEditor={bindingEditor('message', 'Message')} />}
         {node.type === 'action.send_sms' && <InspectorSection title="Consent-aware SMS" description="Submit synchronously through Frappe SMS Settings and report the gateway response.">{bindingEditor('recipient', 'Recipient mobile')}{bindingEditor('message', 'Message')}{text('purpose', 'Consent purpose', false, 'workflow')}<label className="text-body flex items-center gap-2 text-[11px]"><input type="checkbox" checked={Boolean(config.require_consent ?? true)} onChange={(event) => update({ ...config, require_consent: event.target.checked ? 1 : 0 }, 'require_consent')} />Require a current consent grant <HelpTooltip label="Consent requirement" content="When enabled, the recipient needs a current GRANTED SMS consent record for the same purpose. A missing, expired, denied, or revoked grant blocks submission." /></label><Hint>Native Frappe SMS Settings remain authoritative.</Hint></InspectorSection>}
         {node.type === 'action.webhook' && <InspectorSection title="Controlled webhook" description="POST JSON only to an exact, allowlisted public HTTPS hostname."><div><label className={labelClass}>Integration secret</label><AsyncCombobox ariaLabel="Integration secret" value={String(config.integration_secret || '')} onChange={(value) => update({ ...config, integration_secret: value }, 'integration_secret')} loadOptions={loadSecrets} placeholder="Search enabled secrets…" /></div>{text('url', 'HTTPS endpoint', false, 'https://api.example.com/events')}<JsonPayloadEditor key={`${node.id}-payload`} value={config.payload} onChange={(value) => update({ ...config, payload: value }, 'payload')} />{text('purpose', 'Purpose', false, 'workflow')}<Hint>Redirects, IP literals, private networks, and non-allowlisted hosts are blocked. Every request includes an idempotency key.</Hint></InspectorSection>}

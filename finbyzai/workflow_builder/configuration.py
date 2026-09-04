@@ -30,3 +30,17 @@ def workflow_runtime_allowed(_workflow_name: str | None = None) -> bool:
 
 def external_actions_enabled() -> bool:
 	return automation_enabled() and bool(cint(setting("external_actions_enabled", 0)))
+
+
+def ai_actions_enabled() -> bool:
+	"""Independent fail-closed switch for billable AI provider calls."""
+	return automation_enabled() and bool(cint(setting("ai_actions_enabled", 0)))
+
+
+def ai_authoring_enabled() -> bool:
+	"""Independent switch for billable prompt-to-draft authoring calls.
+
+	Authoring does not require the workflow runtime switch because a generated
+	draft cannot execute until a publisher explicitly publishes and activates it.
+	"""
+	return bool(cint(setting("ai_authoring_enabled", 0)))
