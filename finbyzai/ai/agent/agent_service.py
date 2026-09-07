@@ -448,6 +448,8 @@ class AgentService:
         """
         try:
             conversation_id = kwargs.pop("conversation_id", None)
+            callbacks = kwargs.pop("callbacks", None)
+            config = {"callbacks": callbacks} if callbacks else None
             if self.agent_doc.enable_memory:
                 self.get_memory(conversation_id=conversation_id)
 
@@ -458,11 +460,11 @@ class AgentService:
                 AgentTypes.CONVERSATIONAL_AGENT.value,
                 AgentTypes.STRUCTURED_CHAT_AGENT.value,
             ]:
-                return self._invoke_with_agent_executor(query, **kwargs)
+                return self._invoke_with_agent_executor(query, config=config, **kwargs)
             else:
                 if getattr(self, "_is_basic_chain", False):
-                    return self._invoke_basic_chain(query, **kwargs)
-                return self._invoke_langgraph_agent(query, **kwargs)
+                    return self._invoke_basic_chain(query, config=config, **kwargs)
+                return self._invoke_langgraph_agent(query, config=config, **kwargs)
         except Exception as e:
             frappe.log_error(
                 title=f"Error invoking agent {self.agent_doc.name}", message=e
@@ -486,7 +488,7 @@ class AgentService:
         image_generation_prompt = prompt.invoke(input_vars)
         return llm.invoke(image_generation_prompt)
 
-    def _invoke_with_agent_executor(self, query, **kwargs):
+    def _invoke_with_agent_executor(self, query, config=None, **kwargs):
         """Invoke agent using AgentExecutor with automatic memory management"""
         try:
             agent = self.agent
@@ -502,8 +504,8 @@ class AgentService:
                 input_data.update(memory_vars)
             input_data.update(kwargs)
 
-            
-            response = agent.invoke(input_data)
+            invoke_kwargs = {"config": config} if config else {}
+            response = agent.invoke(input_data, **invoke_kwargs)
             # Auto-save to memory
             if (
                 memory
@@ -529,7 +531,7 @@ class AgentService:
             frappe.log_error(f"Error in _invoke_with_agent_executor", e)
             raise
 
-    def _invoke_langgraph_agent(self, query, **kwargs):
+    def _invoke_langgraph_agent(self, query, config=None, **kwargs):
         """Invoke LangGraph-based agent with automatic memory management"""
         try:
             llm = self.get_llm()
@@ -576,7 +578,8 @@ class AgentService:
                 "query": query,
                 **kwargs,
             }
-            response = chain.invoke(input_vars)
+            invoke_kwargs = {"config": config} if config else {}
+            response = chain.invoke(input_vars, **invoke_kwargs)
 
             # Auto-save to memory
             if memory and query and response:
@@ -588,7 +591,7 @@ class AgentService:
             frappe.log_error(f"Error in _invoke_langgraph_agent", e)
             raise
 
-    def _invoke_basic_chain(self, query, **kwargs):
+    def _invoke_basic_chain(self, query, config=None, **kwargs):
         """Invoke the basic chain and include configured conversation memory."""
         try:
             memory = self.get_memory()
@@ -615,7 +618,8 @@ class AgentService:
                 **kwargs,
             }
 
-            response = chain.invoke(input_vars)
+            invoke_kwargs = {"config": config} if config else {}
+            response = chain.invoke(input_vars, **invoke_kwargs)
 
             # Auto-save to memory
             if memory and query and response:

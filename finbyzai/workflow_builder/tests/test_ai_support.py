@@ -407,3 +407,32 @@ class TestWorkflowAISupport(IntegrationTestCase):
 			)
 		self.assertEqual(result, runtime_result)
 		execute.assert_called_once()
+
+	def test_inline_profile_snapshot_and_jinja_rendering(self):
+		model_doc = SimpleNamespace(name="gemini-2.0-flash", provider="Google", enabled=1, is_embedding_model=0, supports_image_generation=0)
+		provider_doc = SimpleNamespace(name="Google", disabled=0)
+		with (
+			patch("frappe.get_doc", side_effect=lambda doctype, name=None: model_doc if doctype == "LLM" else provider_doc if doctype == "LLM Provider" else None),
+			patch("finbyzai.workflow_builder.ai_support._has_doc_permission", return_value=True),
+		):
+			snapshot = build_profile_snapshot(
+				execution_user="Administrator",
+				inline_config={
+					"prompt_mode": "inline",
+					"model": "gemini-2.0-flash",
+					"system_prompt": "You are a triage assistant for {{ doc.company }}.",
+					"user_prompt": "Please review: {{ doc.subject }}",
+					"output_format": "text",
+					"temperature": 0.3,
+				},
+			)
+		self.assertEqual(snapshot["prompt_mode"], "inline")
+		self.assertEqual(snapshot["model"], "gemini-2.0-flash")
+		self.assertEqual(snapshot["provider"], "Google")
+		self.assertEqual(snapshot["output_format"], "text")
+
+		from finbyzai.workflow_builder.ai_support import _provider_prompt
+		context = {"record": {"fields": {"company": "Megasol", "subject": "Billing issue"}}, "conversation": []}
+		system, human = _provider_prompt(snapshot, {"output_format": "text"}, context, [], {})
+		self.assertIn("Megasol", system)
+		self.assertIn("Billing issue", human)
