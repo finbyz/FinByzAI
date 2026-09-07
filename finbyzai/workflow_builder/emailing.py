@@ -23,8 +23,8 @@ def template_reference_doctype(template) -> str:
 def email_template_summary(template, primary_doctype: str | None = None) -> dict:
 	if not template:
 		raise AutomationError(_("Choose an Email Template."))
-	if hasattr(template, "enabled") and not bool(template.enabled):
-		raise AutomationError(_("The selected Email Template is disabled."))
+	# if hasattr(template, "enabled") and not bool(template.enabled):
+	# 	raise AutomationError(_("The selected Email Template is disabled."))
 	reference_doctype = template_reference_doctype(template)
 	if reference_doctype and primary_doctype and reference_doctype != primary_doctype:
 		raise AutomationError(
