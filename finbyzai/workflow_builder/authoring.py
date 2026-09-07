@@ -242,7 +242,7 @@ def validate_bindings(graph: dict, execution_user: str, workflow_name: str | Non
 		config = node.get("config")
 		if not isinstance(config, dict):
 			continue
-		if node_type in {"action.ai_generate", "action.ai_support_agent"} and config.get("ai_profile"):
+		if node_type in {"action.ai_generate", "action.ai_support_agent"} and (config.get("ai_profile") or config.get("model")):
 			try:
 				from .ai_support import validate_ai_node_binding
 
@@ -258,7 +258,7 @@ def validate_bindings(graph: dict, execution_user: str, workflow_name: str | Non
 						"severity": "error",
 						"code": "AI_PROFILE_UNAVAILABLE",
 						"node_id": node_id,
-						"path": f"nodes.{node_id}.config.ai_profile",
+						"path": f"nodes.{node_id}.config.ai_profile" if config.get("ai_profile") else f"nodes.{node_id}.config.model",
 						"message": str(exc),
 					}
 				)

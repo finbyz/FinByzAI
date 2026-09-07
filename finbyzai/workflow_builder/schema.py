@@ -816,11 +816,19 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 				if not str(config.get(key) or "").strip():
 					issues.append(_issue("MISSING_NOTIFICATION_VALUE", message, f"{path}.config.{key}", node_id))
 		if node.get("type") in {"action.ai_generate", "action.ai_support_agent"}:
-			if not str(config.get("ai_profile") or "").strip():
-				issues.append(_issue("MISSING_AI_PROFILE", "Choose an AI Agent", f"{path}.config.ai_profile", node_id))
-			fields = config.get("field_allowlist")
-			if not isinstance(fields, list) or not fields or len(fields) > 50 or any(not str(field or "").strip() for field in fields) or len(set(fields)) != len(fields):
-				issues.append(_issue("INVALID_AI_CONTEXT_FIELDS", "Choose between one and fifty unique context fields", f"{path}.config.field_allowlist", node_id))
+			is_inline = node.get("type") == "action.ai_generate" and bool(config.get("prompt_mode") == "inline" or (not config.get("ai_profile") and config.get("model")))
+			if is_inline:
+				if not str(config.get("model") or "").strip():
+					issues.append(_issue("MISSING_AI_MODEL", "Choose an AI Model", f"{path}.config.model", node_id))
+				if not str(config.get("user_prompt") or "").strip() and not str(config.get("instructions") or "").strip() and not str(config.get("system_prompt") or "").strip():
+					issues.append(_issue("MISSING_AI_PROMPT", "Enter a User Prompt or instructions", f"{path}.config.user_prompt", node_id))
+			else:
+				if not str(config.get("ai_profile") or "").strip():
+					issues.append(_issue("MISSING_AI_PROFILE", "Choose an AI Agent", f"{path}.config.ai_profile", node_id))
+				fields = config.get("field_allowlist")
+				if not isinstance(fields, list) or not fields or len(fields) > 50 or any(not str(field or "").strip() for field in fields) or len(set(fields)) != len(fields):
+					issues.append(_issue("INVALID_AI_CONTEXT_FIELDS", "Choose between one and fifty unique context fields", f"{path}.config.field_allowlist", node_id))
+			
 			threshold = config.get("confidence_threshold", 0.75)
 			if isinstance(threshold, bool) or not isinstance(threshold, (int, float)) or threshold < 0 or threshold > 1:
 				issues.append(_issue("INVALID_AI_CONFIDENCE", "Confidence threshold must be between 0 and 1", f"{path}.config.confidence_threshold", node_id))
@@ -832,7 +840,7 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 				issues.append(_issue("INVALID_AI_OUTPUT_LIMIT", "AI output limit must be between 128 and 8192 tokens", f"{path}.config.max_tokens", node_id))
 			if config.get("failure_mode", "branch") not in {"branch", "fail_workflow"}:
 				issues.append(_issue("INVALID_AI_FAILURE_MODE", "Choose a failure branch or fail the workflow", f"{path}.config.failure_mode", node_id))
-			if node.get("type") == "action.ai_generate" and config.get("mode") not in {"summarize", "classify_extract", "draft_reply", "grounded_answer"}:
+			if node.get("type") == "action.ai_generate" and not is_inline and config.get("mode") not in {"summarize", "classify_extract", "draft_reply", "grounded_answer"}:
 				issues.append(_issue("INVALID_AI_MODE", "Choose a supported AI task", f"{path}.config.mode", node_id))
 			if node.get("type") == "action.ai_support_agent":
 				if workflow_doctype and workflow_doctype != "Issue":
