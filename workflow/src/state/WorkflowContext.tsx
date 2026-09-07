@@ -12,7 +12,7 @@ import {
   useRef,
 } from 'react'
 import { call, mutationEnvelope, WorkflowApiError } from '../lib/api'
-import { arrangeWorkflowGraph, canonicalValue, catalogNode, duplicateWorkflowNode, duplicateWorkflowSection, insertWorkflowNode, relocateWorkflowNode, removeWorkflowNodes, replaceWorkflowTrigger, sameExecutionGraph, suggestedNodePlacement, upgradeLegacyIfElseBranches, workflowSectionNodeIds, type NodePlacement } from '../lib/workflowGraphCommands'
+import { arrangeWorkflowGraph, canonicalValue, catalogNode, createWorkflowClipboard, insertWorkflowNode, pasteWorkflowClipboard, relocateWorkflowNode, removeWorkflowNodes, replaceWorkflowTrigger, sameExecutionGraph, suggestedNodePlacement, upgradeLegacyIfElseBranches, workflowSectionNodeIds, type NodePlacement, type WorkflowClipboardPayload } from '../lib/workflowGraphCommands'
 import type {
   NodeCatalogItem,
   SimulationResult,
@@ -50,6 +50,7 @@ export interface EditorState {
   selectedNodeId?: string
   selectedTriggerGroupId?: string
   insertion?: NodePlacement & { label?: string }
+  clipboard?: WorkflowClipboardPayload
   catalogOpen: boolean
   validationOpen: boolean
   simulationOpen: boolean
@@ -85,6 +86,8 @@ type EditorAction =
   | { type: 'SELECT'; nodeId?: string; triggerGroupId?: string }
   | { type: 'BEGIN_INSERT'; placement: NodePlacement & { label?: string } }
   | { type: 'CANCEL_INSERT' }
+  | { type: 'BEGIN_COPY'; clipboard: WorkflowClipboardPayload }
+  | { type: 'CANCEL_COPY' }
   | { type: 'TOGGLE'; panel: 'catalogOpen' | 'validationOpen' | 'simulationOpen' | 'publishOpen' | 'runsOpen' | 'policiesOpen' | 'versionsOpen'; open?: boolean }
   | { type: 'SIMULATION'; result: SimulationResult }
   | { type: 'VERSION_DIFF'; diff?: EditorState['versionDiff'] }
@@ -315,6 +318,10 @@ export function workflowEditorReducer(state: EditorState, action: EditorAction):
 	  return { ...state, selectedNodeId: undefined, selectedTriggerGroupId: undefined, insertion: action.placement, catalogOpen: true }
     case 'CANCEL_INSERT':
       return { ...state, insertion: undefined }
+    case 'BEGIN_COPY':
+      return { ...state, clipboard: structuredClone(action.clipboard), insertion: undefined, catalogOpen: false }
+    case 'CANCEL_COPY':
+      return { ...state, clipboard: undefined }
     case 'TOGGLE':
 	  if (action.panel === 'catalogOpen') {
 		const catalogOpen = action.open ?? !state.catalogOpen
@@ -372,12 +379,9 @@ interface WorkflowActions {
   beginInsert(placement: NodePlacement & { label?: string }): void
   cancelInsert(): void
   autoArrange(): void
-  copyNode(nodeId: string): void
-  pasteNode(placement?: Partial<NodePlacement>): void
-  duplicateNode(nodeId: string, placement?: Partial<NodePlacement>): void
-  copySection(nodeId: string): void
-  pasteSection(placement?: Partial<NodePlacement>): void
-  duplicateSection(nodeId: string, placement?: Partial<NodePlacement>): void
+  beginCopy(nodeId: string, mode: WorkflowClipboardPayload['mode']): void
+  pasteAt(placement: NodePlacement): void
+  cancelCopy(): void
   replaceTrigger(item: NodeCatalogItem): void
   updateNode(nodeId: string, config: Record<string, unknown>, commandKey?: string): void
   updateNodeAndRemoveEdges(nodeId: string, config: Record<string, unknown>, edgeIds: string[], commandKey?: string): void
@@ -437,7 +441,6 @@ export function WorkflowProvider({ workflowId, children }: { workflowId: string;
   const historyRef = useRef(history)
   const savePromiseRef = useRef<Promise<number> | null>(null)
   const loadRequestRef = useRef(0)
-  const clipboardRef = useRef<{ kind: 'node'; node: WorkflowNode } | { kind: 'section'; rootId: string } | null>(null)
   documentRef.current = document
   historyRef.current = history
 
@@ -448,6 +451,7 @@ export function WorkflowProvider({ workflowId, children }: { workflowId: string;
 
   const load = useCallback(async () => {
     const requestId = ++loadRequestRef.current
+    editorDispatch({ type: 'CANCEL_COPY' })
     documentDispatch({ type: 'LOAD_START', workflowId })
     try {
       const response = await call<{
@@ -704,64 +708,26 @@ export function WorkflowProvider({ workflowId, children }: { workflowId: string;
       const next = arrangeWorkflowGraph(current)
       if (next !== current) mutate(next, 'auto-arrange')
     },
-    copyNode(nodeId) {
-      const node = documentRef.current.graph?.nodes.find((item) => item.id === nodeId)
-      if (!node || node.type.startsWith('trigger.')) return
-      clipboardRef.current = { kind: 'node', node: structuredClone(node) }
-    },
-    pasteNode(placement = {}) {
+    beginCopy(nodeId, mode) {
       const current = documentRef.current.graph
-      const copied = clipboardRef.current
-      const source = copied?.kind === 'node' ? copied.node : undefined
-      if (!current || !source) return
-      const id = crypto.randomUUID()
-      const position = placement.position || { x: source.position.x + 36, y: source.position.y + 120 }
-	  const automatic = editor.insertion || suggestedNodePlacement(current, editor.selectedNodeId)
-	  const requested = placement.edgeId || placement.afterNodeId ? { ...placement, position } : automatic ? { ...automatic, position } : undefined
-	  if (!requested) return
-	  const next = duplicateWorkflowNode(current, source, id, requested, crypto.randomUUID())
-	  if (next === current) return
-	  mutate(arrangeWorkflowGraph(next), 'paste-node')
-      editorDispatch({ type: 'SELECT', nodeId: id })
+      if (!current) return
+      const clipboard = createWorkflowClipboard(current, nodeId, mode)
+      if (clipboard) editorDispatch({ type: 'BEGIN_COPY', clipboard })
     },
-    duplicateNode(nodeId, placement = {}) {
+    pasteAt(placement) {
       const current = documentRef.current.graph
-      const source = current?.nodes.find((item) => item.id === nodeId)
-      if (!current || !source || source.type.startsWith('trigger.')) return
-      const id = crypto.randomUUID()
-      const position = placement.position || { x: source.position.x + 36, y: source.position.y + 120 }
-	  const next = duplicateWorkflowNode(current, source, id, { ...placement, position, afterNodeId: placement.afterNodeId || source.id }, crypto.randomUUID())
-	  if (next === current) return
-	  mutate(arrangeWorkflowGraph(next), 'duplicate-node')
-      editorDispatch({ type: 'SELECT', nodeId: id })
-    },
-    copySection(nodeId) {
-      const current = documentRef.current.graph
-      const node = current?.nodes.find((item) => item.id === nodeId)
-      if (!node || node.type.startsWith('trigger.')) return
-      clipboardRef.current = { kind: 'section', rootId: nodeId }
-    },
-    pasteSection(placement = {}) {
-      const current = documentRef.current.graph
-      const copied = clipboardRef.current
-      if (!current || copied?.kind !== 'section') return
-      const source = current.nodes.find((node) => node.id === copied.rootId)
-      if (!source) return
-      const position = placement.position || { x: source.position.x + 48, y: source.position.y + 140 }
-      const result = duplicateWorkflowSection(current, copied.rootId, { ...placement, position, afterNodeId: placement.afterNodeId || editor.selectedNodeId }, () => crypto.randomUUID(), () => crypto.randomUUID())
-      if (!result.rootId) return
-      mutate(arrangeWorkflowGraph(result.graph), 'paste-section')
+      if (!current || !editor.clipboard) return
+      const result = pasteWorkflowClipboard(current, editor.clipboard, placement, () => crypto.randomUUID(), () => crypto.randomUUID())
+      if (!result.rootId) {
+        if (result.reason) documentDispatch({ type: 'SAVE_ERROR', error: result.reason })
+        return
+      }
+      mutate(arrangeWorkflowGraph(result.graph), 'paste-actions')
+      editorDispatch({ type: 'CANCEL_COPY' })
       editorDispatch({ type: 'SELECT', nodeId: result.rootId })
     },
-    duplicateSection(nodeId, placement = {}) {
-      const current = documentRef.current.graph
-      const source = current?.nodes.find((node) => node.id === nodeId)
-      if (!current || !source || source.type.startsWith('trigger.')) return
-      const position = placement.position || { x: source.position.x + 48, y: source.position.y + 140 }
-      const result = duplicateWorkflowSection(current, nodeId, { ...placement, position, afterNodeId: placement.afterNodeId || nodeId }, () => crypto.randomUUID(), () => crypto.randomUUID())
-      if (!result.rootId) return
-      mutate(arrangeWorkflowGraph(result.graph), 'duplicate-section')
-      editorDispatch({ type: 'SELECT', nodeId: result.rootId })
+    cancelCopy() {
+      editorDispatch({ type: 'CANCEL_COPY' })
     },
     replaceTrigger(item) {
       const current = documentRef.current.graph
@@ -907,7 +873,7 @@ export function WorkflowProvider({ workflowId, children }: { workflowId: string;
       localStorage.removeItem(recoveryKey(current.serverRevision))
       await load()
     },
-  }), [editor.insertion, editor.selectedNodeId, load, mutate, recoveryKey, save, workflowId])
+  }), [editor.clipboard, editor.insertion, editor.selectedNodeId, load, mutate, recoveryKey, save, workflowId])
 
   const documentValue = useMemo(() => document, [document])
   const editorValue = useMemo(() => editor, [editor])

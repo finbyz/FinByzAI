@@ -1,4 +1,4 @@
-import type { NodeCatalogItem, Position, WorkflowGraph, WorkflowNode } from '../types'
+import type { NodeCatalogItem, Position, WorkflowEdge, WorkflowGraph, WorkflowNode } from '../types'
 
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize)
@@ -123,6 +123,19 @@ export interface NodePlacement {
   edgeId?: string
   afterNodeId?: string
 	sourceHandle?: string
+}
+
+export interface WorkflowClipboardPayload {
+	mode: 'action' | 'following'
+	rootId: string
+	nodes: WorkflowNode[]
+	edges: WorkflowEdge[]
+	exits: Array<{ source: string; source_handle: string }>
+}
+
+export interface WorkflowPasteEligibility {
+	allowed: boolean
+	reason?: string
 }
 
 export function catalogNode(item: NodeCatalogItem, id: string, position: Position): WorkflowNode {
@@ -435,6 +448,153 @@ export function duplicateWorkflowSection(
     }
   }
   return { graph: { ...graph, nodes: [...graph.nodes, ...clones], edges }, rootId: copiedRootId }
+}
+
+function nestedOutputReferences(value: unknown, found = new Set<string>()): Set<string> {
+	if (Array.isArray(value)) value.forEach((item) => nestedOutputReferences(item, found))
+	else if (value && typeof value === 'object') {
+		const row = value as Record<string, unknown>
+		if (row.kind === 'node_output' && typeof row.node_id === 'string') found.add(row.node_id)
+		Object.values(row).forEach((item) => nestedOutputReferences(item, found))
+	}
+	return found
+}
+
+function remapClipboardConfig(node: WorkflowNode, ids: Map<string, string>): Record<string, unknown> {
+	const remap = (value: unknown): unknown => {
+		if (Array.isArray(value)) return value.map(remap)
+		if (!value || typeof value !== 'object') return value
+		const row = Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, remap(item)]))
+		if (row.kind === 'node_output' && typeof row.node_id === 'string' && ids.has(row.node_id)) row.node_id = ids.get(row.node_id)!
+		return row
+	}
+	const config = remap(node.config) as Record<string, unknown>
+	if (node.type === 'action.go_to' && typeof config.target_node_id === 'string' && ids.has(config.target_node_id)) config.target_node_id = ids.get(config.target_node_id)!
+	return config
+}
+
+function graphDominators(graph: WorkflowGraph): Map<string, Set<string>> {
+	const ids = graph.nodes.map((node) => node.id)
+	const all = new Set(ids)
+	const predecessors = new Map(ids.map((id) => [id, [] as string[]]))
+	graph.edges.forEach((edge) => predecessors.get(edge.target)?.push(edge.source))
+	graph.nodes.filter((node) => node.type === 'action.go_to').forEach((node) => {
+		const target = String(node.config.target_node_id || '')
+		if (all.has(target)) predecessors.get(target)?.push(node.id)
+	})
+	const result = new Map(ids.map((id) => [id, id === graph.start_node_id ? new Set([id]) : new Set(all)]))
+	let changed = true
+	while (changed) {
+		changed = false
+		for (const id of ids) {
+			if (id === graph.start_node_id) continue
+			const parents = predecessors.get(id) || []
+			const next = parents.length
+				? parents.map((parent) => result.get(parent) || new Set<string>()).reduce((left, right) => new Set([...left].filter((item) => right.has(item))), new Set(all))
+				: new Set<string>()
+			next.add(id)
+			const previous = result.get(id)!
+			if (previous.size !== next.size || [...previous].some((item) => !next.has(item))) {
+				result.set(id, next)
+				changed = true
+			}
+		}
+	}
+	return result
+}
+
+function graphCanReach(graph: WorkflowGraph, sourceId: string, targetId: string): boolean {
+	const visited = new Set<string>()
+	const pending = [sourceId]
+	while (pending.length) {
+		const current = pending.pop()
+		if (!current || visited.has(current)) continue
+		if (current === targetId) return true
+		visited.add(current)
+		graph.edges.filter((edge) => edge.source === current).forEach((edge) => pending.push(edge.target))
+		const node = graph.nodes.find((candidate) => candidate.id === current)
+		const goToTarget = node?.type === 'action.go_to' ? String(node.config.target_node_id || '') : ''
+		if (goToTarget) pending.push(goToTarget)
+	}
+	return false
+}
+
+export function createWorkflowClipboard(graph: WorkflowGraph, rootId: string, mode: WorkflowClipboardPayload['mode']): WorkflowClipboardPayload | undefined {
+	const root = graph.nodes.find((node) => node.id === rootId)
+	if (!root || root.type.startsWith('trigger.')) return undefined
+	const ids = new Set(mode === 'following' ? workflowSectionNodeIds(graph, rootId) : [rootId])
+	return {
+		mode,
+		rootId,
+		nodes: structuredClone(graph.nodes.filter((node) => ids.has(node.id))),
+		edges: structuredClone(graph.edges.filter((edge) => ids.has(edge.source) && ids.has(edge.target))),
+		exits: structuredClone(graph.edges.filter((edge) => ids.has(edge.source) && !ids.has(edge.target)).map(({ source, source_handle }) => ({ source, source_handle }))),
+	}
+}
+
+export function workflowPasteEligibility(graph: WorkflowGraph, payload: WorkflowClipboardPayload, placement: Pick<NodePlacement, 'edgeId' | 'afterNodeId'>): WorkflowPasteEligibility {
+	const insertionEdge = placement.edgeId ? graph.edges.find((edge) => edge.id === placement.edgeId) : undefined
+	const anchorId = insertionEdge?.source || placement.afterNodeId
+	if (!anchorId || !graph.nodes.some((node) => node.id === anchorId)) return { allowed: false, reason: 'This paste location no longer exists.' }
+	const hasBranch = payload.nodes.some((node) => workflowNodeSourceHandles(node).length > 1)
+	if (insertionEdge && hasBranch) return { allowed: false, reason: 'Copied branches can only be pasted at the end of a path.' }
+	const internalSources = new Set(payload.edges.map((edge) => edge.source))
+	const canContinue = payload.exits.length || payload.nodes.some((node) => !internalSources.has(node.id) && workflowNodeContinuationHandle(node))
+	if (insertionEdge && !canContinue) return { allowed: false, reason: 'This copied section ends the path and can only be pasted at an END point.' }
+	const internalIds = new Set(payload.nodes.map((node) => node.id))
+	const graphIds = new Set(graph.nodes.map((node) => node.id))
+	const anchorDominators = graphDominators(graph).get(anchorId) || new Set<string>()
+	const externalOutputs = new Set(payload.nodes.flatMap((node) => [...nestedOutputReferences(node.config)]).filter((id) => !internalIds.has(id)))
+	for (const reference of externalOutputs) {
+		if (!graphIds.has(reference)) return { allowed: false, reason: 'A referenced earlier action no longer exists.' }
+		if (!anchorDominators.has(reference)) return { allowed: false, reason: 'An earlier-action output would not be available on this path.' }
+	}
+	for (const node of payload.nodes) {
+		if (node.type !== 'action.go_to') continue
+		const target = String(node.config.target_node_id || '')
+		if (target && !internalIds.has(target) && (!graphIds.has(target) || target === graph.start_node_id)) return { allowed: false, reason: 'A Go To destination no longer exists.' }
+		if (target && !internalIds.has(target) && graphCanReach(graph, target, anchorId)) {
+			return { allowed: false, reason: 'This Go To destination would create a workflow loop.' }
+		}
+	}
+	return { allowed: true }
+}
+
+export function pasteWorkflowClipboard(graph: WorkflowGraph, payload: WorkflowClipboardPayload, placement: NodePlacement, nodeId: () => string, edgeId: () => string): { graph: WorkflowGraph; rootId?: string; reason?: string } {
+	const eligibility = workflowPasteEligibility(graph, payload, placement)
+	if (!eligibility.allowed) return { graph, reason: eligibility.reason }
+	const root = payload.nodes.find((node) => node.id === payload.rootId)
+	if (!root) return { graph, reason: 'The copied action is unavailable.' }
+	const ids = new Map(payload.nodes.map((node) => [node.id, nodeId()]))
+	const offset = { x: placement.position.x - root.position.x, y: placement.position.y - root.position.y }
+	const clones = payload.nodes.map((node) => ({
+		...structuredClone(node),
+		id: ids.get(node.id)!,
+		position: { x: node.position.x + offset.x, y: node.position.y + offset.y },
+		config: remapClipboardConfig(node, ids),
+	}))
+	const internalEdges = payload.edges.map((edge) => ({ ...structuredClone(edge), id: edgeId(), source: ids.get(edge.source)!, target: ids.get(edge.target)! }))
+	const requestedEdge = placement.edgeId ? graph.edges.find((edge) => edge.id === placement.edgeId) : undefined
+	const after = placement.afterNodeId ? graph.nodes.find((node) => node.id === placement.afterNodeId) : undefined
+	const afterHandle = placement.sourceHandle || (canUseDefaultOutput(after) ? 'default' : undefined)
+	const insertionEdge = requestedEdge || (after && afterHandle ? graph.edges.find((edge) => edge.source === after.id && edge.source_handle === afterHandle) : undefined)
+	const copiedRootId = ids.get(payload.rootId)!
+	let edges = [...graph.edges]
+	if (insertionEdge) {
+		edges = edges.map((edge) => edge.id === insertionEdge.id ? { ...edge, target: copiedRootId } : edge)
+		const boundaries = payload.exits.length
+			? payload.exits.map((exit) => ({ id: edgeId(), source: ids.get(exit.source)!, source_handle: exit.source_handle, target: insertionEdge.target }))
+			: clones.flatMap((clone) => {
+				const handle = internalEdges.some((edge) => edge.source === clone.id) ? undefined : workflowNodeContinuationHandle(clone)
+				return handle ? [{ id: edgeId(), source: clone.id, source_handle: handle, target: insertionEdge.target }] : []
+			})
+		edges.push(...internalEdges, ...boundaries)
+	} else {
+		edges.push(...internalEdges)
+		if (!after || !afterHandle || edges.some((edge) => edge.source === after.id && edge.source_handle === afterHandle)) return { graph, reason: 'This paste location is already connected.' }
+		edges.push({ id: edgeId(), source: after.id, source_handle: afterHandle, target: copiedRootId })
+	}
+	return { graph: { ...graph, nodes: [...graph.nodes, ...clones], edges }, rootId: copiedRootId }
 }
 
 export function relocateWorkflowNode(

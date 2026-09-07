@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { NodeCatalogItem, WorkflowGraph } from '../types'
-import { arrangeWorkflowGraph, catalogNode, duplicateWorkflowNode, duplicateWorkflowSection, insertWorkflowNode, reachableWorkflowNodeIds, relocateWorkflowNode, removeWorkflowNodes, replaceWorkflowTrigger, sameExecutionGraph, suggestedNodePlacement, upgradeLegacyIfElseBranches, workflowNodeContinuationHandle, workflowNodeSourceHandles, workflowNodeVisualWidth, workflowSectionNodeIds } from './workflowGraphCommands'
+import { arrangeWorkflowGraph, catalogNode, createWorkflowClipboard, duplicateWorkflowNode, duplicateWorkflowSection, insertWorkflowNode, pasteWorkflowClipboard, reachableWorkflowNodeIds, relocateWorkflowNode, removeWorkflowNodes, replaceWorkflowTrigger, sameExecutionGraph, suggestedNodePlacement, upgradeLegacyIfElseBranches, workflowNodeContinuationHandle, workflowNodeSourceHandles, workflowNodeVisualWidth, workflowPasteEligibility, workflowSectionNodeIds } from './workflowGraphCommands'
 
 const graph: WorkflowGraph = {
   schema_version: 1,
@@ -406,5 +406,92 @@ describe('fast graph authoring commands', () => {
 		expect(copied.graph.nodes.filter((node) => node.id === 'shared')).toHaveLength(1)
 		expect(copied.graph.edges).toContainEqual({ id: 'none-a', source: 'branch', source_handle: 'none', target: 'copy-1' })
 		expect(copied.graph.edges.some((edge) => edge.source === 'copy-2' && edge.target === 'no-1')).toBe(true)
+	})
+
+	it('snapshots following actions and remaps their internal output references', () => {
+		const sourceGraph: WorkflowGraph = {
+			...graph,
+			nodes: [
+				graph.nodes[0],
+				{ id: 'source', type: 'action.create_record', type_version: 1, position: { x: 100, y: 200 }, config: { target_doctype: 'Lead' } },
+				{ id: 'consumer', type: 'delay.until_event', type_version: 2, position: { x: 100, y: 400 }, config: { event_source: { kind: 'node_output', node_id: 'source', path: 'name' }, event_source_doctype: { kind: 'node_output', node_id: 'source', path: 'doctype' } } },
+			],
+			edges: [
+				{ id: 'before', source: 'trigger-1', source_handle: 'default', target: 'source' },
+				{ id: 'inside', source: 'source', source_handle: 'default', target: 'consumer' },
+			],
+		}
+		const clipboard = createWorkflowClipboard(sourceGraph, 'source', 'following')!
+		sourceGraph.nodes[1].config.target_doctype = 'Contact'
+		expect(clipboard.nodes[0].config.target_doctype).toBe('Lead')
+		const nodeIds = ['new-source', 'new-consumer'][Symbol.iterator]()
+		let edge = 0
+		const pasted = pasteWorkflowClipboard(sourceGraph, clipboard, { edgeId: 'before', position: { x: 300, y: 120 } }, () => nodeIds.next().value!, () => `new-edge-${++edge}`)
+		expect(pasted.rootId).toBe('new-source')
+		expect(pasted.graph.edges).toContainEqual({ id: 'before', source: 'trigger-1', source_handle: 'default', target: 'new-source' })
+		expect(pasted.graph.edges.some((item) => item.source === 'new-consumer' && item.target === 'source')).toBe(true)
+		expect(pasted.graph.nodes.find((node) => node.id === 'new-consumer')?.config.event_source).toEqual({ kind: 'node_output', node_id: 'new-source', path: 'name' })
+		expect(pasted.graph.nodes.find((node) => node.id === 'new-consumer')?.config.event_source_doctype).toEqual({ kind: 'node_output', node_id: 'new-source', path: 'doctype' })
+	})
+
+	it('allows external output references only after their producer', () => {
+		const sourceGraph: WorkflowGraph = {
+			...graph,
+			nodes: [
+				graph.nodes[0],
+				{ id: 'producer', type: 'action.create_record', type_version: 1, position: { x: 100, y: 200 }, config: {} },
+				{ id: 'consumer', type: 'action.add_comment', type_version: 1, position: { x: 100, y: 400 }, config: { content: { kind: 'node_output', node_id: 'producer', path: 'name' } } },
+			],
+			edges: [
+				{ id: 'before-producer', source: 'trigger-1', source_handle: 'default', target: 'producer' },
+				{ id: 'before-consumer', source: 'producer', source_handle: 'default', target: 'consumer' },
+			],
+		}
+		const clipboard = createWorkflowClipboard(sourceGraph, 'consumer', 'action')!
+		expect(workflowPasteEligibility(sourceGraph, clipboard, { edgeId: 'before-producer' })).toEqual({ allowed: false, reason: 'An earlier-action output would not be available on this path.' })
+		expect(workflowPasteEligibility(sourceGraph, clipboard, { afterNodeId: 'consumer' })).toEqual({ allowed: true })
+	})
+
+	it('remaps an internal Go To destination when copying a branch section', () => {
+		const sourceGraph: WorkflowGraph = {
+			...graph,
+			nodes: [
+				graph.nodes[0],
+				{ id: 'branch', type: 'condition.if_else', type_version: 1, position: { x: 100, y: 200 }, config: { condition: {} } },
+				{ id: 'jump', type: 'action.go_to', type_version: 1, position: { x: 0, y: 400 }, config: { target_node_id: 'destination' } },
+				{ id: 'destination', type: 'action.add_comment', type_version: 1, position: { x: 240, y: 400 }, config: { content: 'arrived' } },
+			],
+			edges: [
+				{ id: 'before', source: 'trigger-1', source_handle: 'default', target: 'branch' },
+				{ id: 'jump-path', source: 'branch', source_handle: 'true', target: 'jump' },
+				{ id: 'destination-path', source: 'branch', source_handle: 'false', target: 'destination' },
+			],
+		}
+		const clipboard = createWorkflowClipboard(sourceGraph, 'branch', 'following')!
+		const generatedIds = ['new-branch', 'new-jump', 'new-destination'][Symbol.iterator]()
+		let edge = 0
+		const pasted = pasteWorkflowClipboard(sourceGraph, clipboard, { afterNodeId: 'destination', sourceHandle: 'default', position: { x: 500, y: 500 } }, () => generatedIds.next().value!, () => `new-edge-${++edge}`)
+		expect(pasted.graph.nodes.find((node) => node.id === 'new-jump')?.config.target_node_id).toBe('new-destination')
+	})
+
+	it('restricts branches and terminating actions to END insertion points', () => {
+		const sourceGraph: WorkflowGraph = {
+			...graph,
+			nodes: [
+				graph.nodes[0],
+				{ id: 'branch', type: 'condition.if_else', type_version: 1, position: { x: 100, y: 200 }, config: { condition: {} } },
+				{ id: 'leaf', type: 'action.add_comment', type_version: 1, position: { x: 100, y: 400 }, config: { content: 'done' } },
+				{ id: 'terminal', type: 'end.complete', type_version: 1, position: { x: 500, y: 400 }, config: {} },
+			],
+			edges: [
+				{ id: 'before-branch', source: 'trigger-1', source_handle: 'default', target: 'branch' },
+				{ id: 'branch-leaf', source: 'branch', source_handle: 'true', target: 'leaf' },
+			],
+		}
+		const branchClipboard = createWorkflowClipboard(sourceGraph, 'branch', 'action')!
+		expect(workflowPasteEligibility(sourceGraph, branchClipboard, { edgeId: 'branch-leaf' }).allowed).toBe(false)
+		expect(workflowPasteEligibility(sourceGraph, branchClipboard, { afterNodeId: 'leaf' })).toEqual({ allowed: true })
+		const terminalClipboard = createWorkflowClipboard(sourceGraph, 'terminal', 'action')!
+		expect(workflowPasteEligibility(sourceGraph, terminalClipboard, { edgeId: 'branch-leaf' }).reason).toContain('ends the path')
 	})
 })

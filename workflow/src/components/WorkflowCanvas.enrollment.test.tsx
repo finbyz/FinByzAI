@@ -4,12 +4,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
 	call: vi.fn(),
+	editor: { selectedNodeId: 'start', selectedTriggerGroupId: undefined, clipboard: undefined as import('../lib/workflowGraphCommands').WorkflowClipboardPayload | undefined },
+	document: { graph: undefined as import('../types').WorkflowGraph | undefined },
 	actions: {
 		beginInsert: vi.fn(),
 		select: vi.fn(),
 		selectTrigger: vi.fn(),
 		updateNode: vi.fn(),
 		replaceTrigger: vi.fn(),
+		pasteAt: vi.fn(),
+		cancelCopy: vi.fn(),
 	},
 }))
 
@@ -22,8 +26,8 @@ vi.mock('@xyflow/react', () => ({
 vi.mock('../lib/api', () => ({ call: mocks.call }))
 vi.mock('../state/WorkflowContext', () => ({
 	useWorkflowActions: () => mocks.actions,
-	useWorkflowEditor: () => ({ selectedNodeId: 'start', selectedTriggerGroupId: undefined }),
-	useWorkflowDocument: () => ({}),
+	useWorkflowEditor: () => mocks.editor,
+	useWorkflowDocument: () => mocks.document,
 }))
 
 import { EnrollmentBoundary, nodeSummary, VirtualEndCard } from './WorkflowCanvas'
@@ -200,5 +204,28 @@ describe('Derived path ending', () => {
 		render(<VirtualEndCard {...props} />)
 
 		expect(screen.getByText('None')).toBeInTheDocument()
+	})
+
+	it('shows Paste below beside an END point and submits its exact placement', () => {
+		mocks.document.graph = {
+			schema_version: 1,
+			primary_doctype: 'Lead',
+			start_node_id: 'start',
+			nodes: [{ id: 'start', type: 'trigger.manual', type_version: 1, position: { x: 0, y: 0 }, config: {} }],
+			edges: [],
+		}
+		mocks.editor.clipboard = {
+			mode: 'action',
+			rootId: 'copied',
+			nodes: [{ id: 'copied', type: 'action.add_comment', type_version: 1, position: { x: 20, y: 20 }, config: { content: 'Copied' } }],
+			edges: [],
+			exits: [],
+		}
+		const placement = { sourceId: 'start', sourceHandle: 'default', label: 'Next action', insertPosition: { x: 0, y: 250 } }
+		render(<VirtualEndCard {...({ id: 'virtual-end:start:default', data: placement } as unknown as ComponentProps<typeof VirtualEndCard>)} />)
+		fireEvent.click(screen.getByRole('button', { name: 'Paste below' }))
+		expect(mocks.actions.pasteAt).toHaveBeenCalledWith({ afterNodeId: 'start', sourceHandle: 'default', position: { x: 0, y: 250 } })
+		mocks.editor.clipboard = undefined
+		mocks.document.graph = undefined
 	})
 })

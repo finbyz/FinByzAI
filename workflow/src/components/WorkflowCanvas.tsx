@@ -20,10 +20,10 @@ import {
   getSmoothStepPath,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, Copy, LayoutTemplate, Plus, Trash2, Unplug, Zap } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, ClipboardPaste, Copy, Ellipsis, LayoutTemplate, Network, Plus, Trash2, Unplug, X, Zap } from 'lucide-react'
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent } from 'react'
 import { call } from '../lib/api'
-import { reachableWorkflowNodeIds, workflowNodeSourceHandles, workflowNodeVisualWidth } from '../lib/workflowGraphCommands'
+import { reachableWorkflowNodeIds, workflowNodeSourceHandles, workflowNodeVisualWidth, workflowPasteEligibility, type NodePlacement } from '../lib/workflowGraphCommands'
 import { useWorkflowActions, useWorkflowDocument, useWorkflowEditor } from '../state/WorkflowContext'
 import type { BusinessEventType, CanvasMetric, CanvasMetricsResponse, NodeCatalogItem, NodeType, WorkflowNode } from '../types'
 import { EnrollmentTriggerChooser, type EnrollmentTriggerChoice } from './EnrollmentTriggerChooser'
@@ -372,7 +372,16 @@ const WorkflowNodeCard = memo(({ data, selected }: NodeProps<WorkflowFlowNode>) 
   return (
 	    <article className={`workflow-node workflow-node--${kind}`} style={nodeWidth ? { width: nodeWidth } : undefined} data-invalid={data.issueCount > 0 ? 'true' : 'false'} data-selected={selected ? 'true' : 'false'} data-manual-links={data.manualConnections ? 'true' : 'false'} data-connected={data.connected ? 'true' : 'false'}>
       <span className="workflow-node__rail" aria-hidden />
-	  <div className="workflow-node__quick-actions nodrag nopan"><button type="button" title="Clone this action" aria-label={`Clone ${nodeLabels[node.type] || node.type}`} onClick={(event) => { event.stopPropagation(); actions.duplicateNode(node.id) }}><Copy size={12} /></button><DeleteWorkflowStepButton node={node} title="Delete this action" aria-label={`Delete ${nodeLabels[node.type] || node.type}`}><Trash2 size={12} /></DeleteWorkflowStepButton></div>
+	  <div className="workflow-node__quick-actions nodrag nopan">
+		{!trigger && <details className="workflow-node-action-menu" onClick={(event) => event.stopPropagation()}>
+		  <summary title="More action options" aria-label={`More options for ${nodeLabels[node.type] || node.type}`}><Ellipsis size={14} /></summary>
+		  <div className="workflow-node-action-menu__popover">
+			<button type="button" onClick={(event) => { actions.beginCopy(node.id, 'action'); (event.currentTarget.closest('details') as HTMLDetailsElement).open = false }}><Copy size={13} />Copy action</button>
+			<button type="button" onClick={(event) => { actions.beginCopy(node.id, 'following'); (event.currentTarget.closest('details') as HTMLDetailsElement).open = false }}><Network size={13} />Copy all actions from here</button>
+		  </div>
+		</details>}
+		<DeleteWorkflowStepButton node={node} title="Delete this action" aria-label={`Delete ${nodeLabels[node.type] || node.type}`}><Trash2 size={12} /></DeleteWorkflowStepButton>
+	  </div>
       {!trigger && <Handle type="target" position={Position.Top} className={`workflow-handle ${data.manualConnections ? '' : 'workflow-handle--guided'}`} />}
 	  <div className="workflow-node__body">
 		<div className="workflow-node__heading">
@@ -411,23 +420,36 @@ const WorkflowNodeCard = memo(({ data, selected }: NodeProps<WorkflowFlowNode>) 
 })
 WorkflowNodeCard.displayName = 'WorkflowNodeCard'
 
+function PasteBelowButton({ placement, className, style }: { placement: NodePlacement; className: string; style?: CSSProperties }) {
+	const { graph } = useWorkflowDocument()
+	const { clipboard } = useWorkflowEditor()
+	const actions = useWorkflowActions()
+	if (!graph || !clipboard) return null
+	const eligibility = workflowPasteEligibility(graph, clipboard, placement)
+	return <button type="button" className={`${className} workflow-paste-below nodrag nopan`} style={style} disabled={!eligibility.allowed} title={eligibility.reason || 'Paste below'} aria-label={eligibility.reason ? `Cannot paste here: ${eligibility.reason}` : 'Paste below'} onClick={(event) => { event.stopPropagation(); actions.pasteAt(placement) }}><ClipboardPaste size={13} /></button>
+}
+
 export const VirtualEndCard = memo(({ data }: NodeProps<VirtualEndFlowNode>) => {
 	const actions = useWorkflowActions()
 	const showPathLabel = data.sourceHandle !== 'default' || data.label.toLowerCase() !== 'next action'
+	const placement = { afterNodeId: data.sourceId, sourceHandle: data.sourceHandle, position: data.insertPosition }
 	return <div className="workflow-path-end" data-default-path={showPathLabel ? 'false' : 'true'}>
 		<Handle type="target" position={Position.Top} className="workflow-virtual-target" />
 		{showPathLabel && <span className="workflow-path-end__label" title={data.label}>{data.label}</span>}
-		<button
-			type="button"
-			className="workflow-path-end__add nodrag nopan"
-			title={`Add a step to ${data.label}`}
-			onClick={(event) => {
-				event.stopPropagation()
-				actions.beginInsert({ afterNodeId: data.sourceId, sourceHandle: data.sourceHandle, position: data.insertPosition, label: `After ${data.label}` })
-			}}
-		>
-			<Plus size={15} /><span className="sr-only">Add step</span>
-		</button>
+		<div className="workflow-path-end__controls">
+			<button
+				type="button"
+				className="workflow-path-end__add nodrag nopan"
+				title={`Add a step to ${data.label}`}
+				onClick={(event) => {
+					event.stopPropagation()
+					actions.beginInsert({ ...placement, label: `After ${data.label}` })
+				}}
+			>
+				<Plus size={15} /><span className="sr-only">Add step</span>
+			</button>
+			<PasteBelowButton placement={placement} className="workflow-path-end__add" />
+		</div>
 		<span className="workflow-path-end__tail" aria-hidden />
 		<span className="workflow-virtual-end"><CheckCircle2 size={12} />END</span>
 	</div>
@@ -453,7 +475,7 @@ const GuidedEdge = memo((props: EdgeProps) => {
 			<button
 				type="button"
 				className="workflow-edge-add nodrag nopan"
-				style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`, '--workflow-edge-color': edgeColor } as CSSProperties}
+				style={{ transform: `translate(-50%, -50%) translate(${labelX - 17}px, ${labelY}px)`, '--workflow-edge-color': edgeColor } as CSSProperties}
 				aria-label="Insert a step between these steps"
 				title="Insert step — connections update automatically"
 				onClick={(event) => {
@@ -463,6 +485,7 @@ const GuidedEdge = memo((props: EdgeProps) => {
 			>
 				<Plus size={13} />
 			</button>
+			<PasteBelowButton placement={{ edgeId: props.id, position: { x: labelX - 126, y: labelY - 70 } }} className="workflow-edge-add" style={{ transform: `translate(-50%, -50%) translate(${labelX + 17}px, ${labelY}px)`, '--workflow-edge-color': edgeColor } as CSSProperties} />
 		</EdgeLabelRenderer>
 	</>
 })
@@ -480,7 +503,7 @@ function distanceToSegment(point: { x: number; y: number }, start: { x: number; 
 
 export function WorkflowCanvas() {
   const { workflowId, graph, validation, publication } = useWorkflowDocument()
-  const { selectedNodeId } = useWorkflowEditor()
+  const { selectedNodeId, clipboard } = useWorkflowEditor()
   const actions = useWorkflowActions()
 	const manualConnections = false
 	const [canvasMetrics, setCanvasMetrics] = useState<CanvasMetricsResponse | null>(null)
@@ -612,24 +635,15 @@ export function WorkflowCanvas() {
   }
 
 	useEffect(() => {
-		const keyboardClipboard = (event: KeyboardEvent) => {
-			const target = event.target as HTMLElement | null
-			if (target?.matches('input, textarea, select, [contenteditable="true"]')) return
-			if (!(event.ctrlKey || event.metaKey) || !selectedNodeId) return
-			if (event.key.toLowerCase() === 'c') {
+		const cancelCopyOnEscape = (event: KeyboardEvent) => {
+			if (event.key === 'Escape' && clipboard) {
 				event.preventDefault()
-				if (event.shiftKey) actions.copySection(selectedNodeId)
-				else actions.copyNode(selectedNodeId)
-			}
-			if (event.key.toLowerCase() === 'v') {
-				event.preventDefault()
-				if (event.shiftKey) actions.pasteSection()
-				else actions.pasteNode()
+				actions.cancelCopy()
 			}
 		}
-		document.addEventListener('keydown', keyboardClipboard)
-		return () => document.removeEventListener('keydown', keyboardClipboard)
-	}, [actions, selectedNodeId])
+		document.addEventListener('keydown', cancelCopyOnEscape)
+		return () => document.removeEventListener('keydown', cancelCopyOnEscape)
+	}, [actions, clipboard])
 
 	const dropCatalogNode = (event: DragEvent) => {
 		event.preventDefault()
@@ -673,6 +687,7 @@ export function WorkflowCanvas() {
 		<div className="workflow-canvas relative h-full min-h-0" aria-label="Workflow canvas" onDragOver={(event) => { if (event.dataTransfer.types.includes('application/x-finbyz-workflow-node')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' } }} onDrop={dropCatalogNode}>
 		<div className="absolute right-4 top-4 z-20 flex items-center gap-2">
 			<button type="button" className="workflow-canvas-tool" onClick={() => actions.autoArrange()} title="Arrange steps into clear branch lanes"><LayoutTemplate size={12} /> Tidy layout</button>
+			{clipboard && <div className="workflow-copy-mode" role="status"><ClipboardPaste size={13} /><span>{clipboard.mode === 'following' ? `${clipboard.nodes.length} actions copied — choose Paste below` : 'Action copied — choose Paste below'}</span><button type="button" onClick={() => actions.cancelCopy()} title="Cancel copy mode" aria-label="Cancel copy mode"><X size={13} /></button></div>}
 		</div>
       <ReactFlow<FlowNode>
         nodes={nodes}
