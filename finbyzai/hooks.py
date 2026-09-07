@@ -301,6 +301,16 @@ fixtures = [
         "filters": [
             ["module", "=", "FinByz AI"]
         ]
+    },
+    {
+        # "Generate Email Image" - the only AI Tool in module "AI" - is bound
+        # to the Email Builder Copilot agent's tools table and called directly
+        # by finbyzreach's image_gen.py. It was not previously exported, so a
+        # fresh install had no tool for the AI Agent record to reference.
+        "doctype": "AI Tool",
+        "filters": [
+            ["module", "=", "AI"]
+        ]
     }
 ]
 
