@@ -1480,10 +1480,28 @@ def generate_draft(
 			node["id"]: (definitions.get(node["type"], {}).get("label") or node["type"])
 			for node in graph["nodes"]
 		}
+		# Some rules only bite at publish time (an AI step must have its success,
+		# low-confidence and failure paths connected). Surface them now rather
+		# than letting the user discover them in the publish check.
+		publish_only = []
+		try:
+			publish_issues = validate_graph(
+				graph, primary_doctype=workflow.primary_doctype, publish=True
+			)["issues"]
+			seen_codes = {(i.get("code"), i.get("node_id")) for i in validation["issues"]}
+			publish_only = [
+				issue
+				for issue in publish_issues
+				if (issue.get("code"), issue.get("node_id")) not in seen_codes
+				and issue.get("code") != "PLACEHOLDER_NODE"
+			]
+		except Exception:
+			publish_only = []
+
 		setup_required = []
 		seen_setup: set = set()
-		for issue in validation["issues"]:
-			if issue.get("code") not in _PICK_IN_INSPECTOR_MISSING:
+		for issue in list(validation["issues"]) + publish_only:
+			if issue.get("code") not in _PICK_IN_INSPECTOR_MISSING and issue not in publish_only:
 				continue
 			node_id = str(issue.get("node_id") or "")
 			key = (node_id, issue.get("code"))
