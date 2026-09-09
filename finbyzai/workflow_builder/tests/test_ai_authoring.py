@@ -426,6 +426,38 @@ class TestWorkflowAIAuthoring(IntegrationTestCase):
 		if real:
 			self.assertEqual(nodes["b"]["config"]["model"], real)
 
+	def test_a_second_trigger_is_demoted_to_a_condition(self):
+		"""Models use trigger.filter_criteria as a mid-flow "check this field"
+		step, which used to fail as TRIGGER_COUNT. It is a condition."""
+		allowed = {"trigger.any", "trigger.filter_criteria", "condition.if_else", "action.create_todo"}
+		predicate = {"kind": "predicate", "field": "recording_url", "operator": "is_set"}
+		payload = {
+			"summary": "s",
+			"graph": {
+				"start_node_id": "trg",
+				"nodes": [
+					{"id": "trg", "type": "trigger.any", "config": {"triggers": [
+						{"id": "t1", "type": "trigger.document_insert", "config": {}}]}},
+					{"id": "check", "type": "trigger.filter_criteria", "config": {"condition": predicate}},
+					{"id": "todo", "type": "action.create_todo", "config": {}},
+				],
+				"edges": [
+					{"source": "trg", "source_handle": "default", "target": "check"},
+					{"source": "check", "source_handle": "default", "target": "todo"},
+				],
+			},
+		}
+		graph = _repair_ai_payload(payload, allowed)["graph"]
+		nodes = {n["id"]: n for n in graph["nodes"]}
+		self.assertEqual(nodes["trg"]["type"], "trigger.any")  # the real trigger stays
+		self.assertEqual(nodes["check"]["type"], "condition.if_else")  # the extra is demoted
+		self.assertEqual(
+			nodes["check"]["config"]["branches"][0]["condition"], predicate
+		)  # its criteria are preserved
+		self.assertEqual(graph["start_node_id"], "trg")
+		handle = next(e["source_handle"] for e in graph["edges"] if e["source"] == "check")
+		self.assertEqual(handle, "branch-1")  # branch node needs a real handle
+
 	def test_generate_retries_once_when_the_first_response_is_malformed(self):
 		bad = self._payload()
 		# An invented node type the repair layer cannot map -> schema rejects it
