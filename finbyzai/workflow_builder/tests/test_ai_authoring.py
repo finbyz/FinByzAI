@@ -11,6 +11,7 @@ from finbyzai.workflow_builder.ai_authoring import (
 	_authoring_suggestions,
 	_effective_response_schema,
 	_format_chat_history,
+	_gate_choices,
 	_normalise_graph,
 	_parse_response,
 	_effective_request,
@@ -425,6 +426,20 @@ class TestWorkflowAIAuthoring(IntegrationTestCase):
 		self.assertTrue(nodes["a"]["placeholder"])
 		if real:
 			self.assertEqual(nodes["b"]["config"]["model"], real)
+
+	def test_gate_offers_real_selectable_values(self):
+		"""The gate has to hand back names that exist, or the user retypes a
+		guess ("use google model or openai") and gets asked all over again."""
+		models = _gate_choices("MISSING_AI_MODEL")
+		for name in models:
+			self.assertTrue(frappe.db.exists("LLM", name), f"{name} is not a real LLM")
+			self.assertNotIn("muse-spark", name)  # the blocked model must not be offered
+		people = _gate_choices("MISSING_ASSIGNEE")
+		for name in people:
+			self.assertTrue(frappe.db.exists("User", name), f"{name} is not a real User")
+			self.assertNotIn("@example.", name)
+			self.assertNotIn(name.lower(), {"administrator", "guest"})
+		self.assertEqual(_gate_choices("MISSING_TODO_DESCRIPTION"), [])  # free text, nothing to offer
 
 	def test_a_second_trigger_is_demoted_to_a_condition(self):
 		"""Models use trigger.filter_criteria as a mid-flow "check this field"

@@ -56,6 +56,7 @@ export interface ClarifyReply {
   reply_type: 'question'
   message: string
   questions: string[]
+  choices?: string[][]
   suggestions?: string[]
 }
 
@@ -66,6 +67,7 @@ interface ServerChatTurn {
   text: string
   reply_type?: 'question' | 'proposal'
   questions?: string[]
+  choices?: string[][]
   timestamp?: string
 }
 
@@ -96,6 +98,8 @@ interface ChatMessage {
   error?: string
   /** Answers the user typed against this turn's questions, by question index. */
   answered?: Record<number, string>
+  /** Real selectable values per question, when the server could enumerate them. */
+  choices?: string[][]
 }
 
 const MAX_STORED_TURNS = 30
@@ -301,6 +305,7 @@ export function AiWorkflowAssistant() {
               content: t.text,
               replyType: t.reply_type,
               questions: t.reply_type === 'question' ? t.questions || [] : undefined,
+              choices: t.choices,
               timestamp: Date.parse(t.timestamp || '') || Date.now(),
               proposal: carry?.proposal,
               diff: carry?.diff,
@@ -388,6 +393,7 @@ export function AiWorkflowAssistant() {
               content: result.message,
               replyType: 'question',
               questions: result.questions || [],
+              choices: result.choices,
               timestamp: Date.now(),
             },
           ])
@@ -728,21 +734,47 @@ export function AiWorkflowAssistant() {
                                         <span className="leading-snug">{given}</span>
                                       </span>
                                     ) : (
-                                      <input
-                                        className="mt-1 w-full rounded-lg border border-[var(--border-color)] bg-[var(--control-bg)] px-2.5 py-1.5 text-[11px] text-heading outline-none transition-all focus:border-[var(--dark-border-color)] focus:bg-[var(--card-bg)] disabled:opacity-50"
-                                        placeholder="Your answer…"
-                                        value={answers[key] || ''}
-                                        disabled={loading || !isLastTurn}
-                                        onChange={(e) =>
-                                          setAnswers((prev) => ({ ...prev, [key]: e.target.value }))
-                                        }
-                                        onKeyDown={(e) => {
-                                          if (e.key === 'Enter') {
-                                            e.preventDefault()
-                                            void submitAnswers(turn)
+                                      <>
+                                        <input
+                                          className="mt-1 w-full rounded-lg border border-[var(--border-color)] bg-[var(--control-bg)] px-2.5 py-1.5 text-[11px] text-heading outline-none transition-all focus:border-[var(--dark-border-color)] focus:bg-[var(--card-bg)] disabled:opacity-50"
+                                          placeholder="Your answer…"
+                                          value={answers[key] || ''}
+                                          disabled={loading || !isLastTurn}
+                                          onChange={(e) =>
+                                            setAnswers((prev) => ({ ...prev, [key]: e.target.value }))
                                           }
-                                        }}
-                                      />
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                              e.preventDefault()
+                                              void submitAnswers(turn)
+                                            }
+                                          }}
+                                        />
+                                        {/* Real values from the site - clicking one avoids
+                                            typos and names that do not exist. */}
+                                        {isLastTurn && (turn.choices?.[index]?.length || 0) > 0 && (
+                                          <span className="mt-1 flex flex-wrap gap-1">
+                                            {turn.choices![index].map((choice) => (
+                                              <button
+                                                key={`${key}-${choice}`}
+                                                type="button"
+                                                disabled={loading}
+                                                title={choice}
+                                                onClick={() =>
+                                                  setAnswers((prev) => ({ ...prev, [key]: choice }))
+                                                }
+                                                className={`max-w-full truncate rounded-md border px-1.5 py-0.5 text-[9.5px] transition-all disabled:opacity-40 ${
+                                                  answers[key] === choice
+                                                    ? 'border-[var(--dark-border-color)] bg-[#192733] text-white dark:bg-[#283848]'
+                                                    : 'border-[var(--border-color)] bg-[var(--subtle-fg)] text-[var(--text-muted)] hover:bg-[var(--control-hover-bg)]'
+                                                }`}
+                                              >
+                                                {choice}
+                                              </button>
+                                            ))}
+                                          </span>
+                                        )}
+                                      </>
                                     )}
                                   </label>
                                 )
