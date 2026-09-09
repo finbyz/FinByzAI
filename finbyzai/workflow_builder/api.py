@@ -130,10 +130,14 @@ def get_ai_workflow_authoring_status(workflow_id: str):
 
 
 @frappe.whitelist(methods=["POST"])
-def generate_ai_workflow_draft(envelope=None, workflow_id=None, prompt=None, graph=None):
-	"""Generate a non-mutating, permission-scoped workflow draft proposal."""
+def generate_ai_workflow_draft(envelope=None, workflow_id=None, prompt=None, graph=None, mode=None):
+	"""Generate a non-mutating, permission-scoped workflow draft proposal.
+
+	``mode`` is optional: ``"generate"`` (build from scratch) or ``"edit"``
+	(incremental change). Anything else lets the server infer it from the graph.
+	"""
 	registry.require_builder()
-	data = _envelope(envelope, workflow_id=workflow_id, prompt=prompt, graph=graph)
+	data = _envelope(envelope, workflow_id=workflow_id, prompt=prompt, graph=graph, mode=mode)
 	payload = data["payload"]
 	from .ai_authoring import generate_draft
 
@@ -141,6 +145,61 @@ def generate_ai_workflow_draft(envelope=None, workflow_id=None, prompt=None, gra
 		data.get("workflow_id"),
 		payload.get("prompt", data.get("prompt")),
 		payload.get("graph", data.get("graph")),
+		mode=payload.get("mode", data.get("mode")),
+	)
+
+
+@frappe.whitelist(methods=["POST"])
+def converse_ai_workflow_draft(envelope=None, workflow_id=None, message=None, graph=None, mode=None):
+	"""One turn of the AI Workflow Copilot conversation.
+
+	Returns ``reply_type="question"`` (the assistant needs more detail, with an
+	optional ``questions`` list) or ``reply_type="proposal"`` (a validated,
+	non-mutating draft). The thread is persisted per workflow + user server-side.
+	"""
+	registry.require_builder()
+	data = _envelope(envelope, workflow_id=workflow_id, message=message, graph=graph, mode=mode)
+	payload = data["payload"]
+	from .ai_authoring import converse
+
+	return converse(
+		data.get("workflow_id"),
+		payload.get("message", data.get("message")),
+		payload.get("graph", data.get("graph")),
+		mode=payload.get("mode", data.get("mode")),
+	)
+
+
+@frappe.whitelist()
+def get_ai_workflow_chat(workflow_id: str):
+	"""Server-persisted AI Workflow Copilot conversation, for hydration on open."""
+	registry.require_builder()
+	from .ai_authoring import get_chat
+
+	return get_chat(workflow_id)
+
+
+@frappe.whitelist(methods=["POST"])
+def clear_ai_workflow_chat(envelope=None, workflow_id=None):
+	registry.require_builder()
+	data = _envelope(envelope, workflow_id=workflow_id)
+	from .ai_authoring import clear_chat
+
+	return clear_chat(data.get("workflow_id"))
+
+
+@frappe.whitelist(methods=["POST"])
+def accept_ai_workflow_proposal(envelope=None, workflow_id=None, graph_hash=None, node_count=None):
+	"""Audit-only: record that the user applied an AI draft to the canvas."""
+	registry.require_builder()
+	data = _envelope(envelope, workflow_id=workflow_id, graph_hash=graph_hash, node_count=node_count)
+	payload = data["payload"]
+	from .ai_authoring import accept_proposal
+
+	return accept_proposal(
+		data.get("workflow_id"),
+		payload.get("graph_hash", data.get("graph_hash")),
+		payload.get("node_count", data.get("node_count")),
 	)
 
 

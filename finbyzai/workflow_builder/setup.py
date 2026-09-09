@@ -221,11 +221,19 @@ def quarantine_invalid_active_versions() -> None:
 		)
 
 
+def ensure_workflow_ai_agents() -> None:
+	"""Seed the AI workflow-authoring agents and wire Automation Settings to them."""
+	from .ai_agents import ensure_workflow_ai_agents as _ensure
+
+	_ensure()
+
+
 def after_install() -> None:
 	ensure_module_ownership()
 	ensure_automation_roles()
 	ensure_automation_settings_defaults()
 	ensure_automation_indexes()
+	ensure_workflow_ai_agents()
 
 
 def after_migrate() -> None:
@@ -233,4 +241,5 @@ def after_migrate() -> None:
 	ensure_automation_roles()
 	ensure_automation_settings_defaults()
 	ensure_automation_indexes()
+	ensure_workflow_ai_agents()
 	quarantine_invalid_active_versions()

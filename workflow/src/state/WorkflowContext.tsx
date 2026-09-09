@@ -58,6 +58,7 @@ export interface EditorState {
   runsOpen: boolean
   policiesOpen: boolean
   versionsOpen: boolean
+  aiAssistantOpen: boolean
   mode: 'edit' | 'conflict'
   simulation?: SimulationResult
   versionDiff?: { nodes: { added: string[]; removed: string[]; changed: string[] }; edges: { added: string[]; removed: string[]; changed: string[] }; settings_changed: boolean }
@@ -88,7 +89,7 @@ type EditorAction =
   | { type: 'CANCEL_INSERT' }
   | { type: 'BEGIN_COPY'; clipboard: WorkflowClipboardPayload }
   | { type: 'CANCEL_COPY' }
-  | { type: 'TOGGLE'; panel: 'catalogOpen' | 'validationOpen' | 'simulationOpen' | 'publishOpen' | 'runsOpen' | 'policiesOpen' | 'versionsOpen'; open?: boolean }
+  | { type: 'TOGGLE'; panel: 'catalogOpen' | 'validationOpen' | 'simulationOpen' | 'publishOpen' | 'runsOpen' | 'policiesOpen' | 'versionsOpen' | 'aiAssistantOpen'; open?: boolean }
   | { type: 'SIMULATION'; result: SimulationResult }
   | { type: 'VERSION_DIFF'; diff?: EditorState['versionDiff'] }
   | { type: 'CONFLICT' }
@@ -133,6 +134,7 @@ const initialEditor: EditorState = {
   runsOpen: false,
   policiesOpen: false,
   versionsOpen: false,
+  aiAssistantOpen: false,
   mode: 'edit',
 }
 
@@ -329,6 +331,10 @@ export function workflowEditorReducer(state: EditorState, action: EditorAction):
 		  ? { ...state, catalogOpen, selectedNodeId: undefined, selectedTriggerGroupId: undefined }
 		  : { ...state, catalogOpen }
 	  }
+	  if (action.panel === 'aiAssistantOpen') {
+		const aiAssistantOpen = action.open ?? !state.aiAssistantOpen
+		return { ...state, aiAssistantOpen }
+	  }
       return { ...state, [action.panel]: action.open ?? !state[action.panel] }
     case 'SIMULATION':
       return { ...state, simulation: action.result, simulationOpen: true }
@@ -398,7 +404,7 @@ interface WorkflowActions {
   removeEdges(edgeIds: string[]): void
   select(nodeId?: string): void
   selectTrigger(nodeId: string, triggerGroupId: string): void
-  toggle(panel: 'catalogOpen' | 'validationOpen' | 'simulationOpen' | 'publishOpen' | 'runsOpen' | 'policiesOpen' | 'versionsOpen', open?: boolean): void
+  toggle(panel: 'catalogOpen' | 'validationOpen' | 'simulationOpen' | 'publishOpen' | 'runsOpen' | 'policiesOpen' | 'versionsOpen' | 'aiAssistantOpen', open?: boolean): void
   undo: () => void
   redo: () => void
   resolveConflict: (strategy: 'reload' | 'download') => Promise<void>

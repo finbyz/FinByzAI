@@ -11,6 +11,8 @@
   "ai_actions_enabled",
   "ai_authoring_enabled",
   "ai_authoring_agent",
+  "ai_authoring_generator_agent",
+  "ai_authoring_editor_agent",
   "ai_authoring_max_output_tokens",
   "ai_authoring_daily_request_budget",
   "blocked_doctypes",
@@ -80,11 +82,27 @@
   {
    "fieldname": "ai_authoring_agent",
    "fieldtype": "Link",
-   "label": "AI Workflow Authoring Agent",
+   "label": "AI Workflow Authoring Agent (deprecated)",
+   "options": "AI Agent",
+   "depends_on": "eval:doc.ai_authoring_enabled && doc.ai_authoring_agent",
+   "description": "Deprecated. Superseded by the Generator and Editor agents below, which are the ones actually used. Kept only so older sites keep working; safe to clear once a Generator agent is set."
+  },
+  {
+   "fieldname": "ai_authoring_generator_agent",
+   "fieldtype": "Link",
+   "label": "AI Workflow Generator Agent",
    "options": "AI Agent",
    "depends_on": "eval:doc.ai_authoring_enabled",
-   "mandatory_depends_on": "eval:doc.ai_authoring_enabled",
-   "description": "Dedicated text-only AI Agent used to translate plain-language automation requests into permission-scoped workflow drafts. Tools and knowledge-base retrieval are not invoked."
+   "mandatory_depends_on": "eval:doc.ai_authoring_enabled && !doc.ai_authoring_agent",
+   "description": "Text AI Agent that builds a full workflow draft from a plain-language request. Its Messages table holds the prompt (with {placeholder} variables) and its Structured Output holds the draft schema; nothing is hardcoded in code."
+  },
+  {
+   "fieldname": "ai_authoring_editor_agent",
+   "fieldtype": "Link",
+   "label": "AI Workflow Editor Agent",
+   "options": "AI Agent",
+   "depends_on": "eval:doc.ai_authoring_enabled",
+   "description": "Text AI Agent used for incremental edits to an existing draft. Falls back to the generator agent when unset."
   },
   {
    "fieldname": "ai_authoring_max_output_tokens",

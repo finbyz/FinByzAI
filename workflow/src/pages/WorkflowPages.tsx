@@ -228,6 +228,233 @@ function CreateDialog({ close, created }: { close(): void; created(id: string): 
   )
 }
 
+interface CreateAiForm {
+  title: string
+  primary_doctype: string
+  folder: string
+  prompt: string
+}
+
+const AI_STARTERS = [
+  {
+    label: 'Lead SLA & Routing',
+    doctype: 'Lead',
+    title: 'Lead SLA & Escalation',
+    prompt: 'When a new Lead is created with high priority, wait 2 hours. If still unassigned, send an alert email to the Sales Manager and reassign to the on-call team.',
+  },
+  {
+    label: 'Overdue Invoice Reminder',
+    doctype: 'Sales Invoice',
+    title: 'Overdue Payment Reminder',
+    prompt: 'When a Sales Invoice is overdue by 7 days and outstanding amount is greater than 500, send a polite payment reminder email with PDF attachment, then wait 5 days.',
+  },
+  {
+    label: 'VIP Customer Onboarding',
+    doctype: 'Customer',
+    title: 'VIP Customer Onboarding',
+    prompt: 'When a Customer is marked as VIP, create a welcome task for the account executive, send a personalized onboarding email, and add a calendar milestone.',
+  },
+]
+
+export function CreateWithAiDialog({ close, created }: { close(): void; created(id: string): void }) {
+  const dialogRef = useDialogA11y(true, close, 'Create workflow with AI')
+  const { register, control, handleSubmit, setValue, watch, formState: { isSubmitting } } = useForm<CreateAiForm>({
+    defaultValues: { title: '', primary_doctype: '', folder: '', prompt: '' },
+  })
+  const [error, setError] = useState('')
+  const promptVal = watch('prompt') || ''
+  const doctypeVal = watch('primary_doctype') || ''
+
+  const loadDoctypes = useCallback(
+    (search: string) =>
+      searchDoctypes('read', search).then((rows) =>
+        rows.map((row) => ({ value: row.name, label: row.label || row.name, description: row.module }))
+      ),
+    []
+  )
+
+  const submit = handleSubmit(async (values) => {
+    if (!values.prompt.trim()) {
+      setError('Please describe what automation you want the AI to create.')
+      return
+    }
+    if (!values.primary_doctype) {
+      setError('Please select a Business DocType for this workflow.')
+      return
+    }
+    setError('')
+    try {
+      const finalTitle = values.title.trim() || `${values.primary_doctype} AI Automation`
+      const result = await call<{ workflow: string }>(
+        'create_workflow',
+        {
+          envelope: {
+            payload: {
+              title: finalTitle,
+              primary_doctype: values.primary_doctype,
+              folder: values.folder || '',
+              trigger_type: 'trigger.any',
+            },
+          },
+        },
+        true
+      )
+      window.sessionStorage.setItem(`finbyz:ai_initial_prompt:${result.workflow}`, values.prompt.trim())
+      created(result.workflow)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Unable to create workflow')
+    }
+  })
+
+  return (
+    <div
+      className="dialog-backdrop fixed inset-0 z-50 grid place-items-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="create-ai-workflow-title"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) close()
+      }}
+    >
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        className="dialog-card w-full max-w-xl overflow-hidden rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] shadow-xl"
+      >
+        <form onSubmit={submit} className="flex flex-col">
+          <div className="border-b border-[var(--border-color)] p-5 sm:p-6">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-[var(--border-color)] bg-[var(--subtle-fg)] text-[var(--heading-color)]">
+                  <WandSparkles size={17} />
+                </span>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 id="create-ai-workflow-title" className="text-heading text-base font-bold tracking-tight">
+                      New with AI
+                    </h2>
+                    <span className="rounded border border-[var(--border-color)] bg-[var(--subtle-fg)] px-1.5 py-0.5 text-[9px] font-medium text-[var(--text-muted)]">
+                      AI Workflow Studio
+                    </span>
+                  </div>
+                  <p className="text-muted mt-0.5 text-xs">
+                    Describe your business requirements. The assistant configures nodes, logic, and triggers automatically.
+                  </p>
+                </div>
+              </div>
+              <button type="button" className="icon-button" onClick={close} aria-label="Close">
+                <X size={17} />
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-4 p-5 sm:p-6">
+            <div>
+              <label className="text-heading block text-xs font-semibold">
+                Business DocType <span className="text-red-500">*</span>
+              </label>
+              <span className="mt-1.5 block">
+                <Controller
+                  control={control}
+                  name="primary_doctype"
+                  rules={{ required: true }}
+                  render={({ field: doctypeField }) => (
+                    <AsyncCombobox
+                      ariaLabel="Business DocType"
+                      value={doctypeField.value}
+                      onChange={doctypeField.onChange}
+                      loadOptions={loadDoctypes}
+                      placeholder="Choose record type (e.g. Sales Invoice, Lead, Customer)…"
+                    />
+                  )}
+                />
+              </span>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between">
+                <label className="text-heading block text-xs font-semibold">
+                  Automation instructions <span className="text-red-500">*</span>
+                </label>
+                <span className="text-light text-[10px]">
+                  {promptVal.length} chars
+                </span>
+              </div>
+              <textarea
+                className={`${field} mt-1.5 min-h-[95px] w-full resize-y rounded-lg leading-relaxed text-xs`}
+                placeholder="e.g. When a Sales Invoice is overdue by 7 days and outstanding amount > 1000, send an email reminder to customer, wait 3 days, and notify accounts manager if unpaid."
+                {...register('prompt', { required: true })}
+              />
+            </div>
+
+            <div>
+              <p className="text-light text-[9.5px] font-bold uppercase tracking-wider mb-1.5">
+                Starter templates:
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {AI_STARTERS.map((s) => (
+                  <button
+                    key={s.label}
+                    type="button"
+                    onClick={() => {
+                      setValue('primary_doctype', s.doctype)
+                      setValue('title', s.title)
+                      setValue('prompt', s.prompt)
+                    }}
+                    className="rounded border border-[var(--border-color)] bg-[var(--subtle-fg)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-color)] transition-colors hover:border-[var(--dark-border-color)] hover:bg-[var(--control-hover-bg)]"
+                  >
+                    ✨ {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2 pt-1">
+              <label className="text-heading block text-xs font-semibold">
+                Workflow title <span className="text-muted font-normal">(optional)</span>
+                <input
+                  className={`${field} mt-1.5`}
+                  placeholder={doctypeVal ? `${doctypeVal} AI Automation` : 'e.g. Overdue Payment Reminder'}
+                  {...register('title')}
+                />
+              </label>
+
+              <label className="text-heading block text-xs font-semibold">
+                Folder <span className="text-muted font-normal">(optional)</span>
+                <input
+                  className={`${field} mt-1.5`}
+                  placeholder="e.g. Operations / Finance"
+                  {...register('folder', { maxLength: 140 })}
+                />
+              </label>
+            </div>
+
+            {error && (
+              <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-500/10 dark:text-red-300">
+                {error}
+              </p>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-2 border-t border-[var(--border-color)] bg-[var(--subtle-fg)]/40 px-5 py-4 sm:px-6">
+            <button type="button" className={secondary} onClick={close}>
+              Cancel
+            </button>
+            <button className={magic} disabled={isSubmitting}>
+              {isSubmitting ? (
+                <LoaderCircle className="animate-spin" size={14} />
+              ) : (
+                <WandSparkles size={14} />
+              )}
+              Create with AI
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 export function DeleteWorkflowDialog({ workflow, close, deleted }: { workflow: WorkflowSummary; close(): void; deleted(): void }) {
   const dialogRef = useDialogA11y(true, close)
   const permanent = hasRole('System Manager') && (Boolean(workflow.latest_version) || workflow.status !== 'DRAFT')
@@ -306,6 +533,7 @@ export function WorkflowListPage() {
   const [rows, setRows] = useState<WorkflowSummary[]>([])
   const [runtime, setRuntime] = useState<RuntimeHealth>()
   const [creating, setCreating] = useState(false)
+  const [creatingAi, setCreatingAi] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [hasMoreWorkflows, setHasMoreWorkflows] = useState(false)
@@ -381,6 +609,7 @@ export function WorkflowListPage() {
           <DeskLink />
           <ThemeToggle />
           {canBuild && <Link className={secondary} to="/templates"><Layers3 size={14} /><span className="hidden sm:inline">Templates</span></Link>}
+          {canBuild && <button className={magic} onClick={() => setCreatingAi(true)} title="Generate workflow from natural language with AI"><Sparkles size={14} /><span className="hidden sm:inline">New with AI</span></button>}
           {canBuild && <button className={primary} onClick={() => setCreating(true)}><Plus size={15} /><span className="hidden sm:inline">Create workflow</span></button>}
         </div>
       </Header>
@@ -421,12 +650,23 @@ export function WorkflowListPage() {
 				{hasMoreWorkflows && <div className="border-t border-[var(--border-color)] p-3 text-center"><button className={secondary} disabled={loadingMore} onClick={() => void load(rows.length, true)}>{loadingMore && <LoaderCircle className="animate-spin" size={13} />}Load more workflows</button></div>}
               </div>
             ) : (
-              <div className="px-6 py-16 text-center"><span className="magic-orb mx-auto"><Sparkles size={20} /></span><h3 className="text-heading mt-4 text-base font-bold">Your first automation starts here</h3><p className="text-muted mx-auto mt-1 max-w-sm text-xs leading-5">Choose a Frappe DocType, define an enrollment trigger, and build the journey visually.</p>{canBuild && <button className={`${primary} mt-5`} onClick={() => setCreating(true)}><Plus size={15} />Create workflow</button>}</div>
+              <div className="px-6 py-16 text-center">
+                <span className="magic-orb mx-auto"><Sparkles size={20} /></span>
+                <h3 className="text-heading mt-4 text-base font-bold">Your first automation starts here</h3>
+                <p className="text-muted mx-auto mt-1 max-w-sm text-xs leading-5">Choose a Frappe DocType, define an enrollment trigger, and build the journey visually or generate it with AI.</p>
+                {canBuild && (
+                  <div className="mt-5 flex items-center justify-center gap-2">
+                    <button className={magic} onClick={() => setCreatingAi(true)}><Sparkles size={15} />New with AI</button>
+                    <button className={primary} onClick={() => setCreating(true)}><Plus size={15} />Create manually</button>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </section>
       </main>
       {creating && <CreateDialog close={() => setCreating(false)} created={(id) => navigate(`/${id}`)} />}
+      {creatingAi && <CreateWithAiDialog close={() => setCreatingAi(false)} created={(id) => navigate(`/${id}`)} />}
       {deleting && <DeleteWorkflowDialog workflow={deleting} close={() => setDeleting(undefined)} deleted={() => { setDeleting(undefined); void load() }} />}
       {moving && <MoveWorkflowDialog workflow={moving} close={() => setMoving(undefined)} moved={async (folder) => { await call('set_workflow_folder', mutationEnvelope(moving.name, { folder }), true); setMoving(undefined); await load() }} />}
       {confirmation.dialog}
