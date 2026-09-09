@@ -273,6 +273,34 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		self.assertEqual(frappe.db.get_value("Automation Trigger Subscription", {"workflow": created["workflow"], "active": 1}, "workflow_version"), second["version"])
 		self.assertNotEqual(first["version"], second["version"])
 
+	def test_a_cleanly_validating_node_stops_being_a_placeholder(self):
+		"""``placeholder`` is how the AI marks a step it could not finish. Nothing
+		used to clear it, so the node blocked publishing forever even once the
+		user had filled every field in."""
+		created = create_workflow_record("Placeholder clearing", "Lead", trigger_type="trigger.document_insert")
+		graph = created["graph"]
+		graph["nodes"].append({
+			"id": "comment-1", "type": "action.add_comment", "type_version": 1,
+			"position": {"x": 360, "y": 160},
+			"config": {"content": ""},          # incomplete -> legitimately flagged
+			"placeholder": True,
+		})
+		graph["edges"] = [{"id": "edge-1", "source": graph["start_node_id"], "source_handle": "default", "target": "comment-1"}]
+
+		saved = save_workflow_draft(created["workflow"], 0, graph)
+		stored = get_workflow_draft(created["workflow"])["draft"]["graph"]
+		node = next(n for n in stored["nodes"] if n["id"] == "comment-1")
+		self.assertTrue(node.get("placeholder"), "an incomplete node keeps its flag")
+
+		# The user fills the field in; the stale flag must go with it.
+		stored["nodes"][-1]["config"]["content"] = "Follow up with this lead"
+		save_workflow_draft(created["workflow"], saved["draft_revision"], stored)
+		done = get_workflow_draft(created["workflow"])["draft"]["graph"]
+		self.assertFalse(
+			next(n for n in done["nodes"] if n["id"] == "comment-1").get("placeholder"),
+			"a node that validates clean must not stay unpublishable",
+		)
+
 	def test_mixed_trigger_publication_creates_one_active_subscription_per_or_trigger(self):
 		created = create_workflow_record("Mixed trigger publication", "Lead", trigger_type="trigger.any")
 		graph = created["graph"]
