@@ -676,6 +676,67 @@ def _unwrap_standalone_filter(graph: dict) -> None:
 			node["config"] = {"condition": inner.get("condition")}
 
 
+def _gate_choices(code: str) -> list[str]:
+	"""Real, selectable values for a missing setting, so the user picks instead
+	of guessing a name (and typing ``aman.gupta@finbyztech`` for a user that is
+	actually ``aman.gupta@finbyz.tech``)."""
+	try:
+		if code == "MISSING_AI_MODEL":
+			from .ai_agents import (
+				_BLOCKED_AUTHORING_MODELS,
+				_PREFERRED_AUTHORING_MODELS,
+				_provider_has_credential,
+			)
+
+			usable = []
+			for row in frappe.get_all(
+				"LLM",
+				filters={"enabled": 1, "is_embedding_model": 0, "supports_image_generation": 0},
+				fields=["name", "provider"],
+				limit=500,
+			):
+				name, provider = row["name"], row.get("provider")
+				if any(bad in name for bad in _BLOCKED_AUTHORING_MODELS):
+					continue
+				if not provider or cint(frappe.db.get_value("LLM Provider", provider, "disabled") or 0):
+					continue
+				if _provider_has_credential(provider):
+					usable.append(name)
+			# Same ranking the seeder uses, so the best models are offered first.
+			def rank(name: str) -> tuple[int, str]:
+				for index, wanted in enumerate(_PREFERRED_AUTHORING_MODELS):
+					if name == wanted or name.endswith("/" + wanted):
+						return (index, name)
+				return (len(_PREFERRED_AUTHORING_MODELS), name)
+
+			return sorted(usable, key=rank)[:8]
+		if code in {"MISSING_ASSIGNEE", "INVALID_ASSIGNEE", "INVALID_RECIPIENT", "MISSING_APPROVAL_REVIEWER"}:
+			people = []
+			for row in frappe.get_all(
+				"User",
+				filters={"enabled": 1, "user_type": "System User"},
+				fields=["name", "full_name"],
+				order_by="full_name asc",
+				limit=200,
+			):
+				name = str(row["name"])
+				low = name.lower()
+				# Skip system and throwaway accounts - offering them is noise.
+				if low in {"administrator", "guest"} or "@example." in low or low.endswith(".invalid"):
+					continue
+				if low.startswith("test") or "+test" in low:
+					continue
+				people.append(name)
+			return people[:8]
+		if code == "MISSING_EMAIL_TEMPLATE":
+			return frappe.get_all("Email Template", pluck="name", limit=8)
+		if code == "MISSING_ROUND_ROBIN_GROUP":
+			return frappe.get_all("User Group", pluck="name", limit=8)
+	except Exception:
+		pass
+	return []
+
+
 def _reference_exists(doctype: str, name: str) -> bool:
 	"""True when a model/agent/KB the user named actually exists (and is enabled)."""
 	try:
@@ -968,6 +1029,10 @@ def _sanitise_turn(turn: dict) -> dict:
 		clean["questions"] = _clean_messages([str(q) for q in turn["questions"]])[:6]
 	if turn.get("gated"):
 		clean["gated"] = True
+	if isinstance(turn.get("choices"), list):
+		clean["choices"] = [
+			_clean_messages([str(v) for v in (row or [])])[:8] for row in turn["choices"][:6]
+		]
 	if turn.get("graph_hash"):
 		clean["graph_hash"] = str(turn["graph_hash"])[:64]
 	if turn.get("node_count") is not None:
@@ -1392,19 +1457,34 @@ def generate_draft(
 					for node in graph["nodes"]
 				}
 				asked: list[str] = []
+				choices: list[list[str]] = []
 				for issue in blocking:
 					label = labels.get(issue.get("node_id") or "")
 					text = strip_html_tags(str(issue.get("message") or "")).strip()
 					entry = f"{text} (step: {label})" if label else text
-					if entry not in asked:
-						asked.append(entry)
-				result = {
-					"reply_type": "question",
-					"message": _(
+					if entry in asked:
+						continue
+					asked.append(entry)
+					choices.append(_gate_choices(str(issue.get("code") or "")))
+				retry = any(
+					isinstance(turn, dict) and turn.get("gated") for turn in (chat_history or [])
+				)
+				lead = (
+					_(
+						"I could not match your last answer to anything on this site, so these "
+						"are still missing. Pick one of the options, or type an exact name:"
+					)
+					if retry
+					else _(
 						"Before I build this I need {0} more detail(s), otherwise the workflow "
 						"cannot run. Please tell me:"
-					).format(len(asked[:6])),
+					).format(len(asked[:6]))
+				)
+				result = {
+					"reply_type": "question",
+					"message": lead,
 					"questions": asked[:6],
+					"choices": choices[:6],
 					"suggestions": [],
 					"mutated": False,
 					"published": False,
@@ -1615,6 +1695,8 @@ def converse(workflow_name: str, message: str, current_graph: Any = None, mode: 
 		}
 		if result.get("gated"):
 			assistant_turn["gated"] = True
+		if result.get("choices"):
+			assistant_turn["choices"] = result["choices"]
 	else:
 		assistant_turn = {
 			"role": "assistant",
