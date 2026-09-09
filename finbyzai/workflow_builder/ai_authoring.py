@@ -623,6 +623,44 @@ def _repair_condition(cond: Any) -> Any:
 	return cond
 
 
+_TRIGGER_TYPES = {
+	"trigger.manual", "trigger.document_insert", "trigger.document_change",
+	"trigger.filter_criteria", "trigger.event", "trigger.schedule",
+	"trigger.webhook", "trigger.any",
+}
+
+
+def _demote_extra_triggers(graph: dict, allowed_types: set[str]) -> None:
+	"""A graph may hold exactly ONE trigger. Models routinely add a second
+	``trigger.filter_criteria`` as a mid-flow "check that field" step; that is a
+	``condition.if_else``. Convert the extras rather than failing the draft."""
+	nodes = [n for n in graph.get("nodes") or [] if isinstance(n, dict)]
+	triggers = [n for n in nodes if str(n.get("type") or "") in _TRIGGER_TYPES]
+	if len(triggers) < 2:
+		return
+	start_id = str(graph.get("start_node_id") or "")
+	# Keep the declared start, else the first trigger in document order.
+	keep = next((n for n in triggers if n.get("id") == start_id), triggers[0])
+	graph["start_node_id"] = keep["id"]
+	if "condition.if_else" not in allowed_types:
+		return
+	for node in triggers:
+		if node is keep:
+			continue
+		condition = (node.get("config") or {}).get("condition")
+		node["type"] = "condition.if_else"
+		node["type_version"] = 2
+		node["config"] = {
+			"branches": [{"handle": "branch-1", "name": "Matches", "condition": condition}]
+		}
+		if not condition:
+			node["placeholder"] = True
+		# Its outgoing edges carried "default"; a branch node needs a real handle.
+		for edge in graph.get("edges") or []:
+			if isinstance(edge, dict) and edge.get("source") == node["id"] and edge.get("source_handle") in (None, "", "default"):
+				edge["source_handle"] = "branch-1"
+
+
 def _unwrap_standalone_filter(graph: dict) -> None:
 	"""``trigger.any`` v2 forbids a ``trigger.filter_criteria`` group. When the
 	model wrapped a single filter that way, promote it to a standalone
@@ -778,6 +816,10 @@ def _repair_ai_payload(payload: dict, allowed_types: set[str] | None = None) -> 
 						econf = entry.get("config") if isinstance(entry, dict) else None
 						if isinstance(econf, dict) and econf.get("condition") is not None:
 							econf["condition"] = _repair_condition(econf["condition"])
+		# Exactly one trigger is allowed; convert any extra into the condition it
+		# was meant to be. Runs before the edge pass so handles are corrected.
+		_demote_extra_triggers(graph, allowed_types)
+
 		node_ids = {n.get("id") for n in nodes if isinstance(n, dict) and n.get("id")}
 		node_types_by_id = {
 			n.get("id"): str(n.get("type") or "") for n in nodes if isinstance(n, dict)

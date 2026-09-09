@@ -26,7 +26,7 @@ EDITOR_AGENT = "Workflow Builder Editor"
 # ---------------------------------------------------------------------------
 GRAPH_OUTPUT_SCHEMA: dict = {
 	"title": "WorkflowDraft",
-	"$comment": "finbyz-wf-authoring-schema-v17",
+	"$comment": "finbyz-wf-authoring-schema-v18",
 	"type": "object",
 	# Nothing is globally required - a ``reply_type="question"`` turn carries only
 	# ``message``/``questions`` while a proposal carries ``summary``/``graph``. The
@@ -161,7 +161,13 @@ HARD RULES:
   use the closest one, mark placeholder=true, and say so in warnings.
 - "Create a task / to-do / follow-up" => "action.create_todo" (simplest). Use
   "action.create_record" only when the request names a specific DocType to create.
-- Exactly one trigger node. Alternative trigger events belong inside a single trigger.any node as OR conditions.
+- EXACTLY ONE trigger node in the whole graph - the very first step, nothing
+  else. Every "trigger.*" type counts as a trigger. A mid-flow check such as
+  "then check the recording URL is set" is NOT a trigger: it is a
+  "condition.if_else" whose branch holds that condition. Using
+  trigger.filter_criteria for a step after the first one is the single most
+  common way this graph is rejected. Alternative trigger EVENTS belong inside
+  the one trigger.any node as OR groups.
 - Connect nodes as a directed acyclic graph. Ordinary actions use source_handle "default".
 - Do not add an explicit end node; a path simply ending is the completion.
 - At most {max_nodes} nodes.
@@ -537,7 +543,7 @@ def _refresh_seed_if_stale(seed: dict) -> None:
 	try:
 		doc = frappe.get_doc("AI Agent", seed["name"])
 		joined = "\n".join((getattr(m, "content", "") or "") for m in (doc.messages or []))
-		if "{chat_history}" in joined and "finbyz-wf-authoring-schema-v17" in (doc.output_schema or ""):
+		if "{chat_history}" in joined and "finbyz-wf-authoring-schema-v18" in (doc.output_schema or ""):
 			return
 		doc.output_schema = seed["output_schema"]
 		doc.set("messages", [])

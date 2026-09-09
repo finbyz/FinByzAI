@@ -201,6 +201,38 @@ describe('AI workflow assistant', () => {
     expect(mocks.replaceGraph).not.toHaveBeenCalled()
   })
 
+  it('keeps the typed answers visible after sending them', async () => {
+    const boxes = await askTwoQuestions()
+    fireEvent.change(boxes[0], { target: { value: 'When a Lead is created' } })
+    fireEvent.change(boxes[1], { target: { value: 'the account owner' } })
+    fireEvent.click(screen.getByRole('button', { name: /Send answers/i }))
+
+    // The answers must still read back on the question turn, not blank out.
+    expect(await screen.findByText('When a Lead is created')).toBeInTheDocument()
+    expect(screen.getByText('the account owner')).toBeInTheDocument()
+    // The answered turn's own inputs are replaced by the values; only the new
+    // question turn still offers empty boxes (2, not 4).
+    expect(screen.getAllByPlaceholderText('Your answer…')).toHaveLength(2)
+  })
+
+  it('renders **bold** markdown from the agent without showing asterisks', async () => {
+    mocks.call.mockImplementation((method: string) => {
+      if (method === 'get_ai_workflow_authoring_status') return Promise.resolve({ available: true, max_prompt_characters: 6000, primary_doctype: 'Lead', suggestions: [] })
+      if (method === 'get_ai_workflow_chat') return Promise.resolve({ turns: [] })
+      if (method === 'converse_ai_workflow_draft') return Promise.resolve({ reply_type: 'question', message: 'Plan: 1. **Trigger**: a new Lead. 2. **Action**: add a task.', questions: ['Yes, build it', 'Change something'] })
+      return Promise.reject(new Error('Unexpected method'))
+    })
+    render(<AiWorkflowAssistant />)
+    fireEvent.click(screen.getByRole('button', { name: /Build with AI/ }))
+    const input = await screen.findByRole('textbox')
+    fireEvent.change(input, { target: { value: 'Add a task for new leads.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Generate workflow draft' }))
+
+    expect(await screen.findByText('Trigger')).toBeInTheDocument()
+    expect(screen.getByText('Trigger').tagName).toBe('B')
+    expect(screen.queryByText(/\*\*Trigger\*\*/)).not.toBeInTheDocument()
+  })
+
   it('sends a single answer without the question prefix', async () => {
     mocks.call.mockImplementation((method: string) => {
       if (method === 'get_ai_workflow_authoring_status') return Promise.resolve({ available: true, max_prompt_characters: 6000, primary_doctype: 'Lead', suggestions: [] })
