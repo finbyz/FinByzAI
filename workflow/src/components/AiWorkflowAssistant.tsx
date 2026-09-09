@@ -48,6 +48,8 @@ export interface DraftProposal {
   agent?: string
   mode?: string
   usage: { input_tokens: number; output_tokens: number; total_tokens: number }
+  /** Record references the draft could not resolve - pick these in the node. */
+  setup_required?: { node_id?: string | null; node_label?: string | null; message: string }[]
   mutated: false
   published: false
 }
@@ -56,7 +58,6 @@ export interface ClarifyReply {
   reply_type: 'question'
   message: string
   questions: string[]
-  choices?: string[][]
   suggestions?: string[]
 }
 
@@ -67,7 +68,6 @@ interface ServerChatTurn {
   text: string
   reply_type?: 'question' | 'proposal'
   questions?: string[]
-  choices?: string[][]
   timestamp?: string
 }
 
@@ -98,8 +98,6 @@ interface ChatMessage {
   error?: string
   /** Answers the user typed against this turn's questions, by question index. */
   answered?: Record<number, string>
-  /** Real selectable values per question, when the server could enumerate them. */
-  choices?: string[][]
 }
 
 const MAX_STORED_TURNS = 30
@@ -305,7 +303,6 @@ export function AiWorkflowAssistant() {
               content: t.text,
               replyType: t.reply_type,
               questions: t.reply_type === 'question' ? t.questions || [] : undefined,
-              choices: t.choices,
               timestamp: Date.parse(t.timestamp || '') || Date.now(),
               proposal: carry?.proposal,
               diff: carry?.diff,
@@ -393,7 +390,6 @@ export function AiWorkflowAssistant() {
               content: result.message,
               replyType: 'question',
               questions: result.questions || [],
-              choices: result.choices,
               timestamp: Date.now(),
             },
           ])
@@ -734,8 +730,7 @@ export function AiWorkflowAssistant() {
                                         <span className="leading-snug">{given}</span>
                                       </span>
                                     ) : (
-                                      <>
-                                        <input
+                                      <input
                                           className="mt-1 w-full rounded-lg border border-[var(--border-color)] bg-[var(--control-bg)] px-2.5 py-1.5 text-[11px] text-heading outline-none transition-all focus:border-[var(--dark-border-color)] focus:bg-[var(--card-bg)] disabled:opacity-50"
                                           placeholder="Your answer…"
                                           value={answers[key] || ''}
@@ -749,32 +744,7 @@ export function AiWorkflowAssistant() {
                                               void submitAnswers(turn)
                                             }
                                           }}
-                                        />
-                                        {/* Real values from the site - clicking one avoids
-                                            typos and names that do not exist. */}
-                                        {isLastTurn && (turn.choices?.[index]?.length || 0) > 0 && (
-                                          <span className="mt-1 flex flex-wrap gap-1">
-                                            {turn.choices![index].map((choice) => (
-                                              <button
-                                                key={`${key}-${choice}`}
-                                                type="button"
-                                                disabled={loading}
-                                                title={choice}
-                                                onClick={() =>
-                                                  setAnswers((prev) => ({ ...prev, [key]: choice }))
-                                                }
-                                                className={`max-w-full truncate rounded-md border px-1.5 py-0.5 text-[9.5px] transition-all disabled:opacity-40 ${
-                                                  answers[key] === choice
-                                                    ? 'border-[var(--dark-border-color)] bg-[#192733] text-white dark:bg-[#283848]'
-                                                    : 'border-[var(--border-color)] bg-[var(--subtle-fg)] text-[var(--text-muted)] hover:bg-[var(--control-hover-bg)]'
-                                                }`}
-                                              >
-                                                {choice}
-                                              </button>
-                                            ))}
-                                          </span>
-                                        )}
-                                      </>
+                                      />
                                     )}
                                   </label>
                                 )
@@ -914,18 +884,48 @@ export function AiWorkflowAssistant() {
                       )}
 
                       {/* Warnings / Setup items */}
-                      {(proposal.warnings.length > 0 || proposal.issues.length > 0) && (
+                      {(proposal.warnings.length > 0 || (proposal.setup_required?.length || 0) > 0) && (
                         <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-900 dark:bg-amber-500/10">
                           <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-800 dark:text-amber-200">
                             <AlertTriangle size={13} />
                             <span>Requires setup before publishing</span>
                           </div>
+                          {/* Records the draft could not choose for you. Clicking
+                              one selects that node so you can pick it in its own
+                              searchable field. */}
+                          {(proposal.setup_required?.length || 0) > 0 && (
+                            <ul className="mt-1.5 space-y-1">
+                              {proposal.setup_required!.map((item, index) => (
+                                <li key={`setup-${index}`}>
+                                  <button
+                                    type="button"
+                                    disabled={!turn.applied || !item.node_id}
+                                    onClick={() => item.node_id && actions.select?.(item.node_id)}
+                                    title={
+                                      turn.applied
+                                        ? 'Open this step to choose it'
+                                        : 'Apply the draft first, then open this step'
+                                    }
+                                    className="flex w-full items-start gap-1.5 rounded-md px-1.5 py-1 text-left text-[10.5px] text-amber-900 transition-all enabled:hover:bg-amber-100/70 disabled:cursor-default dark:text-amber-200 dark:enabled:hover:bg-amber-500/15"
+                                  >
+                                    <span aria-hidden>•</span>
+                                    <span className="leading-snug">
+                                      {item.node_label && (
+                                        <b className="font-semibold">{item.node_label}: </b>
+                                      )}
+                                      {item.message}
+                                      {turn.applied && item.node_id && (
+                                        <span className="ml-1 underline opacity-70">open step</span>
+                                      )}
+                                    </span>
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
                           <ul className="mt-1.5 space-y-1 text-[10.5px] text-amber-800 dark:text-amber-200 leading-relaxed">
                             {proposal.warnings.map((item, index) => (
                               <li key={`warn-${index}`}>• {item}</li>
-                            ))}
-                            {proposal.issues.slice(0, 5).map((issue, index) => (
-                              <li key={`iss-${index}`}>• {issue.message}</li>
                             ))}
                           </ul>
                         </div>

@@ -26,7 +26,7 @@ EDITOR_AGENT = "Workflow Builder Editor"
 # ---------------------------------------------------------------------------
 GRAPH_OUTPUT_SCHEMA: dict = {
 	"title": "WorkflowDraft",
-	"$comment": "finbyz-wf-authoring-schema-v18",
+	"$comment": "finbyz-wf-authoring-schema-v19",
 	"type": "object",
 	# Nothing is globally required - a ``reply_type="question"`` turn carries only
 	# ``message``/``questions`` while a proposal carries ``summary``/``graph``. The
@@ -276,9 +276,21 @@ this needs BOTH halves or the AI step receives nothing:
      "field_allowlist": ["recording_url", "summary"],
      "user_prompt": "Summarise this call recording: {{{{ doc.recording_url }}}}"
   "model": set it ONLY to an LLM name the user gave you verbatim in this
-  conversation (an unrecognised name is discarded). Otherwise leave it blank,
-  mark the node placeholder=true, and ask for it - a draft with no model cannot
-  run. Same for "ai_profile" and "knowledge_base".
+  conversation (an unrecognised name is discarded). Otherwise leave it blank and
+  follow the RECORD REFERENCES rule below. Same for "ai_profile" and
+  "knowledge_base".
+
+RECORD REFERENCES - a parameter that names a specific record (a user, an LLM, an
+Email Template, a User Group, an integration secret, a DocType, a subflow):
+- Set it ONLY when the user gave you that exact name in the conversation.
+- Otherwise DO NOT GUESS and DO NOT ask for it in chat - a name typed into a
+  chat box is usually a near-miss that does not exist. Leave the default value,
+  set placeholder=true, and add a warning naming the STEP and the SETTING, e.g.
+  "Open the 'Understand with AI' step and choose the AI Model."
+- The user picks these in the node's own field, which searches the real records.
+Free text you can simply be told (a task description, a subject, a message, a
+goal name, a delay) is different: if it is required and you were not told it,
+ask for it in step A/B rather than leaving it blank.
 
 VALUE BINDING - a field/param that can come from a literal, the record, or an
 upstream node output:
@@ -543,7 +555,7 @@ def _refresh_seed_if_stale(seed: dict) -> None:
 	try:
 		doc = frappe.get_doc("AI Agent", seed["name"])
 		joined = "\n".join((getattr(m, "content", "") or "") for m in (doc.messages or []))
-		if "{chat_history}" in joined and "finbyz-wf-authoring-schema-v18" in (doc.output_schema or ""):
+		if "{chat_history}" in joined and "finbyz-wf-authoring-schema-v19" in (doc.output_schema or ""):
 			return
 		doc.output_schema = seed["output_schema"]
 		doc.set("messages", [])
