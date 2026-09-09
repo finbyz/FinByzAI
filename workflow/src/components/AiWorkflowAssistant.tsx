@@ -98,6 +98,16 @@ interface ChatMessage {
 
 const MAX_STORED_TURNS = 30
 
+/** A set of short, question-mark-free options ("Yes, build it") is a choice to
+ *  click, not something to type an answer to. */
+function isChoiceSet(questions: string[]): boolean {
+  return (
+    questions.length > 0 &&
+    questions.length <= 4 &&
+    questions.every((q) => q.trim().length <= 28 && !q.includes('?'))
+  )
+}
+
 const magic = 'btn-core btn-magic'
 
 function getNodeLabel(type: string): string {
@@ -157,6 +167,8 @@ export function AiWorkflowAssistant() {
   const [scopeMode, setScopeMode] = useState<'whole' | 'node'>('whole')
   const [thinkingStep, setThinkingStep] = useState(0)
   const [expandedDiffs, setExpandedDiffs] = useState<Record<string, boolean>>({})
+  // Answers typed against an assistant question turn, keyed "<turnId>:<index>".
+  const [answers, setAnswers] = useState<Record<string, string>>({})
 
   const storageKey = `finbyz:workflow_ai_turns:${doc.workflowId}`
   const [turns, setTurns] = useState<ChatMessage[]>(() => {
@@ -418,6 +430,32 @@ export function AiWorkflowAssistant() {
     })
   }
 
+  const hasAnyAnswer = (turn: ChatMessage) =>
+    (turn.questions || []).some((_, index) => (answers[`${turn.id}:${index}`] || '').trim())
+
+  /** Send every answer typed against one question turn as a single reply, so
+   *  filling in a second box never discards the first. */
+  const submitAnswers = useCallback(
+    async (turn: ChatMessage) => {
+      const questions = turn.questions || []
+      const filled = questions
+        .map((question, index) => ({ question, value: (answers[`${turn.id}:${index}`] || '').trim() }))
+        .filter((row) => row.value)
+      if (filled.length === 0) return
+      const text =
+        filled.length === 1 && questions.length === 1
+          ? filled[0].value
+          : filled.map((row, i) => `${i + 1}. ${row.question} — ${row.value}`).join('\n')
+      setAnswers((prev) => {
+        const next = { ...prev }
+        questions.forEach((_, index) => delete next[`${turn.id}:${index}`])
+        return next
+      })
+      await sendMessage(text)
+    },
+    [answers, sendMessage]
+  )
+
   const toggleDiff = (id: string) => {
     setExpandedDiffs((prev) => ({ ...prev, [id]: !prev[id] }))
   }
@@ -567,7 +605,8 @@ export function AiWorkflowAssistant() {
               )}
 
               {/* Chat Message Turns */}
-              {turns.map((turn) => {
+              {turns.map((turn, turnIndex) => {
+                const isLastTurn = turnIndex === turns.length - 1
                 if (turn.role === 'user') {
                   return (
                     <div key={turn.id} className="flex flex-col items-end space-y-1">
@@ -617,23 +656,74 @@ export function AiWorkflowAssistant() {
                       <div className="flex-1 space-y-2.5 rounded-2xl border border-[var(--border-color)] bg-[var(--card-bg)] p-4 shadow-sm">
                         <p className="text-body text-xs leading-relaxed">{turn.content}</p>
                         {turn.questions && turn.questions.length > 0 && (
-                          <div className="flex flex-col gap-1.5 pt-1">
-                            {turn.questions.map((question, index) => (
-                              <button
-                                key={`${turn.id}-q-${index}`}
-                                type="button"
-                                disabled={loading}
-                                onClick={() => {
-                                  setPrompt(question)
-                                  promptRef.current?.focus()
-                                }}
-                                className="flex items-center gap-2 rounded-lg border border-[var(--border-color)] bg-[var(--subtle-fg)] px-3 py-2 text-left text-[11px] text-[var(--text-color)] transition-all hover:border-[var(--dark-border-color)] hover:bg-[var(--control-hover-bg)] disabled:opacity-50"
-                              >
-                                <ArrowUp size={11} className="shrink-0 text-[var(--text-light)]" />
-                                <span className="leading-snug">{question}</span>
-                              </button>
-                            ))}
-                          </div>
+                          isChoiceSet(turn.questions) ? (
+                            // Short options ("Yes, build it") - one click sends it.
+                            <div className="flex flex-wrap gap-1.5 pt-1">
+                              {turn.questions.map((choice, index) => (
+                                <button
+                                  key={`${turn.id}-c-${index}`}
+                                  type="button"
+                                  disabled={loading || !isLastTurn}
+                                  onClick={() => void sendMessage(choice)}
+                                  className={`rounded-lg border px-3 py-1.5 text-[11px] font-medium transition-all disabled:opacity-40 ${
+                                    index === 0
+                                      ? 'border-[var(--dark-border-color)] bg-[#192733] text-white dark:bg-[#283848]'
+                                      : 'border-[var(--border-color)] bg-[var(--subtle-fg)] text-[var(--text-color)] hover:bg-[var(--control-hover-bg)]'
+                                  }`}
+                                >
+                                  {choice}
+                                </button>
+                              ))}
+                            </div>
+                          ) : (
+                            // Real questions - answer each one in place, send together.
+                            <div className="space-y-2 pt-1">
+                              {turn.questions.map((question, index) => {
+                                const key = `${turn.id}:${index}`
+                                return (
+                                  <label key={key} className="block">
+                                    <span className="text-muted block text-[10.5px] leading-snug">
+                                      {turn.questions!.length > 1 && (
+                                        <b className="text-heading mr-1">{index + 1}.</b>
+                                      )}
+                                      {question}
+                                    </span>
+                                    <input
+                                      className="mt-1 w-full rounded-lg border border-[var(--border-color)] bg-[var(--control-bg)] px-2.5 py-1.5 text-[11px] text-heading outline-none transition-all focus:border-[var(--dark-border-color)] focus:bg-[var(--card-bg)] disabled:opacity-50"
+                                      placeholder="Your answer…"
+                                      value={answers[key] || ''}
+                                      disabled={loading || !isLastTurn}
+                                      onChange={(e) =>
+                                        setAnswers((prev) => ({ ...prev, [key]: e.target.value }))
+                                      }
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          e.preventDefault()
+                                          void submitAnswers(turn)
+                                        }
+                                      }}
+                                    />
+                                  </label>
+                                )
+                              })}
+                              {isLastTurn && (
+                                <div className="flex items-center justify-between pt-0.5">
+                                  <span className="text-light text-[9.5px]">
+                                    Answer here, or type below to say something else.
+                                  </span>
+                                  <button
+                                    type="button"
+                                    className={`${magic} !text-[11px] !py-1 !px-2.5`}
+                                    disabled={loading || !hasAnyAnswer(turn)}
+                                    onClick={() => void submitAnswers(turn)}
+                                  >
+                                    <ArrowUp size={12} />
+                                    Send {turn.questions.length > 1 ? 'answers' : 'answer'}
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )
                         )}
                       </div>
                     </div>
