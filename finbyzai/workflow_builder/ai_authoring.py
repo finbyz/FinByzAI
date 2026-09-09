@@ -318,31 +318,39 @@ _TEMPLATED_CONFIG = {
 # here (MISSING_NODE_ID, MISSING_OUTPUT_PATH, MISSING_CONDITION_*, ...) are the
 # model's own mistakes and are handled by the schema retry, not by asking.
 _USER_ANSWERABLE_MISSING = {
+	# Plain prose or a number - the user can simply say it in the chat.
+	"MISSING_AI_PROMPT",
+	"MISSING_APPROVAL_TITLE",
+	"MISSING_COMMENT",
+	"MISSING_CONSENT_PURPOSE",
+	"MISSING_DELAY_DATETIME",
+	"MISSING_GOAL_NAME",
+	"MISSING_NOTE_VALUE",
+	"MISSING_NOTIFICATION_VALUE",
+	"MISSING_TODO_DESCRIPTION",
+}
+
+# These need a specific RECORD (a user, an LLM, a template, a secret). Asking for
+# one by name in a chat box invites typos and names that do not exist, and the
+# node inspector already has a proper searchable picker with permissions. So the
+# draft leaves them blank, marks the node, and tells the user which node to open.
+_PICK_IN_INSPECTOR_MISSING = {
 	"INVALID_ASSIGNEE",
 	"INVALID_RECIPIENT",
 	"MISSING_AI_KNOWLEDGE",
 	"MISSING_AI_MODEL",
 	"MISSING_AI_PROFILE",
-	"MISSING_AI_PROMPT",
 	"MISSING_APPROVAL_REVIEWER",
-	"MISSING_APPROVAL_TITLE",
 	"MISSING_ASSIGNEE",
 	"MISSING_ASSIGNMENTS",
-	"MISSING_COMMENT",
-	"MISSING_CONSENT_PURPOSE",
-	"MISSING_DELAY_DATETIME",
 	"MISSING_EMAIL_TEMPLATE",
 	"MISSING_EVENT_TOPIC",
 	"MISSING_FILTER_CRITERIA",
-	"MISSING_GOAL_NAME",
 	"MISSING_INTEGRATION_SECRET",
-	"MISSING_NOTE_VALUE",
-	"MISSING_NOTIFICATION_VALUE",
 	"MISSING_ROUND_ROBIN_GROUP",
 	"MISSING_ROUND_ROBIN_USERS",
 	"MISSING_SUBFLOW",
 	"MISSING_TARGET_DOCTYPE",
-	"MISSING_TODO_DESCRIPTION",
 }
 # How many times one thread may be sent back for missing values before the
 # draft is handed over with placeholders anyway. Stops an ask/answer loop.
@@ -676,67 +684,6 @@ def _unwrap_standalone_filter(graph: dict) -> None:
 			node["config"] = {"condition": inner.get("condition")}
 
 
-def _gate_choices(code: str) -> list[str]:
-	"""Real, selectable values for a missing setting, so the user picks instead
-	of guessing a name (and typing ``aman.gupta@finbyztech`` for a user that is
-	actually ``aman.gupta@finbyz.tech``)."""
-	try:
-		if code == "MISSING_AI_MODEL":
-			from .ai_agents import (
-				_BLOCKED_AUTHORING_MODELS,
-				_PREFERRED_AUTHORING_MODELS,
-				_provider_has_credential,
-			)
-
-			usable = []
-			for row in frappe.get_all(
-				"LLM",
-				filters={"enabled": 1, "is_embedding_model": 0, "supports_image_generation": 0},
-				fields=["name", "provider"],
-				limit=500,
-			):
-				name, provider = row["name"], row.get("provider")
-				if any(bad in name for bad in _BLOCKED_AUTHORING_MODELS):
-					continue
-				if not provider or cint(frappe.db.get_value("LLM Provider", provider, "disabled") or 0):
-					continue
-				if _provider_has_credential(provider):
-					usable.append(name)
-			# Same ranking the seeder uses, so the best models are offered first.
-			def rank(name: str) -> tuple[int, str]:
-				for index, wanted in enumerate(_PREFERRED_AUTHORING_MODELS):
-					if name == wanted or name.endswith("/" + wanted):
-						return (index, name)
-				return (len(_PREFERRED_AUTHORING_MODELS), name)
-
-			return sorted(usable, key=rank)[:8]
-		if code in {"MISSING_ASSIGNEE", "INVALID_ASSIGNEE", "INVALID_RECIPIENT", "MISSING_APPROVAL_REVIEWER"}:
-			people = []
-			for row in frappe.get_all(
-				"User",
-				filters={"enabled": 1, "user_type": "System User"},
-				fields=["name", "full_name"],
-				order_by="full_name asc",
-				limit=200,
-			):
-				name = str(row["name"])
-				low = name.lower()
-				# Skip system and throwaway accounts - offering them is noise.
-				if low in {"administrator", "guest"} or "@example." in low or low.endswith(".invalid"):
-					continue
-				if low.startswith("test") or "+test" in low:
-					continue
-				people.append(name)
-			return people[:8]
-		if code == "MISSING_EMAIL_TEMPLATE":
-			return frappe.get_all("Email Template", pluck="name", limit=8)
-		if code == "MISSING_ROUND_ROBIN_GROUP":
-			return frappe.get_all("User Group", pluck="name", limit=8)
-	except Exception:
-		pass
-	return []
-
-
 def _reference_exists(doctype: str, name: str) -> bool:
 	"""True when a model/agent/KB the user named actually exists (and is enabled)."""
 	try:
@@ -1029,10 +976,6 @@ def _sanitise_turn(turn: dict) -> dict:
 		clean["questions"] = _clean_messages([str(q) for q in turn["questions"]])[:6]
 	if turn.get("gated"):
 		clean["gated"] = True
-	if isinstance(turn.get("choices"), list):
-		clean["choices"] = [
-			_clean_messages([str(v) for v in (row or [])])[:8] for row in turn["choices"][:6]
-		]
 	if turn.get("graph_hash"):
 		clean["graph_hash"] = str(turn["graph_hash"])[:64]
 	if turn.get("node_count") is not None:
@@ -1457,7 +1400,6 @@ def generate_draft(
 					for node in graph["nodes"]
 				}
 				asked: list[str] = []
-				choices: list[list[str]] = []
 				for issue in blocking:
 					label = labels.get(issue.get("node_id") or "")
 					text = strip_html_tags(str(issue.get("message") or "")).strip()
@@ -1465,7 +1407,6 @@ def generate_draft(
 					if entry in asked:
 						continue
 					asked.append(entry)
-					choices.append(_gate_choices(str(issue.get("code") or "")))
 				retry = any(
 					isinstance(turn, dict) and turn.get("gated") for turn in (chat_history or [])
 				)
@@ -1484,7 +1425,6 @@ def generate_draft(
 					"reply_type": "question",
 					"message": lead,
 					"questions": asked[:6],
-					"choices": choices[:6],
 					"suggestions": [],
 					"mutated": False,
 					"published": False,
@@ -1533,11 +1473,37 @@ def generate_draft(
 				)
 			)
 			summary = _("Draft workflow with {0} step(s): {1}.").format(len(graph["nodes"]), ", ".join(labels))
+		# Every record reference the draft could not resolve, named against the
+		# node that needs it, so the user can jump straight to that node and pick
+		# it with the inspector's proper searchable field.
+		node_labels = {
+			node["id"]: (definitions.get(node["type"], {}).get("label") or node["type"])
+			for node in graph["nodes"]
+		}
+		setup_required = []
+		seen_setup: set = set()
+		for issue in validation["issues"]:
+			if issue.get("code") not in _PICK_IN_INSPECTOR_MISSING:
+				continue
+			node_id = str(issue.get("node_id") or "")
+			key = (node_id, issue.get("code"))
+			if key in seen_setup:
+				continue
+			seen_setup.add(key)
+			setup_required.append(
+				{
+					"node_id": node_id or None,
+					"node_label": node_labels.get(node_id),
+					"message": strip_html_tags(str(issue.get("message") or "")).strip()[:300],
+				}
+			)
+
 		return {
 			"reply_type": "proposal",
 			"summary": summary,
 			"assumptions": _clean_messages(payload.get("assumptions") or []),
 			"warnings": _clean_messages(payload.get("warnings") or []),
+			"setup_required": setup_required[:20],
 			"graph": graph,
 			"issues": validation["issues"],
 			"graph_hash": validation["graph_hash"],
@@ -1695,8 +1661,6 @@ def converse(workflow_name: str, message: str, current_graph: Any = None, mode: 
 		}
 		if result.get("gated"):
 			assistant_turn["gated"] = True
-		if result.get("choices"):
-			assistant_turn["choices"] = result["choices"]
 	else:
 		assistant_turn = {
 			"role": "assistant",
