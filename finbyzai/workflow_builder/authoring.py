@@ -20,6 +20,7 @@ from .schema import (
 	execution_graph,
 	execution_graph_hash,
 	empty_graph,
+	graph_hash,
 	parse_object,
 	validate_expression,
 	validate_graph,
@@ -1048,6 +1049,18 @@ def save_workflow_draft(workflow_name: str, draft_revision: int, graph_value: An
 	settings, settings_issues = validate_settings(settings_value if settings_value is not None else draft.settings_json, workflow.primary_doctype, workflow.execution_user)
 	validation["issues"].extend(settings_issues)
 	validation["valid"] = not validation["issues"]
+	# ``placeholder`` means "the AI left this step incomplete". Nothing else ever
+	# cleared it, so a node stayed unpublishable even after the user filled every
+	# field. It is derived state: once a node validates clean, drop the flag.
+	flagged = {issue.get("node_id") for issue in validation["issues"] if issue.get("node_id")}
+	cleared = False
+	for node in graph.get("nodes") or []:
+		if isinstance(node, dict) and node.get("placeholder") and node.get("id") not in flagged:
+			node.pop("placeholder", None)
+			cleared = True
+	if cleared:
+		# The hash was taken before the flags were dropped; keep them in step.
+		validation["graph_hash"] = graph_hash(graph)
 	draft.draft_revision = cint(draft.draft_revision) + 1
 	draft.graph_json = json.dumps(graph)
 	draft.settings_json = json.dumps(settings)
