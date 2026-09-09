@@ -11,7 +11,6 @@ from finbyzai.workflow_builder.ai_authoring import (
 	_authoring_suggestions,
 	_effective_response_schema,
 	_format_chat_history,
-	_gate_choices,
 	_normalise_graph,
 	_parse_response,
 	_effective_request,
@@ -427,19 +426,22 @@ class TestWorkflowAIAuthoring(IntegrationTestCase):
 		if real:
 			self.assertEqual(nodes["b"]["config"]["model"], real)
 
-	def test_gate_offers_real_selectable_values(self):
-		"""The gate has to hand back names that exist, or the user retypes a
-		guess ("use google model or openai") and gets asked all over again."""
-		models = _gate_choices("MISSING_AI_MODEL")
-		for name in models:
-			self.assertTrue(frappe.db.exists("LLM", name), f"{name} is not a real LLM")
-			self.assertNotIn("muse-spark", name)  # the blocked model must not be offered
-		people = _gate_choices("MISSING_ASSIGNEE")
-		for name in people:
-			self.assertTrue(frappe.db.exists("User", name), f"{name} is not a real User")
-			self.assertNotIn("@example.", name)
-			self.assertNotIn(name.lower(), {"administrator", "guest"})
-		self.assertEqual(_gate_choices("MISSING_TODO_DESCRIPTION"), [])  # free text, nothing to offer
+	def test_record_references_are_never_asked_for_in_chat(self):
+		"""A user/model/template is picked in the node's own searchable field.
+		Asking for one by name in chat just collects typos."""
+		from finbyzai.workflow_builder.ai_authoring import (
+			_PICK_IN_INSPECTOR_MISSING,
+			_USER_ANSWERABLE_MISSING,
+		)
+
+		self.assertFalse(_USER_ANSWERABLE_MISSING & _PICK_IN_INSPECTOR_MISSING)
+		for code in ("MISSING_AI_MODEL", "MISSING_ASSIGNEE", "INVALID_ASSIGNEE",
+		             "MISSING_EMAIL_TEMPLATE", "MISSING_SUBFLOW", "MISSING_TARGET_DOCTYPE"):
+			self.assertIn(code, _PICK_IN_INSPECTOR_MISSING)
+			self.assertNotIn(code, _USER_ANSWERABLE_MISSING)
+		# Plain prose stays answerable in the chat.
+		for code in ("MISSING_TODO_DESCRIPTION", "MISSING_GOAL_NAME", "MISSING_COMMENT"):
+			self.assertIn(code, _USER_ANSWERABLE_MISSING)
 
 	def test_a_second_trigger_is_demoted_to_a_condition(self):
 		"""Models use trigger.filter_criteria as a mid-flow "check this field"
