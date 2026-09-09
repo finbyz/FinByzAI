@@ -40,9 +40,12 @@ const proposedGraph = {
 describe('AI workflow assistant', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    localStorage.clear()
     mocks.call.mockImplementation((method: string) => {
       if (method === 'get_ai_workflow_authoring_status') return Promise.resolve({ available: true, max_prompt_characters: 6000, primary_doctype: 'Lead', suggestions: ['When a Lead is created, add a task.'] })
-      if (method === 'generate_ai_workflow_draft') return Promise.resolve({ summary: 'Adds a follow-up comment.', assumptions: [], warnings: [], graph: proposedGraph, issues: [], graph_hash: 'hash', node_count: 2, latency_ms: 1200, model: 'Authoring Model', usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 }, mutated: false, published: false })
+      if (method === 'get_ai_workflow_chat') return Promise.resolve({ turns: [] })
+      if (method === 'accept_ai_workflow_proposal') return Promise.resolve({ recorded: true })
+      if (method === 'converse_ai_workflow_draft') return Promise.resolve({ reply_type: 'proposal', summary: 'Adds a follow-up comment.', assumptions: [], warnings: [], graph: proposedGraph, issues: [], graph_hash: 'hash', node_count: 2, latency_ms: 1200, model: 'Authoring Model', usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 }, mutated: false, published: false })
       return Promise.reject(new Error('Unexpected method'))
     })
   })
@@ -74,5 +77,111 @@ describe('AI workflow assistant', () => {
     render(<AiWorkflowAssistant />)
     fireEvent.click(screen.getByRole('button', { name: /Build with AI/ }))
     expect(await screen.findByPlaceholderText('Example: When a new Lead is created, create a follow-up ToDo.')).toBeInTheDocument()
+  })
+
+  it('displays the graph diff badges showing added steps', async () => {
+    render(<AiWorkflowAssistant />)
+    fireEvent.click(screen.getByRole('button', { name: /Build with AI/ }))
+    const input = await screen.findByRole('textbox')
+    fireEvent.change(input, { target: { value: 'When manually enrolled, add a follow-up comment.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Generate workflow draft' }))
+
+    expect(await screen.findByText('Adds a follow-up comment.')).toBeInTheDocument()
+    expect(await screen.findByText('+1 added')).toBeInTheDocument()
+  })
+
+  it('supports multi-turn conversation refinements', async () => {
+    render(<AiWorkflowAssistant />)
+    fireEvent.click(screen.getByRole('button', { name: /Build with AI/ }))
+    const input = await screen.findByRole('textbox')
+    
+    // Turn 1
+    fireEvent.change(input, { target: { value: 'When manually enrolled, add a follow-up comment.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Generate workflow draft' }))
+    expect(await screen.findByText('Adds a follow-up comment.')).toBeInTheDocument()
+
+    // Turn 2 mock
+    mocks.call.mockImplementation((method: string) => {
+      if (method === 'get_ai_workflow_authoring_status') {
+        return Promise.resolve({ available: true, max_prompt_characters: 6000, primary_doctype: 'Lead', suggestions: ['When a Lead is created, add a task.'] })
+      }
+      if (method === 'get_ai_workflow_chat') return Promise.resolve({ turns: [] })
+      if (method === 'converse_ai_workflow_draft') {
+        return Promise.resolve({
+          reply_type: 'proposal',
+          summary: 'Added 2 day delay before comment.',
+          assumptions: [],
+          warnings: [],
+          graph: {
+            ...proposedGraph,
+            nodes: [
+              ...proposedGraph.nodes,
+              { id: 'delay', type: 'delay.fixed', type_version: 1, position: { x: 0, y: 100 }, config: { seconds: 172800 } },
+            ],
+          },
+          issues: [],
+          graph_hash: 'hash2',
+          node_count: 3,
+          latency_ms: 1100,
+          model: 'Authoring Model',
+          usage: { input_tokens: 120, output_tokens: 60, total_tokens: 180 },
+          mutated: false,
+          published: false,
+        })
+      }
+      return Promise.reject(new Error('Unexpected'))
+    })
+
+    fireEvent.change(input, { target: { value: 'Now add a 2 day delay before the comment.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Generate workflow draft' }))
+
+    expect(await screen.findByText('Added 2 day delay before comment.')).toBeInTheDocument()
+    // Both user prompts should remain in the chat stream
+    expect(screen.getByText('When manually enrolled, add a follow-up comment.')).toBeInTheDocument()
+    expect(screen.getByText('Now add a 2 day delay before the comment.')).toBeInTheDocument()
+  })
+
+  it('resumes the saved conversation for this user and workflow, with no reset button', async () => {
+    // A stale local cache must not win over the server thread.
+    localStorage.setItem('finbyz:workflow_ai_turns:AWF-1', JSON.stringify([
+      { id: 'old', role: 'user', content: 'stale local turn', timestamp: 1 },
+    ]))
+    mocks.call.mockImplementation((method: string) => {
+      if (method === 'get_ai_workflow_authoring_status') return Promise.resolve({ available: true, max_prompt_characters: 6000, primary_doctype: 'Lead', suggestions: [] })
+      if (method === 'get_ai_workflow_chat') return Promise.resolve({ turns: [
+        { role: 'user', text: 'notify the owner on new leads' },
+        { role: 'assistant', text: 'Here is the plan. Shall I build this?', reply_type: 'question', questions: ['Yes, build it'] },
+      ] })
+      return Promise.reject(new Error('Unexpected method'))
+    })
+
+    render(<AiWorkflowAssistant />)
+    fireEvent.click(screen.getByRole('button', { name: /Build with AI/ }))
+
+    expect(await screen.findByText('notify the owner on new leads')).toBeInTheDocument()
+    expect(screen.getByText('Here is the plan. Shall I build this?')).toBeInTheDocument()
+    expect(screen.queryByText('stale local turn')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Reset conversation/i })).not.toBeInTheDocument()
+  })
+
+  it('renders a follow-up question with clickable answer chips instead of a draft', async () => {
+    mocks.call.mockImplementation((method: string) => {
+      if (method === 'get_ai_workflow_authoring_status') return Promise.resolve({ available: true, max_prompt_characters: 6000, primary_doctype: 'Lead', suggestions: ['When a Lead is created, add a task.'] })
+      if (method === 'get_ai_workflow_chat') return Promise.resolve({ turns: [] })
+      if (method === 'converse_ai_workflow_draft') return Promise.resolve({ reply_type: 'question', message: 'What should trigger this?', questions: ['Which event starts it?', 'Who gets notified?'] })
+      return Promise.reject(new Error('Unexpected method'))
+    })
+
+    render(<AiWorkflowAssistant />)
+    fireEvent.click(screen.getByRole('button', { name: /Build with AI/ }))
+    const input = await screen.findByRole('textbox')
+    fireEvent.change(input, { target: { value: 'Set up some automation for leads.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Generate workflow draft' }))
+
+    expect(await screen.findByText('What should trigger this?')).toBeInTheDocument()
+    const chip = await screen.findByRole('button', { name: /Which event starts it\?/ })
+    fireEvent.click(chip)
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('Which event starts it?')
+    expect(mocks.replaceGraph).not.toHaveBeenCalled()
   })
 })

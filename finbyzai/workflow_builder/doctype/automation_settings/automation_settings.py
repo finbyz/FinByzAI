@@ -34,6 +34,18 @@ class AutomationSettings(Document):
 			if not minimum <= value <= maximum:
 				frappe.throw(_("{0} must be between {1} and {2}.").format(label, minimum, maximum))
 		if cint(self.ai_authoring_enabled):
-			agent_name = str(self.ai_authoring_agent or "").strip()
+			# The Generator is the agent that actually runs. The deprecated single
+			# agent is still accepted so older sites keep validating.
+			agent_name = (
+				str(self.ai_authoring_generator_agent or "").strip()
+				or str(self.ai_authoring_agent or "").strip()
+			)
 			if not agent_name or not frappe.db.exists("AI Agent", agent_name):
-				frappe.throw(_("Choose an existing AI Workflow Authoring Agent."))
+				frappe.throw(_("Choose an existing AI Workflow Generator Agent."))
+			for fieldname, label in (
+				("ai_authoring_editor_agent", _("AI Workflow Editor Agent")),
+				("ai_authoring_agent", _("AI Workflow Authoring Agent")),
+			):
+				value = str(self.get(fieldname) or "").strip()
+				if value and not frappe.db.exists("AI Agent", value):
+					frappe.throw(_("{0} no longer exists. Clear it or choose another.").format(label))

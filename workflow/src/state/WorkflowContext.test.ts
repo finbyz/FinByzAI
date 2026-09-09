@@ -180,7 +180,7 @@ describe('workflow document reducer', () => {
 describe('separate editor and history reducers', () => {
   it('changes selection without changing document identity', () => {
     const editor = workflowEditorReducer(
-	  { catalogOpen: false, validationOpen: false, simulationOpen: false, publishOpen: false, runsOpen: false, policiesOpen: false, versionsOpen: false, mode: 'edit' },
+	  { catalogOpen: false, validationOpen: false, simulationOpen: false, publishOpen: false, runsOpen: false, policiesOpen: false, versionsOpen: false, aiAssistantOpen: false, mode: 'edit' },
       { type: 'SELECT', nodeId: 'node-2' },
     )
     expect(editor.selectedNodeId).toBe('node-2')
@@ -189,7 +189,7 @@ describe('separate editor and history reducers', () => {
 
   it('tracks the exact enrollment trigger card independently from the start node', () => {
     const editor = workflowEditorReducer(
-	  { catalogOpen: false, validationOpen: false, simulationOpen: false, publishOpen: false, runsOpen: false, policiesOpen: false, versionsOpen: false, mode: 'edit' },
+	  { catalogOpen: false, validationOpen: false, simulationOpen: false, publishOpen: false, runsOpen: false, policiesOpen: false, versionsOpen: false, aiAssistantOpen: false, mode: 'edit' },
       { type: 'SELECT', nodeId: 'trigger-1', triggerGroupId: 'event-card-2' },
     )
     expect(editor.selectedNodeId).toBe('trigger-1')
@@ -197,7 +197,7 @@ describe('separate editor and history reducers', () => {
   })
 
   it('tracks a guided insertion target and clears it after selection or cancellation', () => {
-	const base = { catalogOpen: false, validationOpen: false, simulationOpen: false, publishOpen: false, runsOpen: false, policiesOpen: false, versionsOpen: false, mode: 'edit' as const }
+	const base = { catalogOpen: false, validationOpen: false, simulationOpen: false, publishOpen: false, runsOpen: false, policiesOpen: false, versionsOpen: false, aiAssistantOpen: false, mode: 'edit' as const }
     const inserting = workflowEditorReducer(base, { type: 'BEGIN_INSERT', placement: { edgeId: 'edge-1', position: { x: 100, y: 200 }, label: 'Between steps' } })
 	expect(inserting.insertion).toMatchObject({ edgeId: 'edge-1', label: 'Between steps' })
 	expect(inserting.catalogOpen).toBe(true)
@@ -206,7 +206,7 @@ describe('separate editor and history reducers', () => {
   })
 
 	it('uses one editing side panel at a time', () => {
-	const base = { catalogOpen: false, validationOpen: false, simulationOpen: false, publishOpen: false, runsOpen: false, policiesOpen: false, versionsOpen: false, mode: 'edit' as const, selectedNodeId: 'node-2' }
+	const base = { catalogOpen: false, validationOpen: false, simulationOpen: false, publishOpen: false, runsOpen: false, policiesOpen: false, versionsOpen: false, aiAssistantOpen: false, mode: 'edit' as const, selectedNodeId: 'node-2' }
 	const catalog = workflowEditorReducer(base, { type: 'TOGGLE', panel: 'catalogOpen', open: true })
 	expect(catalog.catalogOpen).toBe(true)
 	expect(catalog.selectedNodeId).toBeUndefined()
