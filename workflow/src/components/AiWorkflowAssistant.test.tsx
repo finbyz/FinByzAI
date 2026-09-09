@@ -164,24 +164,86 @@ describe('AI workflow assistant', () => {
     expect(screen.queryByRole('button', { name: /Reset conversation/i })).not.toBeInTheDocument()
   })
 
-  it('renders a follow-up question with clickable answer chips instead of a draft', async () => {
+  async function askTwoQuestions() {
     mocks.call.mockImplementation((method: string) => {
       if (method === 'get_ai_workflow_authoring_status') return Promise.resolve({ available: true, max_prompt_characters: 6000, primary_doctype: 'Lead', suggestions: ['When a Lead is created, add a task.'] })
       if (method === 'get_ai_workflow_chat') return Promise.resolve({ turns: [] })
       if (method === 'converse_ai_workflow_draft') return Promise.resolve({ reply_type: 'question', message: 'What should trigger this?', questions: ['Which event starts it?', 'Who gets notified?'] })
       return Promise.reject(new Error('Unexpected method'))
     })
-
     render(<AiWorkflowAssistant />)
     fireEvent.click(screen.getByRole('button', { name: /Build with AI/ }))
     const input = await screen.findByRole('textbox')
     fireEvent.change(input, { target: { value: 'Set up some automation for leads.' } })
     fireEvent.click(screen.getByRole('button', { name: 'Generate workflow draft' }))
-
     expect(await screen.findByText('What should trigger this?')).toBeInTheDocument()
-    const chip = await screen.findByRole('button', { name: /Which event starts it\?/ })
-    fireEvent.click(chip)
-    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('Which event starts it?')
+    return screen.getAllByPlaceholderText('Your answer…') as HTMLInputElement[]
+  }
+
+  it('answers questions inline, and a second answer never clears the first', async () => {
+    const boxes = await askTwoQuestions()
+    expect(boxes).toHaveLength(2)
+
+    fireEvent.change(boxes[0], { target: { value: 'When a Lead is created' } })
+    fireEvent.change(boxes[1], { target: { value: 'the account owner' } })
+
+    // The regression: filling the second box must not wipe the first.
+    expect(boxes[0].value).toBe('When a Lead is created')
+    expect(boxes[1].value).toBe('the account owner')
+
+    fireEvent.click(screen.getByRole('button', { name: /Send answers/i }))
+    await waitFor(() => {
+      const sent = mocks.call.mock.calls.filter((c) => c[0] === 'converse_ai_workflow_draft')
+      const last = sent[sent.length - 1][1] as { payload: { message: string } }
+      expect(last.payload.message).toContain('When a Lead is created')
+      expect(last.payload.message).toContain('the account owner')
+    })
     expect(mocks.replaceGraph).not.toHaveBeenCalled()
+  })
+
+  it('sends a single answer without the question prefix', async () => {
+    mocks.call.mockImplementation((method: string) => {
+      if (method === 'get_ai_workflow_authoring_status') return Promise.resolve({ available: true, max_prompt_characters: 6000, primary_doctype: 'Lead', suggestions: [] })
+      if (method === 'get_ai_workflow_chat') return Promise.resolve({ turns: [] })
+      if (method === 'converse_ai_workflow_draft') return Promise.resolve({ reply_type: 'question', message: 'One thing:', questions: ['Who should the task go to?'] })
+      return Promise.reject(new Error('Unexpected method'))
+    })
+    render(<AiWorkflowAssistant />)
+    fireEvent.click(screen.getByRole('button', { name: /Build with AI/ }))
+    const input = await screen.findByRole('textbox')
+    fireEvent.change(input, { target: { value: 'Create a task for new leads.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Generate workflow draft' }))
+
+    const box = await screen.findByPlaceholderText('Your answer…')
+    fireEvent.change(box, { target: { value: 'aman@example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: /Send answer/i }))
+    await waitFor(() => {
+      const sent = mocks.call.mock.calls.filter((c) => c[0] === 'converse_ai_workflow_draft')
+      const last = sent[sent.length - 1][1] as { payload: { message: string } }
+      expect(last.payload.message).toBe('aman@example.com')
+    })
+  })
+
+  it('renders short options as one-click choices, not answer boxes', async () => {
+    mocks.call.mockImplementation((method: string) => {
+      if (method === 'get_ai_workflow_authoring_status') return Promise.resolve({ available: true, max_prompt_characters: 6000, primary_doctype: 'Lead', suggestions: [] })
+      if (method === 'get_ai_workflow_chat') return Promise.resolve({ turns: [] })
+      if (method === 'converse_ai_workflow_draft') return Promise.resolve({ reply_type: 'question', message: 'Here is the plan.', questions: ['Yes, build it', 'Change something'] })
+      return Promise.reject(new Error('Unexpected method'))
+    })
+    render(<AiWorkflowAssistant />)
+    fireEvent.click(screen.getByRole('button', { name: /Build with AI/ }))
+    const input = await screen.findByRole('textbox')
+    fireEvent.change(input, { target: { value: 'Create a task for new leads.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Generate workflow draft' }))
+
+    const choice = await screen.findByRole('button', { name: 'Yes, build it' })
+    expect(screen.queryByPlaceholderText('Your answer…')).not.toBeInTheDocument()
+    fireEvent.click(choice)
+    await waitFor(() => {
+      const sent = mocks.call.mock.calls.filter((c) => c[0] === 'converse_ai_workflow_draft')
+      const last = sent[sent.length - 1][1] as { payload: { message: string } }
+      expect(last.payload.message).toBe('Yes, build it')
+    })
   })
 })
