@@ -245,25 +245,17 @@ button:disabled { cursor: not-allowed; }
 .magic-orb {
   position: relative;
   display: grid;
-  width: 46px;
-  height: 46px;
+  width: 34px;
+  height: 34px;
   place-items: center;
-  overflow: hidden;
-  border: 1px solid rgb(124 92 255 / 0.18);
-  border-radius: 15px;
-  color: #6847ef;
-  background: linear-gradient(145deg, #fff4ef, #f4efff 62%, #e8f4ff);
-  box-shadow: 0 12px 28px rgb(105 71 239 / 0.13);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--heading-color);
+  background: var(--subtle-fg);
+  box-shadow: 0 1px 2px rgb(25 39 51 / 0.04);
 }
 .magic-orb::after {
-  position: absolute;
-  width: 22px;
-  height: 22px;
-  border-radius: 999px;
-  content: "";
-  background: rgb(255 92 53 / 0.2);
-  filter: blur(9px);
-  transform: translate(14px, -14px);
+  display: none;
 }
 
 @layer components {
@@ -310,12 +302,25 @@ button:disabled { cursor: not-allowed; }
 }
 .btn-primary:hover:not(:disabled) { transform: translateY(-1px); background: linear-gradient(135deg, #ff7959 0%, #ef4e28 60%, #e63900 100%); box-shadow: 0 4px 12px rgb(129 39 17 / 0.2), 0 12px 28px rgb(255 92 53 / 0.25); }
 .btn-magic {
-  border: 1px solid rgb(104 71 239 / 0.38);
-  color: white;
-  background: linear-gradient(135deg, #876dff 0%, #6546e6 50%, #4c2dbf 100%);
-  box-shadow: 0 7px 18px rgb(104 71 239 / 0.22), inset 0 1px 0 rgb(255 255 255 / 0.2);
+  border: 1px solid #192733;
+  color: #ffffff;
+  background: #192733;
+  box-shadow: 0 1px 2px rgb(25 39 51 / 0.08);
 }
-.btn-magic:hover:not(:disabled) { transform: translateY(-1px); background: linear-gradient(135deg, #9179ff 0%, #684aee 50%, #5231cc 100%); box-shadow: 0 12px 32px rgb(104 71 239 / 0.35); }
+.btn-magic:hover:not(:disabled) {
+  border-color: #0e171f;
+  background: #25394b;
+  box-shadow: 0 2px 5px rgb(25 39 51 / 0.12);
+}
+[data-theme="dark"] .btn-magic {
+  border-color: #3b4e5e;
+  color: #f7f9fb;
+  background: #263541;
+}
+[data-theme="dark"] .btn-magic:hover:not(:disabled) {
+  border-color: #4a5e70;
+  background: #30414f;
+}
 
 .icon-button {
   display: inline-grid;
@@ -334,9 +339,7 @@ button:disabled { cursor: not-allowed; }
 .status-pill::before { width: 6px; height: 6px; border-radius: 999px; content: ""; background: currentColor; box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 12%, transparent); }
 
 .hero-glow { position: relative; isolation: isolate; overflow: hidden; }
-.hero-glow::before, .hero-glow::after { position: absolute; z-index: -1; border-radius: 999px; content: ""; filter: blur(2px); pointer-events: none; }
-.hero-glow::before { top: -130px; right: -90px; width: 390px; height: 390px; background: radial-gradient(circle, rgb(255 112 77 / 0.16), transparent 68%); }
-.hero-glow::after { top: -180px; left: 36%; width: 360px; height: 360px; background: radial-gradient(circle, rgb(124 92 255 / 0.1), transparent 70%); }
+.hero-glow::before, .hero-glow::after { display: none; }
 
 .workflow-node {
   position: relative;
@@ -527,6 +530,63 @@ button:disabled { cursor: not-allowed; }
   to { opacity: 1; transform: translateY(0); }
 }
 .animate-enter { animation: workflow-enter 240ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+/* AI Workflow Copilot animations and styles */
+@keyframes copilot-slide-in {
+  from {
+    transform: translateX(100%);
+    opacity: 0.82;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.copilot-drawer {
+  animation: copilot-slide-in 240ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  box-shadow: -14px 0 44px rgb(25 39 51 / 0.12);
+}
+
+[data-theme="dark"] .copilot-drawer {
+  box-shadow: -16px 0 54px rgb(0 0 0 / 0.45);
+}
+
+.diff-badge-added {
+  border: 1px solid #bbf7d0;
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+[data-theme="dark"] .diff-badge-added {
+  border-color: #166534;
+  background: rgba(22, 101, 52, 0.22);
+  color: #86efac;
+}
+
+.diff-badge-modified {
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #475569;
+}
+
+[data-theme="dark"] .diff-badge-modified {
+  border-color: #334155;
+  background: rgba(51, 65, 85, 0.3);
+  color: #cbd5e1;
+}
+
+.diff-badge-removed {
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+[data-theme="dark"] .diff-badge-removed {
+  border-color: #991b1b;
+  background: rgba(153, 27, 27, 0.22);
+  color: #fca5a5;
+}
 
 .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 .hide-scrollbar::-webkit-scrollbar { display: none; }
