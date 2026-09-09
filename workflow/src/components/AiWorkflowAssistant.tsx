@@ -94,9 +94,34 @@ interface ChatMessage {
   applied?: boolean
   diff?: GraphDiffSummary
   error?: string
+  /** Answers the user typed against this turn's questions, by question index. */
+  answered?: Record<number, string>
 }
 
 const MAX_STORED_TURNS = 30
+
+/** The agent writes light markdown ("**Trigger**", numbered steps). Render just
+ *  bold and line breaks - no library, no raw HTML, so nothing can be injected. */
+function RichText({ text }: { text: string }) {
+  const lines = String(text || '').split(/\r?\n|(?<=\.)\s(?=\d+\.\s)/)
+  return (
+    <>
+      {lines.map((line, lineIndex) => (
+        <span key={lineIndex} className="block">
+          {line.split(/(\*\*[^*]+\*\*)/g).map((part, partIndex) =>
+            part.startsWith('**') && part.endsWith('**') && part.length > 4 ? (
+              <b key={partIndex} className="text-heading font-semibold">
+                {part.slice(2, -2)}
+              </b>
+            ) : (
+              <span key={partIndex}>{part}</span>
+            )
+          )}
+        </span>
+      ))}
+    </>
+  )
+}
 
 /** A set of short, question-mark-free options ("Yes, build it") is a choice to
  *  click, not something to type an answer to. */
@@ -446,6 +471,14 @@ export function AiWorkflowAssistant() {
         filled.length === 1 && questions.length === 1
           ? filled[0].value
           : filled.map((row, i) => `${i + 1}. ${row.question} — ${row.value}`).join('\n')
+      // Keep what was typed on the turn itself so the answered questions stay
+      // readable in place instead of emptying out once the reply is sent.
+      const given: Record<number, string> = {}
+      questions.forEach((_, index) => {
+        const value = (answers[`${turn.id}:${index}`] || '').trim()
+        if (value) given[index] = value
+      })
+      setTurns((prev) => prev.map((t) => (t.id === turn.id ? { ...t, answered: given } : t)))
       setAnswers((prev) => {
         const next = { ...prev }
         questions.forEach((_, index) => delete next[`${turn.id}:${index}`])
@@ -654,7 +687,7 @@ export function AiWorkflowAssistant() {
                         <Sparkles size={14} />
                       </span>
                       <div className="flex-1 space-y-2.5 rounded-2xl border border-[var(--border-color)] bg-[var(--card-bg)] p-4 shadow-sm">
-                        <p className="text-body text-xs leading-relaxed">{turn.content}</p>
+                        <p className="text-body text-xs leading-relaxed"><RichText text={turn.content} /></p>
                         {turn.questions && turn.questions.length > 0 && (
                           isChoiceSet(turn.questions) ? (
                             // Short options ("Yes, build it") - one click sends it.
@@ -680,6 +713,7 @@ export function AiWorkflowAssistant() {
                             <div className="space-y-2 pt-1">
                               {turn.questions.map((question, index) => {
                                 const key = `${turn.id}:${index}`
+                                const given = turn.answered?.[index]
                                 return (
                                   <label key={key} className="block">
                                     <span className="text-muted block text-[10.5px] leading-snug">
@@ -688,25 +722,32 @@ export function AiWorkflowAssistant() {
                                       )}
                                       {question}
                                     </span>
-                                    <input
-                                      className="mt-1 w-full rounded-lg border border-[var(--border-color)] bg-[var(--control-bg)] px-2.5 py-1.5 text-[11px] text-heading outline-none transition-all focus:border-[var(--dark-border-color)] focus:bg-[var(--card-bg)] disabled:opacity-50"
-                                      placeholder="Your answer…"
-                                      value={answers[key] || ''}
-                                      disabled={loading || !isLastTurn}
-                                      onChange={(e) =>
-                                        setAnswers((prev) => ({ ...prev, [key]: e.target.value }))
-                                      }
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') {
-                                          e.preventDefault()
-                                          void submitAnswers(turn)
+                                    {given ? (
+                                      <span className="mt-1 flex items-start gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] text-emerald-800 dark:border-emerald-900 dark:bg-emerald-500/10 dark:text-emerald-200">
+                                        <Check size={12} className="mt-0.5 shrink-0" />
+                                        <span className="leading-snug">{given}</span>
+                                      </span>
+                                    ) : (
+                                      <input
+                                        className="mt-1 w-full rounded-lg border border-[var(--border-color)] bg-[var(--control-bg)] px-2.5 py-1.5 text-[11px] text-heading outline-none transition-all focus:border-[var(--dark-border-color)] focus:bg-[var(--card-bg)] disabled:opacity-50"
+                                        placeholder="Your answer…"
+                                        value={answers[key] || ''}
+                                        disabled={loading || !isLastTurn}
+                                        onChange={(e) =>
+                                          setAnswers((prev) => ({ ...prev, [key]: e.target.value }))
                                         }
-                                      }}
-                                    />
+                                        onKeyDown={(e) => {
+                                          if (e.key === 'Enter') {
+                                            e.preventDefault()
+                                            void submitAnswers(turn)
+                                          }
+                                        }}
+                                      />
+                                    )}
                                   </label>
                                 )
                               })}
-                              {isLastTurn && (
+                              {isLastTurn && !turn.answered && (
                                 <div className="flex items-center justify-between pt-0.5">
                                   <span className="text-light text-[9.5px]">
                                     Answer here, or type below to say something else.
@@ -762,7 +803,7 @@ export function AiWorkflowAssistant() {
                       </div>
 
                       {/* Summary */}
-                      <p className="text-body text-xs leading-relaxed font-normal">{proposal.summary}</p>
+                      <p className="text-body text-xs leading-relaxed font-normal"><RichText text={proposal.summary} /></p>
 
                       {/* Graph Diff Preview Badges */}
                       {diff && (diff.added.length > 0 || diff.modified.length > 0 || diff.removed.length > 0) && (
