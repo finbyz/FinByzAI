@@ -1014,6 +1014,16 @@ def _execute_action(run, token, node, record, value_record, outputs: dict[str, A
 				capability=("assignment_scalar", "assignment_collection"),
 			)
 			values[fieldname] = _coerce_assignment_value(target_doctype, fieldname, value)
+		# A record a workflow creates belongs to the record that triggered it.
+		# action.create_todo gets that link for free from add_assignment; this
+		# node had no equivalent, so a ToDo it created was orphaned - not on the
+		# source record's timeline and invisible from its assignments. Fill the
+		# standard Dynamic Link pair when the target has one and the author did
+		# not set it themselves.
+		target_meta = frappe.get_meta(target_doctype)
+		if target_meta.get_field("reference_type") and target_meta.get_field("reference_name"):
+			values.setdefault("reference_type", record.doctype)
+			values.setdefault("reference_name", record.name)
 		target = frappe.get_doc({"doctype": target_doctype, **values}).insert(ignore_permissions=True)
 		result = {"doctype": target.doctype, "name": target.name}
 	elif node_type == "action.manage_association":
