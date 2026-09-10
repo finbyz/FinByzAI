@@ -1033,10 +1033,30 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 			}
 		if expected is not None and not handles.issubset(expected):
 			issues.append(_issue("INVALID_BRANCH_EDGES", "An edge uses an output that is not available on this branch", node_id=node_id))
-		if publish and node_type == "action.ai_generate" and not {"success", "low_confidence", "failure"}.issubset(handles):
-			issues.append(_issue("AI_PATHS_INCOMPLETE", "Connect success, low-confidence, and failure paths before publishing", node_id=node_id))
-		if publish and node_type == "action.ai_support_agent" and not {"respond", "handoff", "failure"}.issubset(handles):
-			issues.append(_issue("AI_PATHS_INCOMPLETE", "Connect response, human-handoff, and failure paths before publishing", node_id=node_id))
+		if publish and node_type in {"action.ai_generate", "action.ai_support_agent"}:
+			# Only demand the paths this configuration can actually take. A
+			# "fail_workflow" node raises instead of branching, and a plain-text
+			# ai_generate never reports low confidence, so requiring those edges
+			# would force the author to draw wiring that can never be reached.
+			if node_type == "action.ai_generate":
+				required_paths = {"success"}
+				if str(config.get("output_format") or "text") != "text":
+					required_paths.add("low_confidence")
+			else:
+				required_paths = {"respond", "handoff"}
+			if str(config.get("failure_mode") or "branch") == "branch":
+				required_paths.add("failure")
+			missing_paths = sorted(required_paths - handles)
+			if missing_paths:
+				issues.append(
+					_issue(
+						"AI_PATHS_INCOMPLETE",
+						_("Connect the {0} path(s) before publishing").format(
+							", ".join(path.replace("_", "-") for path in missing_paths)
+						),
+						node_id=node_id,
+					)
+				)
 		if publish and node_type == "action.human_approval" and not {"approved", "rejected"}.issubset(handles):
 			issues.append(_issue("APPROVAL_PATHS_INCOMPLETE", "Connect approved and rejected paths before publishing", node_id=node_id))
 		if any(count > 1 for count in branch_handle_counts.get(node_id, {}).values()):

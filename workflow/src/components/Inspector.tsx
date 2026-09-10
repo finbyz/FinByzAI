@@ -412,7 +412,7 @@ function AiActionEditor({
 								? 'bg-[var(--card-bg)] text-brand-600 shadow-xs dark:text-brand-400'
 								: 'text-muted hover:text-heading'
 						}`}
-						onClick={() => update({ ...config, prompt_mode: 'agent' }, 'prompt_mode')}
+						onClick={() => update({ ...config, prompt_mode: 'agent', model: '' }, 'prompt_mode')}
 					>
 						🤖 AI Agent Profile
 					</button>

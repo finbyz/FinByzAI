@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -46,7 +47,7 @@ from finbyzai.workflow_builder.principal import (
 )
 from finbyzai.workflow_builder.errors import AutomationConflictError, AutomationError, AutomationPermissionError
 from finbyzai.workflow_builder.registry import field_catalog_result
-from finbyzai.workflow_builder.schema import empty_graph
+from finbyzai.workflow_builder.schema import empty_graph, validate_graph
 from finbyzai.workflow_builder.setup import (
 	ensure_automation_roles,
 	ensure_automation_settings_defaults,
@@ -272,6 +273,46 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		)
 		self.assertEqual(frappe.db.get_value("Automation Trigger Subscription", {"workflow": created["workflow"], "active": 1}, "workflow_version"), second["version"])
 		self.assertNotEqual(first["version"], second["version"])
+
+	def test_publish_only_demands_ai_paths_that_can_actually_fire(self):
+		"""low-confidence never fires for plain text, and failure never fires when
+		the node is set to fail the workflow. Demanding those edges forced the
+		author to draw wiring the engine can never reach."""
+		created = create_workflow_record("AI path reachability", "Lead", trigger_type="trigger.document_insert")
+
+		def build(output_format, failure_mode, handles):
+			graph = json.loads(json.dumps(created["graph"]))
+			graph["nodes"].append({
+				"id": "ai-1", "type": "action.ai_generate", "type_version": 1,
+				"position": {"x": 360, "y": 160},
+				"config": {
+					"prompt_mode": "inline", "model": "openrouter/openai/gpt-4o",
+					"user_prompt": "Summarise {{ doc.lead_name }}", "field_allowlist": ["lead_name"],
+					"output_format": output_format, "failure_mode": failure_mode,
+					"mode": "summarize", "confidence_threshold": 0.75, "timeout_seconds": 60,
+				},
+			})
+			graph["nodes"].append({
+				"id": "note-1", "type": "action.add_comment", "type_version": 1,
+				"position": {"x": 360, "y": 320}, "config": {"content": "done"},
+			})
+			graph["edges"] = [{"id": "e0", "source": graph["start_node_id"], "source_handle": "default", "target": "ai-1"}]
+			for index, handle in enumerate(handles):
+				graph["edges"].append({"id": f"e{index + 1}", "source": "ai-1", "source_handle": handle, "target": "note-1"})
+			return graph
+
+		def ai_issues(graph):
+			result = validate_graph(graph, primary_doctype="Lead", publish=True)
+			return [i for i in result["issues"] if i.get("code") == "AI_PATHS_INCOMPLETE"]
+
+		# Unreachable paths are not demanded.
+		self.assertFalse(ai_issues(build("text", "fail_workflow", ["success"])))
+		# A reachable failure branch still is.
+		self.assertTrue(ai_issues(build("text", "branch", ["success"])))
+		self.assertFalse(ai_issues(build("text", "branch", ["success", "failure"])))
+		# Structured output can report low confidence, so that one is demanded too.
+		self.assertTrue(ai_issues(build("json", "branch", ["success", "failure"])))
+		self.assertFalse(ai_issues(build("json", "branch", ["success", "failure", "low_confidence"])))
 
 	def test_a_cleanly_validating_node_stops_being_a_placeholder(self):
 		"""``placeholder`` is how the AI marks a step it could not finish. Nothing
