@@ -41,6 +41,7 @@ WORKFLOW_DOCTYPES = (
 	"automation_workflow_draft",
 	"automation_workflow_template",
 	"automation_workflow_version",
+	"workflow_builder_ai_chat",
 )
 
 
