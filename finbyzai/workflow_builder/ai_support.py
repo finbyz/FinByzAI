@@ -305,7 +305,10 @@ def _get_or_create_profile_version(snapshot: dict):
 		return frappe.get_doc(
 			{
 				"doctype": "Automation AI Profile Version",
-				"source_agent": snapshot.get("source_agent", "inline"),
+				# "inline" is a snapshot sentinel, not an AI Agent. Writing it into a
+				# Link field asked Frappe for an agent named "inline" and failed the
+				# save; an inline prompt simply has no source agent.
+				"source_agent": (snapshot.get("source_agent") or None) if snapshot.get("source_agent") != "inline" else None,
 				"config_hash": config_hash,
 				"provider": snapshot["provider"],
 				"model": snapshot["model"],

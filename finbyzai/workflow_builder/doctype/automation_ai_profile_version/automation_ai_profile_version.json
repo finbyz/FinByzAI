@@ -21,7 +21,7 @@
    "fieldtype": "Link",
    "label": "Source AI Agent",
    "options": "AI Agent",
-   "reqd": 1
+   "description": "The AI Agent this snapshot came from. Empty for an inline prompt, which has no source agent."
   },
   {
    "fieldname": "config_hash",
@@ -80,10 +80,22 @@
  "name": "Automation AI Profile Version",
  "owner": "Administrator",
  "permissions": [
-  {"role": "Automation Builder", "read": 1},
-  {"role": "Automation Publisher", "read": 1},
-  {"role": "Automation Operator", "read": 1},
-  {"role": "System Manager", "read": 1}
+  {
+   "role": "Automation Builder",
+   "read": 1
+  },
+  {
+   "role": "Automation Publisher",
+   "read": 1
+  },
+  {
+   "role": "Automation Operator",
+   "read": 1
+  },
+  {
+   "role": "System Manager",
+   "read": 1
+  }
  ],
  "sort_field": "creation",
  "sort_order": "DESC",
