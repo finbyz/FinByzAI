@@ -274,6 +274,30 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		self.assertEqual(frappe.db.get_value("Automation Trigger Subscription", {"workflow": created["workflow"], "active": 1}, "workflow_version"), second["version"])
 		self.assertNotEqual(first["version"], second["version"])
 
+	def test_an_inline_ai_step_can_be_saved(self):
+		"""build_profile_snapshot marks an inline prompt with the sentinel
+		source_agent "inline". That was being written into a Link field, so
+		saving asked Frappe for an AI Agent named "inline" and failed."""
+		created = create_workflow_record("Inline AI save", "Lead", trigger_type="trigger.document_insert")
+		model = frappe.db.get_value("LLM", {"enabled": 1, "is_embedding_model": 0}, "name")
+		if not model:
+			self.skipTest("no enabled LLM on this site")
+		graph = created["graph"]
+		graph["nodes"].append({
+			"id": "ai-1", "type": "action.ai_generate", "type_version": 1,
+			"position": {"x": 360, "y": 160},
+			"config": {
+				"prompt_mode": "inline", "model": model,
+				"user_prompt": "Summarise {{ doc.lead_name }}", "field_allowlist": ["lead_name"],
+				"output_format": "text", "failure_mode": "branch", "mode": "summarize",
+				"confidence_threshold": 0.75, "timeout_seconds": 60,
+			},
+		})
+		graph["edges"] = [{"id": "e0", "source": graph["start_node_id"], "source_handle": "default", "target": "ai-1"}]
+
+		saved = save_workflow_draft(created["workflow"], 0, graph)
+		self.assertTrue(saved["draft_revision"])
+
 	def test_publish_only_demands_ai_paths_that_can_actually_fire(self):
 		"""low-confidence never fires for plain text, and failure never fires when
 		the node is set to fail the workflow. Demanding those edges forced the
