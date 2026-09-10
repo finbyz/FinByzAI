@@ -1040,7 +1040,16 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 			# would force the author to draw wiring that can never be reached.
 			if node_type == "action.ai_generate":
 				required_paths = {"success"}
-				if str(config.get("output_format") or "text") != "text":
+				# low-confidence is only skipped when the graph proves it cannot
+				# fire. An inline step with no explicit format defaults to text,
+				# but a profile-driven step takes its format from the agent at
+				# run time, so the path stays required there.
+				inline = bool(
+					config.get("prompt_mode") == "inline"
+					or (not config.get("ai_profile") and config.get("model"))
+				)
+				declared_format = str(config.get("output_format") or ("text" if inline else ""))
+				if declared_format != "text":
 					required_paths.add("low_confidence")
 			else:
 				required_paths = {"respond", "handoff"}
