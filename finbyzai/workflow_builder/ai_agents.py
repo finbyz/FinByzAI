@@ -26,7 +26,7 @@ EDITOR_AGENT = "Workflow Builder Editor"
 # ---------------------------------------------------------------------------
 GRAPH_OUTPUT_SCHEMA: dict = {
 	"title": "WorkflowDraft",
-	"$comment": "finbyz-wf-authoring-schema-v19",
+	"$comment": "finbyz-wf-authoring-schema-v20",
 	"type": "object",
 	# Nothing is globally required - a ``reply_type="question"`` turn carries only
 	# ``message``/``questions`` while a proposal carries ``summary``/``graph``. The
@@ -130,9 +130,15 @@ STEP C - BUILD: chat_history shows the user approved the plan you proposed in
 step B ("yes", "go ahead", "build it", "ok", "proceed", "do it", a thumbs-up),
 OR the request already arrives as an explicit "APPROVED" plan to build.
 => reply_type="proposal": return "summary", "assumptions", "warnings", "graph".
-  - Build EXACTLY the plan that was approved. Every node must correspond to a
-    step in that plan. Do NOT add steps the plan did not mention (no extra
-    emails, notifications or actions).
+  - Build EXACTLY the plan that was approved. COUNT the steps in that plan and
+    return that many action nodes - no more. Every node must map to a numbered
+    step; if you cannot point at the step a node came from, delete it.
+    Specifically, never add on your own initiative: a human-approval step, a
+    notification or email, a goal/completion step, a delay, or a second copy of
+    a step you already built. Those are additions the user did not ask for and
+    has to find and remove.
+  - A path that simply ends IS the ending. Do not append a goal or completion
+    node to finish a branch.
   - If the approval carried a small tweak ("yes but priority High"), fold that
     single tweak in and build - do NOT re-confirm.
   - Only go back to step B if the approved-with-changes request is large enough
@@ -555,7 +561,7 @@ def _refresh_seed_if_stale(seed: dict) -> None:
 	try:
 		doc = frappe.get_doc("AI Agent", seed["name"])
 		joined = "\n".join((getattr(m, "content", "") or "") for m in (doc.messages or []))
-		if "{chat_history}" in joined and "finbyz-wf-authoring-schema-v19" in (doc.output_schema or ""):
+		if "{chat_history}" in joined and "finbyz-wf-authoring-schema-v20" in (doc.output_schema or ""):
 			return
 		doc.output_schema = seed["output_schema"]
 		doc.set("messages", [])

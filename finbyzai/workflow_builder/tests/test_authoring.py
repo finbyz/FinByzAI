@@ -274,6 +274,48 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		self.assertEqual(frappe.db.get_value("Automation Trigger Subscription", {"workflow": created["workflow"], "active": 1}, "workflow_version"), second["version"])
 		self.assertNotEqual(first["version"], second["version"])
 
+	def test_a_created_record_is_linked_back_to_the_enrolled_record(self):
+		"""action.create_todo links its task to the record via add_assignment.
+		action.create_record had no equivalent, so a ToDo it created was
+		orphaned - absent from the source record's timeline and assignments."""
+		from unittest.mock import patch as _patch
+
+		from finbyzai.workflow_builder import engine, events
+
+		lead = frappe.get_doc({
+			"doctype": "Lead", "lead_name": f"Link check {frappe.generate_hash(length=6)}",
+			"company_name": "Link Check Co",
+		}).insert(ignore_permissions=True)
+
+		created = create_workflow_record(
+			f"Create record back-link {frappe.generate_hash(length=6)}", "Lead", trigger_type="trigger.manual"
+		)
+		graph = created["graph"]
+		graph["nodes"].append({
+			"id": "make-todo", "type": "action.create_record", "type_version": 1,
+			"position": {"x": 0, "y": 200},
+			"config": {
+				"target_doctype": "ToDo",
+				"assignments": [{"field": "description", "value": {"kind": "literal", "value": "Follow up"}}],
+			},
+		})
+		graph["edges"] = [{"id": "e1", "source": graph["start_node_id"], "source_handle": "default", "target": "make-todo"}]
+		saved = save_workflow_draft(created["workflow"], 0, graph)
+		published = publish_workflow(created["workflow"], saved["draft_revision"], reenrollment="ALWAYS")
+		self.assertTrue(published)
+
+		run = engine.enroll(created["workflow"], "Lead", lead.name, source="MANUAL", occurrence_key="link-1")
+		with _patch.object(events, "_matching_subscriptions", return_value=[]):
+			while token := frappe.db.get_value(
+				"Automation Run Token", {"run": run, "status": "READY"}, "name", order_by="creation asc"
+			):
+				engine.execute_token(token)
+
+		todo = frappe.get_all(
+			"ToDo", filters={"reference_type": "Lead", "reference_name": lead.name}, pluck="name"
+		)
+		self.assertTrue(todo, "the created ToDo must point back at the Lead that triggered it")
+
 	def test_an_inline_ai_step_can_be_saved(self):
 		"""build_profile_snapshot marks an inline prompt with the sentinel
 		source_agent "inline". That was being written into a Link field, so
