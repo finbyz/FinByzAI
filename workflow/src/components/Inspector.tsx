@@ -329,8 +329,9 @@ function AiActionEditor({
 	const profiles = catalog?.profiles || []
 	const models = catalog?.models || []
 	const knowledgeBases = catalog?.knowledge_bases || []
-	const promptMode = support ? 'agent' : String(config.prompt_mode || (config.ai_profile ? 'agent' : 'inline'))
-	const isInline = !support && promptMode === 'inline'
+	// "Understand with AI" is inline-only: a model plus a prompt. The AI Agent
+	// Profile mode remains for action.ai_support_agent, which has no inline form.
+	const isInline = !support
 	const selectedProfile = profiles.find((profile) => profile.name === String(config.ai_profile || ''))
 	const selectedModel = models.find((m) => m.name === String(config.model || ''))
 	const fieldValues = (Array.isArray(config.field_allowlist) ? config.field_allowlist : []).map(String)
@@ -353,7 +354,13 @@ function AiActionEditor({
 
 	const setModel = (modelName: string) => {
 		const modelDoc = models.find((candidate) => candidate.name === modelName)
-		update({ ...config, model: modelName, provider: modelDoc?.provider || config.provider }, 'model')
+		// Pin prompt_mode too: the validator reads "no profile but a model" as
+		// inline, so a step left on the retired 'agent' mode would flip back to
+		// demanding an agent the moment the model was cleared.
+		update(
+			{ ...config, prompt_mode: 'inline', model: modelName, provider: modelDoc?.provider || config.provider },
+			'model',
+		)
 	}
 
 	const runTest = async () => {
@@ -392,32 +399,6 @@ function AiActionEditor({
 		>
 			{catalogError && <p className="rounded-lg border border-red-200 bg-red-50 p-2.5 text-[10px] text-red-700 dark:bg-red-500/10 dark:text-red-300">{catalogError}</p>}
 
-			{!support && (
-				<div className="mb-3 flex rounded-lg border border-[var(--border-color)] bg-[var(--subtle-fg)] p-0.5 text-[10.5px]">
-					<button
-						type="button"
-						className={`flex-1 rounded-md py-1.5 font-bold transition-all ${
-							isInline
-								? 'bg-[var(--card-bg)] text-brand-600 shadow-xs dark:text-brand-400'
-								: 'text-muted hover:text-heading'
-						}`}
-						onClick={() => update({ ...config, prompt_mode: 'inline', model: config.model || models[0]?.name || '' }, 'prompt_mode')}
-					>
-						⚡ Inline Prompt
-					</button>
-					<button
-						type="button"
-						className={`flex-1 rounded-md py-1.5 font-bold transition-all ${
-							!isInline
-								? 'bg-[var(--card-bg)] text-brand-600 shadow-xs dark:text-brand-400'
-								: 'text-muted hover:text-heading'
-						}`}
-						onClick={() => update({ ...config, prompt_mode: 'agent', model: '' }, 'prompt_mode')}
-					>
-						🤖 AI Agent Profile
-					</button>
-				</div>
-			)}
 
 			{isInline ? (
 				<div className="space-y-3.5">
