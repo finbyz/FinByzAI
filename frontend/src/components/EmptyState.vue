@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
-import { Button } from "@/lib/ui";
+import { Button, KeyboardShortcut } from "@/lib/ui";
 import * as api from "@/api/client";
 import { useStore } from "@/store";
 import { __ } from "@/lib/translate";
@@ -122,7 +122,8 @@ async function testConnection() {
 			</template>
 
 			<div class="mt-8 flex items-center justify-center gap-2 text-2xs text-ink-gray-5">
-				<span>{{ __("Ctrl+I to open or close") }}</span>
+				<KeyboardShortcut combo="Mod+I" />
+				<span>{{ __("to open or close") }}</span>
 				<span class="text-ink-gray-3">·</span>
 				<button class="hover:text-ink-gray-7" :disabled="checking" @click="testConnection">
 					{{ checking ? __("Checking…") : __("Check the model") }}
