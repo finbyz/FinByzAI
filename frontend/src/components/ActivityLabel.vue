@@ -22,7 +22,7 @@ onMounted(measure);
 
 <template>
 	<span
-		class="flow-label relative inline-grid items-center overflow-hidden align-bottom"
+		class="copilot-label relative inline-grid items-center overflow-hidden align-bottom"
 		:style="{ width }"
 	>
 		<span
@@ -31,11 +31,11 @@ onMounted(measure);
 			aria-hidden="true"
 			>{{ text }}</span
 		>
-		<Transition name="flow-label">
+		<Transition name="copilot-label">
 			<span
 				:key="text"
 				class="col-start-1 row-start-1 whitespace-nowrap"
-				:class="active ? 'flow-shimmer-text' : ''"
+				:class="active ? 'copilot-shimmer-text' : ''"
 				>{{ text }}</span
 			>
 		</Transition>
@@ -43,27 +43,27 @@ onMounted(measure);
 </template>
 
 <style scoped>
-.flow-label {
+.copilot-label {
 	transition: width 0.25s ease;
 }
-.flow-label-enter-active,
-.flow-label-leave-active {
+.copilot-label-enter-active,
+.copilot-label-leave-active {
 	transition: opacity 0.25s ease;
 }
 /* Leaving label goes absolute so it never affects the measured/flow width. */
-.flow-label-leave-active {
+.copilot-label-leave-active {
 	position: absolute;
 	left: 0;
 	top: 0;
 }
-.flow-label-enter-from,
-.flow-label-leave-to {
+.copilot-label-enter-from,
+.copilot-label-leave-to {
 	opacity: 0;
 }
 @media (prefers-reduced-motion: reduce) {
-	.flow-label,
-	.flow-label-enter-active,
-	.flow-label-leave-active {
+	.copilot-label,
+	.copilot-label-enter-active,
+	.copilot-label-leave-active {
 		transition: none;
 	}
 }

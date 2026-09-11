@@ -1,7 +1,7 @@
 /* Styles for streamed assistant markdown (injected via v-html, so it can't use
    utility classes on its elements). Scoped to #copilot-root at build time. */
 .md {
-	font-size: var(--text-base);
+	@apply text-p-base;
 	line-height: 1.7;
 	color: var(--ink-gray-8);
 	word-break: break-word;
@@ -27,18 +27,18 @@
 	color: var(--ink-gray-9);
 }
 .md h1 {
-	font-size: var(--text-lg);
+	@apply text-p-lg;
 }
 .md h2 {
 	font-size: 16px;
 }
 .md h3 {
-	font-size: var(--text-base);
+	@apply text-p-base;
 }
 .md h4,
 .md h5,
 .md h6 {
-	font-size: var(--text-sm);
+	@apply text-p-sm;
 	color: var(--ink-gray-7);
 }
 .md ul,
@@ -83,7 +83,7 @@
 	border: 1px solid var(--outline-gray-1);
 	border-radius: 8px;
 	padding: 10px 12px;
-	overflow-x: auto;
+	overcopilot-x: auto;
 	margin: 8px 0;
 }
 .md pre code {
@@ -94,7 +94,7 @@
 /* Wide tables scroll inside their own box instead of widening the panel. */
 .md .md-table-scroll {
 	max-width: 100%;
-	overflow-x: auto;
+	overcopilot-x: auto;
 	margin: 8px 0;
 	border: 1px solid var(--outline-gray-2);
 	border-radius: 8px;
@@ -102,7 +102,7 @@
 .md table {
 	min-width: 100%;
 	border-collapse: collapse;
-	font-size: var(--text-xs);
+	@apply text-p-xs;
 }
 .md th,
 .md td {

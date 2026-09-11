@@ -5,6 +5,7 @@ import AssistantMessage from "./AssistantMessage.vue";
 import EmptyState from "./EmptyState.vue";
 import { FeatherIcon } from "@/lib/ui";
 import { useStore } from "@/store";
+import { COLUMN, GUTTER, SCROLL_END } from "@/lib/layout";
 import { __ } from "@/lib/translate";
 
 const { messages, needsSetup, agents, models, scrollTick, forceScroll } = useStore();
@@ -40,10 +41,11 @@ watch(scrollTick, () => {
 <template>
 	<div
 		ref="el"
-		class="flow-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pb-6 pt-4"
+		class="copilot-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto pt-5"
+		:class="[GUTTER, SCROLL_END]"
 		@scroll="onScroll"
 	>
-		<div class="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-5">
+		<div class="flex flex-1 flex-col gap-6" :class="COLUMN">
 			<EmptyState
 				v-if="!messages.length"
 				:setup="needsSetup"
@@ -56,7 +58,7 @@ watch(scrollTick, () => {
 					<UserMessage :content="msg.content" :attachments="msg.attachments" />
 					<div
 						v-if="msg.interrupted"
-						class="flex items-center gap-1.5 text-[length:var(--text-sm)] text-ink-gray-5"
+						class="flex items-center gap-1.5 text-sm text-ink-gray-5"
 					>
 						<FeatherIcon name="alert-circle" class="h-3.5 w-3.5 shrink-0" />
 						{{ __("Response interrupted") }}

@@ -1,32 +1,29 @@
 <script setup>
 import { computed, nextTick, ref, watch } from "vue";
-import { Button, FeatherIcon, Tooltip } from "@/lib/ui";
+import { Button, Tooltip } from "@/lib/ui";
 import AttachmentChip from "./AttachmentChip.vue";
-import ControlPill from "./ControlPill.vue";
-import PanelDropdown from "./PanelDropdown.vue";
+import Menu from "./Menu.vue";
 import { useStore } from "@/store";
+import { COLUMN, GUTTER } from "@/lib/layout";
 import { __ } from "@/lib/translate";
 
 // The composer, ours.
 //
-// Two deliberate departures from what we had:
+// Three judgements, each removing something:
 //
-// 1. It is docked, not floating. A floating card means the message list has to pad its
-//    bottom by the composer's live height, measured with a ResizeObserver, and a grown
-//    composer still covers the last message for a frame. Docking removes the entire
-//    problem — the list ends where the composer begins.
-// 2. The controls sit inside the field, on its bottom edge, so the input is one
-//    surface rather than a textarea with a toolbar underneath it.
-//
-// Everything visible is either a frappe-ui component or built to frappe-ui's own
-// metrics (see ControlPill.vue).
+// 1. It is docked and share the message list's column. Floating forced the list to pad
+//    its bottom by a ResizeObserver-measured height, and in full screen the field ran
+//    the whole 1500px while the conversation sat in a 770px column — the field looked
+//    like a different app. Same column, same gutters, everything lines up.
+// 2. Only the model picker stays. Agent and knowledge base moved to settings: most
+//    sites have one agent and no knowledge base, so those two controls were permanent
+//    noise reading "Copilot" and "No KB". The model is the one thing worth switching
+//    mid-conversation, so it is the one thing here.
+// 3. No keyboard hint. "⏎ send · ⇧⏎ new line" is decoration once you have sent one
+//    message, and the shortcut is on the empty state where it is actually new.
 const {
-	agents,
 	models,
-	knowledgeBases,
-	selectedAgent,
 	selectedModel,
-	selectedKnowledgeBase,
 	attachments,
 	sending,
 	paused,
@@ -35,21 +32,16 @@ const {
 	needsSetup,
 	uploading,
 	focusTick,
-	agentLabel,
 	modelLabel,
-	knowledgeLabel,
-	agentLogo,
 	modelLogo,
-	setAgent,
 	setModel,
-	setKnowledgeBase,
 	send,
 	stopRun,
 	attachFiles,
 	removeAttachment,
 } = useStore();
 
-// What extract_file_content can actually read (see copilot/tools/files.py).
+// What extract_file_content can actually read (copilot/tools/files.py).
 const ACCEPT = [
 	"pdf", "docx", "doc", "pptx", "xlsx", "xlsm", "xls", "csv",
 	"html", "htm", "txt", "md", "json", "xml",
@@ -73,11 +65,8 @@ const placeholder = computed(() => {
 	return __("Ask anything about your data…");
 });
 
-const agentItems = computed(() =>
-	agents.value.map((a) => ({ value: a.name, label: a.title, logo: a.logo, hint: a.hint }))
-);
 const modelItems = computed(() => [
-	{ value: null, label: __("Agent's default") },
+	{ value: null, label: __("Default model"), hint: __("Whatever the agent uses") },
 	...models.value.map((m) => ({
 		value: m.name,
 		label: m.title,
@@ -88,20 +77,6 @@ const modelItems = computed(() => [
 			.join(" · ") || undefined,
 	})),
 ]);
-const knowledgeItems = computed(() => [
-	{ value: null, label: __("No knowledge base") },
-	...knowledgeBases.value.map((k) => ({
-		value: k.name,
-		label: k.title,
-		hint: k.status && k.status !== "Completed" ? k.status : undefined,
-	})),
-	{ value: "__new__", label: __("Create a knowledge base…") },
-]);
-
-function pickKnowledgeBase(value) {
-	if (value === "__new__") return frappe.new_doc("Knowledge Base");
-	setKnowledgeBase(value);
-}
 
 function submit() {
 	if (!canSend.value) return;
@@ -117,7 +92,7 @@ function onKeydown(event) {
 	}
 }
 
-// Grow with the content up to a ceiling, then scroll inside.
+// Grow with the content, then scroll inside.
 function resize() {
 	const node = el.value;
 	if (!node) return;
@@ -130,148 +105,126 @@ function focus() {
 }
 watch(focusTick, focus);
 
-// Drag a file anywhere onto the field.
 function onDrop(event) {
 	event.preventDefault();
 	dragging.value = false;
 	if (event.dataTransfer?.files?.length) attachFiles(event.dataTransfer.files);
-}
-function pickFiles() {
-	fileInput.value?.click();
 }
 function onFilesPicked(event) {
 	if (event.target.files?.length) attachFiles(event.target.files);
 	event.target.value = "";
 }
 
-defineExpose({ focus, setText: (value) => { text.value = value; resize(); focus(); } });
+defineExpose({
+	focus,
+	setText: (value) => {
+		text.value = value;
+		resize();
+		focus();
+	},
+});
 </script>
 
 <template>
-	<div class="shrink-0 border-t border-outline-gray-2 bg-surface-white px-3 py-3">
-		<!-- One surface: the field, its attachments and its controls share a border,
-		     styled as frappe-ui's `outline` variant. -->
-		<div
-			class="rounded-lg border bg-surface-white transition-colors"
-			:class="
-				dragging
-					? 'border-outline-gray-4 bg-surface-gray-1'
-					: 'border-outline-gray-2 focus-within:border-outline-gray-3'
-			"
-			@dragover.prevent="dragging = true"
-			@dragleave.prevent="dragging = false"
-			@drop="onDrop"
-		>
-			<div v-if="attachments.length" class="flex flex-wrap gap-1.5 px-2.5 pt-2.5">
-				<AttachmentChip
-					v-for="a in attachments"
-					:key="a.uid"
-					:file-name="a.file_name"
-					:file-size="a.file_size"
-					:status="a.status"
-					:error="a.error"
-					removable
-					@remove="removeAttachment(a.uid)"
-				/>
-			</div>
+	<div class="shrink-0 border-t border-outline-gray-1 bg-surface-white pb-3 pt-3" :class="GUTTER">
+		<div :class="COLUMN">
+			<!-- One surface: field, attachments and controls share a border. `rounded-lg`
+			     and the outline tokens are frappe-ui's `outline` input variant. -->
+			<div
+				class="rounded-lg border bg-surface-white transition-colors"
+				:class="
+					dragging
+						? 'border-outline-gray-3 bg-surface-gray-1'
+						: 'border-outline-gray-2 focus-within:border-outline-gray-3'
+				"
+				@dragover.prevent="dragging = true"
+				@dragleave.prevent="dragging = false"
+				@drop="onDrop"
+			>
+				<div v-if="attachments.length" class="flex flex-wrap gap-1.5 px-2.5 pt-2.5">
+					<AttachmentChip
+						v-for="a in attachments"
+						:key="a.uid"
+						:file-name="a.file_name"
+						:file-size="a.file_size"
+						:status="a.status"
+						:error="a.error"
+						removable
+						@remove="removeAttachment(a.uid)"
+					/>
+				</div>
 
-			<textarea
-				ref="el"
-				v-model="text"
-				rows="1"
-				:placeholder="placeholder"
-				:disabled="inputDisabled"
-				class="max-h-42 w-full resize-none border-0 bg-transparent px-2.5 pb-1 pt-2.5 text-base leading-relaxed text-ink-gray-9 outline-none placeholder:text-ink-gray-4 disabled:cursor-default"
-				@keydown="onKeydown"
-				@input="resize"
-			></textarea>
+				<textarea
+					ref="el"
+					v-model="text"
+					rows="1"
+					:placeholder="placeholder"
+					:disabled="inputDisabled"
+					class="w-full resize-none border-0 bg-transparent px-2.5 pb-1 pt-2.5 text-p-base text-ink-gray-8 outline-none placeholder:text-ink-gray-4 disabled:cursor-default"
+					@keydown="onKeydown"
+					@input="resize"
+				></textarea>
 
-			<!-- controls, on the field's bottom edge -->
-			<div class="flex items-center gap-1 px-2 pb-2">
-				<PanelDropdown
-					v-if="agents.length > 1"
-					:items="agentItems"
-					:model-value="selectedAgent"
-					:disabled="locked"
-					searchable
-					@update:model-value="setAgent"
-				>
-					<template #trigger="{ toggle }">
-						<ControlPill
-							:label="agentLabel(selectedAgent) || __('Agent')"
-							:logo="agentLogo(selectedAgent)"
-							icon="cpu"
-							:disabled="locked"
-							@click="toggle"
+				<div class="flex items-center gap-1 px-1.5 pb-1.5">
+					<Menu
+						:items="modelItems"
+						:model-value="selectedModel"
+						searchable
+						@update:model-value="setModel"
+					>
+						<template #trigger="{ toggle }">
+							<button
+								type="button"
+								class="flex h-6 max-w-[13rem] items-center gap-1 rounded px-1.5 text-sm text-ink-gray-7 hover:bg-surface-gray-3 active:bg-surface-gray-4"
+								@click="toggle"
+							>
+								<img
+									v-if="modelLogo(selectedModel)"
+									:src="modelLogo(selectedModel)"
+									class="copilot-logo size-3.5 shrink-0"
+									alt=""
+								/>
+								<span v-else class="lucide-sparkles size-3.5 shrink-0 text-ink-gray-5" aria-hidden="true"></span>
+								<span class="truncate">{{ modelLabel(selectedModel) || __("Default model") }}</span>
+								<span class="lucide-chevron-down size-3 shrink-0 text-ink-gray-4" aria-hidden="true"></span>
+							</button>
+						</template>
+					</Menu>
+
+					<span class="flex-1"></span>
+
+					<Tooltip :text="__('Attach a file')">
+						<Button
+							variant="ghost"
+							icon="lucide-paperclip"
+							:disabled="inputDisabled"
+							@click="fileInput?.click()"
 						/>
-					</template>
-				</PanelDropdown>
+					</Tooltip>
+					<input
+						ref="fileInput"
+						type="file"
+						multiple
+						:accept="ACCEPT"
+						class="hidden"
+						@change="onFilesPicked"
+					/>
 
-				<PanelDropdown
-					:items="modelItems"
-					:model-value="selectedModel"
-					searchable
-					@update:model-value="setModel"
-				>
-					<template #trigger="{ toggle }">
-						<ControlPill
-							:label="modelLabel(selectedModel) || __('Default model')"
-							:logo="modelLogo(selectedModel)"
-							icon="zap"
-							:muted="!selectedModel"
-							@click="toggle"
-						/>
-					</template>
-				</PanelDropdown>
-
-				<PanelDropdown
-					:items="knowledgeItems"
-					:model-value="selectedKnowledgeBase"
-					searchable
-					@update:model-value="pickKnowledgeBase"
-				>
-					<template #trigger="{ toggle }">
-						<ControlPill
-							:label="knowledgeLabel(selectedKnowledgeBase) || __('No KB')"
-							icon="book-open"
-							:muted="!selectedKnowledgeBase"
-							@click="toggle"
-						/>
-					</template>
-				</PanelDropdown>
-
-				<span class="flex-1"></span>
-
-				<!-- Only while typing: a hint nobody needs to read twice. -->
-				<span
-					v-if="text.length > 2 && !sending"
-					class="hidden pr-1 text-2xs text-ink-gray-4 sm:inline"
-				>
-					{{ __("⏎ send · ⇧⏎ new line") }}
-				</span>
-
-				<Tooltip :text="__('Attach a file')">
-					<Button variant="ghost" :disabled="inputDisabled" @click="pickFiles">
-						<template #icon><FeatherIcon name="paperclip" class="size-4" /></template>
-					</Button>
-				</Tooltip>
-				<input
-					ref="fileInput"
-					type="file"
-					multiple
-					:accept="ACCEPT"
-					class="hidden"
-					@change="onFilesPicked"
-				/>
-
-				<Tooltip v-if="sending" :text="__('Stop')">
-					<Button theme="red" variant="solid" @click="stopRun">
-						<template #icon><span class="size-2.5 rounded-sm bg-current"></span></template>
-					</Button>
-				</Tooltip>
-				<Button v-else variant="solid" :disabled="!canSend" :tooltip="__('Send')" @click="submit">
-					<template #icon><FeatherIcon name="arrow-up" class="size-4" /></template>
-				</Button>
+					<Tooltip v-if="sending" :text="__('Stop')">
+						<Button theme="red" variant="solid" @click="stopRun">
+							<template #icon><span class="size-2.5 rounded-sm bg-current"></span></template>
+						</Button>
+					</Tooltip>
+					<Button
+						v-else
+						variant="solid"
+						theme="gray"
+						icon="lucide-arrow-up"
+						:disabled="!canSend"
+						:tooltip="__('Send')"
+						@click="submit"
+					/>
+				</div>
 			</div>
 		</div>
 	</div>

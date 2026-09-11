@@ -1,56 +1,79 @@
 <script setup>
+import { computed } from "vue";
+import { Button, Tooltip } from "@/lib/ui";
 import BrandMark from "./BrandMark.vue";
-import SessionsMenu from "./SessionsMenu.vue";
-import { Button, FeatherIcon } from "@/lib/ui";
+import Menu from "./Menu.vue";
 import { useStore } from "@/store";
+import { GUTTER } from "@/lib/layout";
 import { __ } from "@/lib/translate";
 
+// The header, ours.
+//
+// It used to carry five icon buttons side by side — history, settings, new chat,
+// fullscreen, close. In a 420px panel that is a row of anonymous glyphs competing for
+// the same attention, and frappe-ui's guidance is explicit: one primary action per
+// surface, the rest subtle or ghost, and action clusters collapse into a single menu.
+//
+// So: New chat stays visible because it is the one thing people reach for mid-thought,
+// Close stays because a panel must always be closable, and everything else moves into
+// one overflow menu. Three controls instead of five, and the recent conversations sit
+// in that menu rather than behind a clock icon nobody recognises.
 const props = defineProps({ onToggleFullscreen: { type: Function, default: null } });
 const emit = defineEmits(["close"]);
+
 const store = useStore();
-const {
-	recentSessions,
-	switchSession,
-	newChat,
-	fullscreen,
-	settingsOpen,
-} = store;
+const { recentSessions, switchSession, newChat, fullscreen, settingsOpen } = store;
+
+const menuItems = computed(() => {
+	const items = [
+		{ value: "__settings__", label: __("Settings"), icon: "lucide-settings" },
+		{
+			value: "__fullscreen__",
+			label: fullscreen.value ? __("Exit full screen") : __("Full screen"),
+			icon: fullscreen.value ? "lucide-minimize-2" : "lucide-maximize-2",
+		},
+	];
+	const recent = recentSessions.value || [];
+	if (recent.length) {
+		items.push(
+			...recent.slice(0, 8).map((session) => ({
+				value: session.name,
+				label: session.title || __("Untitled"),
+				group: __("Recent"),
+			}))
+		);
+	}
+	return items;
+});
+
+function onSelect(item) {
+	if (item.value === "__settings__") settingsOpen.value = true;
+	else if (item.value === "__fullscreen__") props.onToggleFullscreen?.();
+	else switchSession(item.value);
+}
 </script>
 
 <template>
-	<header class="flex items-center gap-1.5 border-b border-outline-gray-1 px-3 py-2">
+	<header
+		class="flex min-h-12 shrink-0 items-center gap-2 border-b border-outline-gray-1 py-2"
+		:class="GUTTER"
+	>
 		<BrandMark :size="18" />
-		<span class="text-sm font-medium text-ink-gray-9">{{ __("Copilot") }}</span>
+		<span class="text-base font-medium text-ink-gray-8">{{ __("Copilot") }}</span>
 		<span class="flex-1"></span>
 
-		<SessionsMenu :sessions="recentSessions" @select="switchSession" />
+		<Tooltip :text="__('New chat')">
+			<Button variant="ghost" icon="lucide-plus" @click="newChat" />
+		</Tooltip>
 
-		<Button variant="ghost" :title="__('Settings')" @click="settingsOpen = true">
-			<template #icon
-				><FeatherIcon name="settings" :stroke-width="2" class="h-3.5 w-3.5"
-			/></template>
-		</Button>
-		<Button variant="ghost" :title="__('New chat')" @click="newChat">
-			<template #icon
-				><FeatherIcon name="plus" :stroke-width="2" class="h-3.5 w-3.5"
-			/></template>
-		</Button>
-		<Button
-			variant="ghost"
-			:title="fullscreen ? __('Exit full screen') : __('Full screen')"
-			@click="props.onToggleFullscreen && props.onToggleFullscreen()"
-		>
-			<template #icon
-				><FeatherIcon
-					:name="fullscreen ? 'minimize' : 'maximize'"
-					:stroke-width="2"
-					class="h-3.5 w-3.5"
-			/></template>
-		</Button>
-		<Button variant="ghost" :title="__('Close (Ctrl+Shift+K)')" @click="emit('close')">
-			<template #icon
-				><FeatherIcon name="x" :stroke-width="2" class="h-3.5 w-3.5"
-			/></template>
-		</Button>
+		<Menu :items="menuItems" align="right" side="bottom" searchable @select="onSelect">
+			<template #trigger="{ toggle }">
+				<Button variant="ghost" icon="lucide-more-horizontal" :tooltip="__('More')" @click="toggle" />
+			</template>
+		</Menu>
+
+		<Tooltip :text="__('Close (Ctrl+I)')">
+			<Button variant="ghost" icon="lucide-x" @click="emit('close')" />
+		</Tooltip>
 	</header>
 </template>
