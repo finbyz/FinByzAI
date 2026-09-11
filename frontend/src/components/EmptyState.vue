@@ -1,17 +1,21 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
-import { Button, FeatherIcon } from "@/lib/ui";
-import BrandMark from "./BrandMark.vue";
+import { Button } from "@/lib/ui";
 import * as api from "@/api/client";
 import { useStore } from "@/store";
 import { __ } from "@/lib/translate";
 
-// The first thing anyone sees, and the only chance to answer "what can I ask it?".
+// The first screen, ours, built on frappe-ui's empty-state anatomy: a glyph in a round
+// gray well, a line of ink-gray-7, a line of ink-gray-5, one action.
 //
-// The suggestions are not a hardcoded list. They are derived from the tools the agent
-// actually has, so a site with the selling and inventory tools installed offers those
-// questions, and a site without them offers the generic ones that always work. A
-// first-run screen that promises something this site cannot do is worse than a blank one.
+// What came off it, following "gray first, and a border needs a reason":
+// - the four bordered suggestion cards became plain rows with a hover fill. Four
+//   borders inside a bordered panel below a bordered header is five boxes deep.
+// - the ↗ on every row: decoration, and it implied navigation rather than sending.
+// - "TRY ASKING" in caps: a quiet label is `text-sm text-ink-gray-5`, not shouting.
+//
+// The suggestions themselves still come from the live tool list, so the screen never
+// offers something this site cannot answer.
 const store = useStore();
 const { needsSetup, selectedAgent, selectedKnowledgeBase, settingsOpen, send } = store;
 
@@ -19,11 +23,9 @@ const tools = ref([]);
 const checking = ref(false);
 const connection = ref(null);
 
-// Each group is offered only when its tool is present.
 const CATALOGUE = [
 	{
 		tool: "selling_intelligence",
-		icon: "trending-up",
 		prompts: [
 			__("How are sales doing this year, and is any customer slipping away?"),
 			__("Which items have lost the most revenue?"),
@@ -31,38 +33,13 @@ const CATALOGUE = [
 	},
 	{
 		tool: "inventory_intelligence",
-		icon: "package",
-		prompts: [
-			__("What hasn't sold in 60–90 days, and what capital is tied up in it?"),
-			__("What needs reordering right now?"),
-		],
+		prompts: [__("What hasn't sold in 60–90 days, and what is it worth?")],
 	},
-	{
-		tool: "purchasing_intelligence",
-		icon: "shopping-cart",
-		prompts: [__("What should we order this week, and by when?")],
-	},
-	{
-		tool: "manufacturing_intelligence",
-		icon: "tool",
-		prompts: [__("What should we manufacture next?")],
-	},
-	{
-		tool: "financial_intelligence",
-		icon: "pie-chart",
-		prompts: [__("How are our margins trending, and who owes us the most?")],
-	},
-	// Always available — every site has reports and records.
-	{
-		tool: "run_report",
-		icon: "file-text",
-		prompts: [__("Run the Accounts Receivable report for this month")],
-	},
-	{
-		tool: "read",
-		icon: "database",
-		prompts: [__("Show me this month's overdue invoices")],
-	},
+	{ tool: "purchasing_intelligence", prompts: [__("What should we order this week?")] },
+	{ tool: "manufacturing_intelligence", prompts: [__("What should we manufacture next?")] },
+	{ tool: "financial_intelligence", prompts: [__("How are our margins trending?")] },
+	{ tool: "run_report", prompts: [__("Run the Accounts Receivable report")] },
+	{ tool: "read", prompts: [__("Show me this month's overdue invoices")] },
 ];
 
 const available = computed(() => new Set(tools.value.map((t) => t.name)));
@@ -72,7 +49,7 @@ const suggestions = computed(() => {
 	for (const group of CATALOGUE) {
 		if (!available.value.has(group.tool)) continue;
 		for (const prompt of group.prompts) {
-			out.push({ prompt, icon: group.icon });
+			out.push(prompt);
 			if (out.length >= 4) return out;
 		}
 	}
@@ -81,7 +58,7 @@ const suggestions = computed(() => {
 
 const greeting = computed(() => {
 	const name = (frappe.boot?.user?.first_name || "").trim();
-	return name ? __("Hi {0}", [name]) : __("Copilot");
+	return name && name !== "Administrator" ? __("Hi {0}", [name]) : __("Copilot");
 });
 
 onMounted(async () => {
@@ -96,8 +73,6 @@ onMounted(async () => {
 	}
 });
 
-// A dead credential is the most common reason nothing works, and it is worth finding
-// out here rather than after typing a question and waiting for the run to fail.
 async function testConnection() {
 	checking.value = true;
 	connection.value = null;
@@ -112,56 +87,41 @@ async function testConnection() {
 </script>
 
 <template>
-	<div class="flex flex-1 flex-col items-center justify-center px-6 py-10">
-		<div class="w-full max-w-lg">
-			<div class="flex flex-col items-center text-center">
-				<BrandMark :size="30" />
-				<h2 class="mt-3 text-lg font-semibold text-ink-gray-9">{{ greeting }}</h2>
-				<p class="mt-1 text-base leading-relaxed text-ink-gray-6">
+	<div class="flex flex-1 flex-col items-center justify-center py-16">
+		<div class="w-full max-w-md">
+			<div class="flex flex-col items-center gap-3 text-center">
+				<div class="rounded-full bg-surface-gray-2 p-3 text-ink-gray-5">
+					<span class="lucide-sparkles size-6" aria-hidden="true"></span>
+				</div>
+				<p class="text-lg text-ink-gray-8">{{ greeting }}</p>
+				<p class="text-p-base text-ink-gray-5">
 					{{ __("Ask about your data, draft records, or run a task.") }}
 				</p>
 			</div>
 
-			<!-- Setup first, if there is any -->
-			<div
-				v-if="needsSetup"
-				class="mt-5 rounded-lg border border-outline-amber-1 bg-surface-amber-1 p-3"
-			>
-				<div class="flex items-start gap-2">
-					<FeatherIcon name="alert-triangle" class="mt-0.5 size-4 shrink-0 text-ink-amber-3" />
-					<div class="min-w-0 flex-1">
-						<p class="text-base font-medium text-ink-gray-8">{{ __("Setup needed") }}</p>
-						<p class="mt-0.5 text-sm leading-relaxed text-ink-gray-6">
-							{{ __("Add an LLM Provider with a working key, then pick a model and agent.") }}
-						</p>
-						<Button class="mt-2" variant="outline" @click="settingsOpen = true">
-							{{ __("Open settings") }}
-						</Button>
-					</div>
-				</div>
-			</div>
-
-			<!-- Suggestions, drawn from the tools this agent really has -->
-			<div v-else-if="suggestions.length" class="mt-6 space-y-1.5">
-				<p class="px-1 pb-1 text-2xs font-medium uppercase tracking-wide text-ink-gray-4">
-					{{ __("Try asking") }}
+			<!-- Setup outranks everything else on this screen -->
+			<div v-if="needsSetup" class="mt-8 flex flex-col items-center gap-3 text-center">
+				<p class="text-p-sm text-ink-gray-6">
+					{{ __("No model is configured yet. Add an LLM Provider with a working key, then pick a model.") }}
 				</p>
-				<button
-					v-for="item in suggestions"
-					:key="item.prompt"
-					class="flex w-full items-center gap-2.5 rounded-lg border border-outline-gray-2 bg-surface-white px-3 py-2.5 text-left transition-colors hover:border-outline-gray-3 hover:bg-surface-gray-1"
-					@click="send(item.prompt)"
-				>
-					<FeatherIcon :name="item.icon" class="size-4 shrink-0 text-ink-gray-5" />
-					<span class="min-w-0 flex-1 text-base leading-snug text-ink-gray-8">{{
-						item.prompt
-					}}</span>
-					<FeatherIcon name="arrow-up-right" class="size-3.5 shrink-0 text-ink-gray-4" />
-				</button>
+				<Button variant="solid" theme="gray" label="Open settings" @click="settingsOpen = true" />
 			</div>
 
-			<!-- Quiet footer: the shortcut, and a way to check the model before trusting it -->
-			<div class="mt-6 flex items-center justify-center gap-3 text-2xs text-ink-gray-5">
+			<template v-else-if="suggestions.length">
+				<p class="mt-8 px-2 pb-1 text-sm text-ink-gray-5">{{ __("Try asking") }}</p>
+				<div class="divide-y divide-outline-gray-1">
+					<button
+						v-for="prompt in suggestions"
+						:key="prompt"
+						class="w-full rounded px-2 py-2.5 text-left text-p-base text-ink-gray-7 hover:bg-surface-gray-2 hover:text-ink-gray-8"
+						@click="send(prompt)"
+					>
+						{{ prompt }}
+					</button>
+				</div>
+			</template>
+
+			<div class="mt-8 flex items-center justify-center gap-2 text-2xs text-ink-gray-5">
 				<span>{{ __("Ctrl+I to open or close") }}</span>
 				<span class="text-ink-gray-3">·</span>
 				<button class="hover:text-ink-gray-7" :disabled="checking" @click="testConnection">
@@ -169,24 +129,14 @@ async function testConnection() {
 				</button>
 			</div>
 
-			<div
+			<p
 				v-if="connection"
-				class="mt-3 rounded-lg border p-2.5 text-2xs leading-relaxed"
-				:class="
-					connection.ok
-						? 'border-outline-green-1 bg-surface-green-1 text-ink-gray-7'
-						: 'border-outline-red-1 bg-surface-red-1 text-ink-gray-7'
-				"
+				class="mt-3 text-center text-2xs leading-relaxed"
+				:class="connection.ok ? 'text-ink-green-4' : 'text-ink-red-4'"
 			>
-				<span class="font-medium" :class="connection.ok ? 'text-ink-green-4' : 'text-ink-red-4'">
-					{{ connection.ok ? __("Ready") : __("Not ready") }}
-				</span>
-				<span v-if="connection.model" class="text-ink-gray-5"> · {{ connection.model }}</span>
-				<div class="mt-0.5">{{ connection.reply || connection.error }}</div>
-				<div v-if="connection.hint" class="mt-0.5 italic text-ink-gray-6">
-					{{ connection.hint }}
-				</div>
-			</div>
+				{{ connection.ok ? __("Model answered") : connection.error }}
+				<span v-if="connection.hint" class="block text-ink-gray-5">{{ connection.hint }}</span>
+			</p>
 		</div>
 	</div>
 </template>

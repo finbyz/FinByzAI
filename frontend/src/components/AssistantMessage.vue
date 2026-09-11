@@ -55,7 +55,7 @@ const hovered = ref(false);
 
 <template>
 	<div
-		class="flow-parts flex flex-col"
+		class="copilot-parts flex flex-col"
 		@mouseenter="hovered = true"
 		@mouseleave="hovered = false"
 	>

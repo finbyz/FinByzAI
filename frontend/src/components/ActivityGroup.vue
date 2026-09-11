@@ -75,7 +75,7 @@ function toggle() {
 			/>
 		</button>
 
-		<Transition name="flow-reveal">
+		<Transition name="copilot-reveal">
 			<!-- The open call's content sits in a bordered card so it can't bleed into
 			the next block. Single: inputs directly; multiple: a connected timeline. -->
 			<div
@@ -106,12 +106,12 @@ function toggle() {
 </template>
 
 <style scoped>
-.flow-reveal-enter-active,
-.flow-reveal-leave-active {
+.copilot-reveal-enter-active,
+.copilot-reveal-leave-active {
 	transition: opacity 0.15s ease;
 }
-.flow-reveal-enter-from,
-.flow-reveal-leave-to {
+.copilot-reveal-enter-from,
+.copilot-reveal-leave-to {
 	opacity: 0;
 }
 </style>

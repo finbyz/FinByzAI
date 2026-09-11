@@ -6,13 +6,6 @@
 
 /* Authored rules are scoped to #copilot-root by postcss-prefix-selector at build. */
 
-:root {
-	--text-xs: 13px;
-	--text-sm: 14px;
-	--text-base: 15px;
-	--text-lg: 17px;
-}
-
 /* frappe-ui forces `font-family: InterVar`, a face the desk doesn't load (it
    ships "Inter"/"InterVariable"), so it falls back to the system font. Point
    the panel at the desk's real fonts. */
@@ -21,26 +14,15 @@
 	font-weight: 400;
 }
 
-/* Even vertical rhythm between an assistant message's blocks (text + tool cards).
-   Text carries line-height half-leading that cards don't, so the boundary next
-   to a text blob is tightened to keep all visual gaps equal. */
-.flow-parts > * + * {
-	margin-top: 10px;
-}
-/* a text blob followed by a tool/confirm card — extra breathing room below the text */
-.flow-parts > .md + * {
-	margin-top: calc(22px - 0.36em);
-}
-/* a card/element followed by a text blob */
-.flow-parts > * + .md {
-	margin-top: calc(10px - 0.36em);
-}
-.flow-parts > .md + .md {
-	margin-top: calc(16px - 0.72em);
+/* One assistant turn stacks its text, activity lines and blocks. A single gap
+   reads evenly enough; the previous rules subtracted the text's own half-leading
+   with hand-tuned em fractions, which had to be re-tuned on every type change. */
+.copilot-parts > * + * {
+	margin-top: 0.625rem;
 }
 
 /* Sweeps a highlight across a label while its activity is live. */
-.flow-shimmer-text {
+.copilot-shimmer-text {
 	background: linear-gradient(
 		90deg,
 		var(--ink-gray-4) 0%,
@@ -53,15 +35,15 @@
 	-webkit-background-clip: text;
 	background-clip: text;
 	color: transparent;
-	animation: flow-shimmer-text 1.6s linear infinite;
+	animation: copilot-shimmer-text 1.6s linear infinite;
 }
-@keyframes flow-shimmer-text {
+@keyframes copilot-shimmer-text {
 	to {
 		background-position: -200% 0;
 	}
 }
 @media (prefers-reduced-motion: reduce) {
-	.flow-shimmer-text {
+	.copilot-shimmer-text {
 		animation: none;
 	}
 }
@@ -72,19 +54,19 @@
 	box-shadow: none;
 	border-color: transparent;
 }
-.flow-scrollbar {
+.copilot-scrollbar {
 	scrollbar-width: thin;
 	scrollbar-color: var(--surface-gray-4) transparent;
 }
-.flow-scrollbar::-webkit-scrollbar {
+.copilot-scrollbar::-webkit-scrollbar {
 	width: 8px;
 	height: 8px;
 }
-.flow-scrollbar::-webkit-scrollbar-thumb {
+.copilot-scrollbar::-webkit-scrollbar-thumb {
 	background: var(--surface-gray-4);
 	border-radius: 999px;
 }
-.flow-scrollbar::-webkit-scrollbar-track {
+.copilot-scrollbar::-webkit-scrollbar-track {
 	background: transparent;
 }
 
