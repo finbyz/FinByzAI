@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, onUnmounted, ref } from "vue";
+import { onMounted, ref } from "vue";
 import PanelHeader from "./components/PanelHeader.vue";
 import MessageList from "./components/MessageList.vue";
 import Composer from "./components/Composer.vue";
@@ -15,20 +15,11 @@ const { loadInitial, scrollTick, settingsOpen } = store;
 
 const panel = ref(null);
 const composer = ref(null);
-let observer = null;
 
-// The composer floats over the message list, so the list pads its bottom by the
-// composer's live height (--flow-composer-h) — a grown composer (attachments,
-// multiline text) must never cover the last message.
-onMounted(() => {
-	loadInitial();
-	observer = new ResizeObserver(([entry]) => {
-		panel.value?.style.setProperty("--flow-composer-h", `${entry.target.offsetHeight}px`);
-		scrollTick.value++;
-	});
-	observer.observe(composer.value.$el);
-});
-onUnmounted(() => observer?.disconnect());
+// The composer is docked below the message list rather than floating over it, so
+// there is no live height to measure and no chance of it covering the last message.
+// That removes the ResizeObserver this used to need.
+onMounted(loadInitial);
 </script>
 
 <template>

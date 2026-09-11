@@ -6,3 +6,4 @@ export { default as Spinner } from "frappe-ui/src/components/Spinner.vue";
 export { default as Badge } from "frappe-ui/src/components/Badge/Badge.vue";
 export { default as Dialog } from "frappe-ui/src/components/Dialog/Dialog.vue";
 export { default as Switch } from "frappe-ui/src/components/Switch/Switch.vue";
+export { default as Tooltip } from "frappe-ui/src/components/Tooltip/Tooltip.vue";
