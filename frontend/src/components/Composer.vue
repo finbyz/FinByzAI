@@ -15,14 +15,17 @@ import { __ } from "@/lib/translate";
 //    its bottom by a ResizeObserver-measured height, and in full screen the field ran
 //    the whole 1500px while the conversation sat in a 770px column — the field looked
 //    like a different app. Same column, same gutters, everything lines up.
-// 2. Only the model picker stays. Agent and knowledge base moved to settings: most
-//    sites have one agent and no knowledge base, so those two controls were permanent
-//    noise reading "Copilot" and "No KB". The model is the one thing worth switching
-//    mid-conversation, so it is the one thing here.
+// 2. Agent and model sit here; knowledge base stays in settings. Which agent answers
+//    is a real choice when a site has more than one, so it belongs beside the field —
+//    but with one agent configured there is nothing to choose, so the picker hides
+//    itself rather than reading "Copilot" forever. Knowledge base is set once per
+//    conversation, not per message, so it has no business on this row.
 // 3. No keyboard hint. "⏎ send · ⇧⏎ new line" is decoration once you have sent one
 //    message, and the shortcut is on the empty state where it is actually new.
 const {
+	agents,
 	models,
+	selectedAgent,
 	selectedModel,
 	attachments,
 	sending,
@@ -32,8 +35,11 @@ const {
 	needsSetup,
 	uploading,
 	focusTick,
+	agentLabel,
+	agentLogo,
 	modelLabel,
 	modelLogo,
+	setAgent,
 	setModel,
 	send,
 	stopRun,
@@ -64,6 +70,15 @@ const placeholder = computed(() => {
 	if (paused.value) return __("Answer above to continue…");
 	return __("Ask anything about your data…");
 });
+
+const agentItems = computed(() =>
+	agents.value.map((a) => ({
+		value: a.name,
+		label: a.title,
+		logo: a.logo,
+		hint: a.hint,
+	}))
+);
 
 const modelItems = computed(() => [
 	{ value: null, label: __("Default model"), hint: __("Whatever the agent uses") },
@@ -165,7 +180,37 @@ defineExpose({
 					@input="resize"
 				></textarea>
 
-				<div class="flex items-center gap-1 px-1.5 pb-1.5">
+				<div class="flex items-center gap-0.5 px-1.5 pb-1.5">
+					<Menu
+						v-if="agents.length > 1"
+						:items="agentItems"
+						:model-value="selectedAgent"
+						:disabled="locked"
+						searchable
+						@update:model-value="setAgent"
+					>
+						<template #trigger="{ toggle }">
+							<button
+								type="button"
+								class="flex h-6 max-w-[11rem] items-center gap-1 rounded px-1.5 text-sm text-ink-gray-7 hover:bg-surface-gray-3 active:bg-surface-gray-4 disabled:opacity-50"
+								:disabled="locked"
+								@click="toggle"
+							>
+								<img
+									v-if="agentLogo(selectedAgent)"
+									:src="agentLogo(selectedAgent)"
+									class="copilot-logo size-3.5 shrink-0"
+									alt=""
+								/>
+								<span v-else class="lucide-bot size-3.5 shrink-0 text-ink-gray-5" aria-hidden="true"></span>
+								<span class="truncate">{{ agentLabel(selectedAgent) || __("Agent") }}</span>
+								<span class="lucide-chevron-down size-3 shrink-0 text-ink-gray-4" aria-hidden="true"></span>
+							</button>
+						</template>
+					</Menu>
+
+					<span v-if="agents.length > 1" class="text-ink-gray-3">/</span>
+
 					<Menu
 						:items="modelItems"
 						:model-value="selectedModel"

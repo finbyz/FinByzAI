@@ -1,43 +1,40 @@
-<template>
-  <div class="rounded-lg border border-outline-gray-2 bg-surface-white p-3.5 shadow-2xs">
-    <div class="text-xs font-medium text-ink-gray-5 truncate mb-1">
-      {{ block.label }}
-    </div>
-    <div class="flex items-baseline gap-2">
-      <span class="text-2xl font-semibold text-ink-gray-9 tracking-tight">
-        <span v-if="block.unit" class="text-base font-normal text-ink-gray-5 mr-0.5">{{ block.unit }}</span>{{ formattedValue }}
-      </span>
-      <span
-        v-if="block.delta !== undefined && block.delta !== null"
-        class="inline-flex items-center text-xs font-medium px-1.5 py-0.5 rounded"
-        :class="block.delta >= 0 ? 'bg-surface-green-2 text-ink-green-4' : 'bg-surface-red-2 text-ink-red-4'"
-      >
-        <span>{{ block.delta >= 0 ? '↑' : '↓' }}</span>
-        <span>{{ formattedDelta }}</span>
-      </span>
-    </div>
-  </div>
-</template>
-
 <script setup>
 import { computed } from "vue";
-import { formatNumber, formatFloat } from "../../lib/formatters";
+import { NumberChart } from "@/lib/ui";
 
-const props = defineProps({
-  block: {
-    type: Object,
-    required: true,
-  },
+// frappe-ui's own KPI tile rather than markup we maintain: it draws the reading, the
+// delta arrow and its colouring, and it already knows that a fall is not always bad.
+//
+// Currency comes from the site, through NumberChart's `prefix`. A tile that renders a
+// bare 19825712.8 next to the desk's ₹ 1,98,25,712.80 reads as a different product.
+const props = defineProps({ block: { type: Object, required: true } });
+
+const CURRENCY_WORDS = /amount|total|price|rate|value|revenue|spend|balance|outstanding|capital|margin|profit/i;
+
+const config = computed(() => {
+	const looksMonetary = CURRENCY_WORDS.test(props.block.label || "");
+	return {
+		title: props.block.label,
+		value: Number(props.block.value) || 0,
+		prefix: props.block.unit || (looksMonetary ? currencySymbol() : ""),
+		delta: typeof props.block.delta === "number" ? props.block.delta : undefined,
+		deltaSuffix: typeof props.block.delta === "number" ? "%" : undefined,
+	};
 });
 
-const formattedValue = computed(() => {
-  const val = props.block.value;
-  return typeof val === "number" ? formatFloat(val) : String(val ?? "");
-});
-
-const formattedDelta = computed(() => {
-  const delta = props.block.delta;
-  if (delta === null || delta === undefined) return "";
-  return typeof delta === "number" ? Math.abs(delta).toLocaleString() : String(delta);
-});
+function currencySymbol() {
+	const code = frappe.boot?.sysdefaults?.currency;
+	if (!code) return "";
+	try {
+		return frappe.model?.get_value?.("Currency", code, "symbol") || `${code} `;
+	} catch {
+		return `${code} `;
+	}
+}
 </script>
+
+<template>
+	<div class="overflow-hidden rounded-lg border border-outline-gray-2">
+		<NumberChart :config="config" />
+	</div>
+</template>

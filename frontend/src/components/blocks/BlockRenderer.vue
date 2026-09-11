@@ -1,27 +1,28 @@
-<template>
-  <div class="my-3 space-y-2">
-    <KpiBlock v-if="block.type === 'kpi'" :block="block" />
-    <TableBlock v-else-if="block.type === 'table'" :block="block" />
-    <LineBlock v-else-if="block.type === 'line'" :block="block" />
-    <BarBlock v-else-if="block.type === 'bar'" :block="block" />
-    <RecordsBlock v-else-if="block.type === 'records'" :block="block" />
-    <div v-else class="text-xs text-ink-gray-5 font-mono p-2 bg-surface-gray-2 rounded border border-outline-gray-2">
-      Unsupported block type: {{ block.type }}
-    </div>
-  </div>
-</template>
-
 <script setup>
+import ChartBlock from "./ChartBlock.vue";
 import KpiBlock from "./KpiBlock.vue";
-import TableBlock from "./TableBlock.vue";
-import LineBlock from "./LineBlock.vue";
-import BarBlock from "./BarBlock.vue";
 import RecordsBlock from "./RecordsBlock.vue";
+import TableBlock from "./TableBlock.vue";
+import { __ } from "@/lib/translate";
 
-defineProps({
-  block: {
-    type: Object,
-    required: true,
-  },
-});
+// One block, one renderer. `bar`, `line` and `area` share ChartBlock — the only
+// difference is the series type, and keeping them in one file keeps the series
+// mapping in one place.
+defineProps({ block: { type: Object, required: true } });
 </script>
+
+<template>
+	<div>
+		<KpiBlock v-if="block.type === 'kpi'" :block="block" />
+		<TableBlock v-else-if="block.type === 'table'" :block="block" />
+		<ChartBlock
+			v-else-if="['bar', 'line', 'area'].includes(block.type)"
+			:block="block"
+			:kind="block.type"
+		/>
+		<RecordsBlock v-else-if="block.type === 'records'" :block="block" />
+		<p v-else class="text-2xs text-ink-gray-5">
+			{{ __("Cannot display a {0} block.", [block.type]) }}
+		</p>
+	</div>
+</template>
