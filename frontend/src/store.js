@@ -1,7 +1,7 @@
 import { ref, computed } from "vue";
 import * as api from "@/api/client";
 import { startRun, resumeRun } from "@/api/stream";
-import { normalizeToolName } from "@/lib/toolMeta";
+import { normalizeToolName } from "@/lib/tools";
 import { readPanelState } from "@/lib/panelState";
 import { __ } from "@/lib/translate";
 
@@ -253,7 +253,9 @@ async function switchSession(name) {
 			if (m.run) current.runName = m.run;
 			if (m.content) current.parts.push(makeTextPart(m.content));
 			for (const t of parseToolCalls(m.tool_calls)) {
-				current.parts.push(makeToolPart(t.id, t.function.name, t.function.arguments));
+				current.parts.push(
+					makeToolPart(t.id, t.function.name, t.function.arguments, t.label, t.context)
+				);
 			}
 			for (const b of m.blocks || []) current.parts.push(makeBlockPart(b));
 		} else if (m.role === "tool" && current) {
@@ -438,8 +440,11 @@ function handleEvent(event, msg) {
 			if (part) {
 				part.arguments = event.arguments;
 				if (event.label) part.label = event.label;
+				if (event.context) part.context = event.context;
 			} else {
-				msg.parts.push(makeToolPart(event.id, event.name, event.arguments, event.label));
+				msg.parts.push(
+					makeToolPart(event.id, event.name, event.arguments, event.label, event.context)
+				);
 			}
 			requestScroll();
 			break;
@@ -473,11 +478,14 @@ function handleEvent(event, msg) {
 // reload so the two paths can't drift apart.
 const makeTextPart = (text) => ({ id: nextId(), type: "text", text });
 const makeBlockPart = (block) => ({ id: nextId(), type: "block", block });
-const makeToolPart = (id, name, args, label) => ({
+const makeToolPart = (id, name, args, label, context) => ({
 	id,
 	type: "tool",
 	name: normalizeToolName(name),
+	// Both come from the backend, which already writes them for every event it
+	// publishes; the panel doesn't re-derive a label from the tool name.
 	label: label || null,
+	context: context || null,
 	arguments: args,
 	result: null,
 	approval: null,

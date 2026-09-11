@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from "vue";
-import { FeatherIcon, Spinner } from "@/lib/ui";
+import { Spinner } from "@/lib/ui";
 import { __ } from "@/lib/translate";
 
 const props = defineProps({
@@ -30,7 +30,7 @@ const title = computed(() =>
 		:class="status === 'error' ? 'border-outline-gray-4' : 'border-outline-gray-2'"
 		:title="title"
 	>
-		<FeatherIcon name="file-text" class="h-3.5 w-3.5 shrink-0 text-ink-gray-5" />
+		<span class="lucide-file-text size-3.5 shrink-0 text-ink-gray-5" aria-hidden="true"></span>
 		<div class="min-w-0 flex-1">
 			<div class="truncate text-[12px] font-medium leading-tight text-ink-gray-8">
 				{{ fileName }}
@@ -50,7 +50,7 @@ const title = computed(() =>
 			:title="__('Remove')"
 			@click="$emit('remove')"
 		>
-			<FeatherIcon name="x" class="h-3 w-3" />
+			<span class="lucide-x size-3" aria-hidden="true"></span>
 		</button>
 	</div>
 </template>

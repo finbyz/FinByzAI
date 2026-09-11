@@ -1,6 +1,7 @@
 <script setup>
 import { computed, nextTick, ref, watch } from "vue";
-import { Button, Tooltip } from "@/lib/ui";
+import { Button } from "@/lib/ui";
+import Tip from "./Tip.vue";
 import AttachmentChip from "./AttachmentChip.vue";
 import Menu from "./Menu.vue";
 import { useStore } from "@/store";
@@ -238,14 +239,14 @@ defineExpose({
 
 					<span class="flex-1"></span>
 
-					<Tooltip :text="__('Attach a file')">
+					<Tip :text="__('Attach a file')">
 						<Button
 							variant="ghost"
 							icon="lucide-paperclip"
 							:disabled="inputDisabled"
 							@click="fileInput?.click()"
 						/>
-					</Tooltip>
+					</Tip>
 					<input
 						ref="fileInput"
 						type="file"
@@ -255,20 +256,20 @@ defineExpose({
 						@change="onFilesPicked"
 					/>
 
-					<Tooltip v-if="sending" :text="__('Stop')">
+					<Tip v-if="sending" :text="__('Stop')">
 						<Button theme="red" variant="solid" @click="stopRun">
 							<template #icon><span class="size-2.5 rounded-sm bg-current"></span></template>
 						</Button>
-					</Tooltip>
-					<Button
-						v-else
-						variant="solid"
-						theme="gray"
-						icon="lucide-arrow-up"
-						:disabled="!canSend"
-						:tooltip="__('Send')"
-						@click="submit"
-					/>
+					</Tip>
+					<Tip v-else :text="__('Send')">
+						<Button
+							variant="solid"
+							theme="gray"
+							icon="lucide-arrow-up"
+							:disabled="!canSend"
+							@click="submit"
+						/>
+					</Tip>
 				</div>
 			</div>
 		</div>

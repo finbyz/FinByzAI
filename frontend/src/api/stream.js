@@ -52,7 +52,7 @@ function follow(run, onEvent, signal) {
 				const call = state.pending_call;
 				pending =
 					call.kind === "question"
-						? { key: call.id, prompt: call.summary || call.name, options: [__("Other")], kind: "question" }
+						? { key: call.id, prompt: call.summary || call.name, options: [], kind: "question" }
 						: {
 								key: call.id,
 								prompt: call.summary || call.name,
@@ -83,14 +83,14 @@ function follow(run, onEvent, signal) {
 			lastEventAt = Date.now();
 
 			switch (event.type) {
-				// The agent asked something. Flow's ConfirmCard already renders a
-				// question with option buttons and a free-text box, so it arrives in
-				// the same shape as an approval, only without a tool card.
+				// The agent asked something. It arrives in the same shape as an
+				// approval so ApprovalCard renders both: options become buttons, and
+				// with no options the card opens straight into its answer box.
 				case "question":
 					pending = {
 						key: event.id,
 						prompt: event.text,
-						options: [...(event.options || []), __("Other")],
+						options: event.options || [],
 						kind: "question",
 					};
 					break;
