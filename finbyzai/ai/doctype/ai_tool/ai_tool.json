@@ -7,11 +7,12 @@
  "engine": "InnoDB",
  "field_order": [
   "description",
-  "column_break_cpcx",
   "from_package",
   "tool_function",
+  "column_break_cpcx",
+  "module",
   "is_custom",
-  "module"
+  "requires_confirmation"
  ],
  "fields": [
   {
@@ -53,6 +54,13 @@
    "fieldname": "is_custom",
    "fieldtype": "Check",
    "label": "Custom"
+  },
+  {
+   "fieldname": "requires_confirmation",
+   "fieldtype": "Check",
+   "label": "Requires Confirmation",
+   "default": "0",
+   "description": "Ask the user to approve before this tool runs. Switch on for any tool that creates, updates, deletes or submits data, or that calls an external service."
   }
  ],
  "index_web_pages_for_search": 1,

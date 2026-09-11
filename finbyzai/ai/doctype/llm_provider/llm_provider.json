@@ -6,9 +6,10 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "disabled",
+  "api_key",
   "provider",
-  "api_key"
+  "disabled",
+  "logo"
  ],
  "fields": [
   {
@@ -31,6 +32,12 @@
    "fieldname": "disabled",
    "fieldtype": "Check",
    "label": "Disabled"
+  },
+  {
+   "fieldname": "logo",
+   "fieldtype": "Attach Image",
+   "label": "Logo",
+   "description": "Shown in the Copilot's model picker. Leave empty to use the bundled logo for this provider."
   }
  ],
  "grid_page_length": 50,

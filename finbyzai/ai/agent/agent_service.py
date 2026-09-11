@@ -24,8 +24,29 @@ import warnings
 
 import os
 
-os.environ["LANGSMITH_API_KEY"] = "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"
-os.environ["LANGSMITH_TRACING"] = "true"
+
+def configure_tracing():
+    """LangSmith tracing, opt-in per site and never with a key in the source.
+
+    Traces carry the prompt, the tool results and the model's reply — customer names,
+    revenue, margins. Sending that to a third party has to be a deliberate choice by
+    the site owner, so it is read from site config:
+
+        bench --site <site> set-config langsmith_tracing 1
+        bench --site <site> set-config langsmith_api_key <key>
+
+    Tracing is switched off explicitly when unconfigured, because a worker process is
+    long-lived and would otherwise keep whatever was set before.
+    """
+    api_key = frappe.conf.get("langsmith_api_key")
+    if frappe.conf.get("langsmith_tracing") and api_key:
+        os.environ["LANGSMITH_TRACING"] = "true"
+        os.environ["LANGSMITH_API_KEY"] = api_key
+        return True
+
+    os.environ["LANGSMITH_TRACING"] = "false"
+    os.environ.pop("LANGSMITH_API_KEY", None)
+    return False
 
 
 class AgentTypes(Enum):
@@ -48,6 +69,7 @@ class AgentService:
     """
 
     def __init__(self, agent: Union[str, Document]) -> None:
+        configure_tracing()
         """
         Initialize the service with either an agent name or a loaded AIAgent doc.
 
