@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref } from "vue";
+import { humanize } from "@/lib/tools";
 import { __ } from "@/lib/translate";
 
 // A desk-style records table inside the chat: doctype + record count, sticky header,
@@ -54,12 +55,6 @@ const totals = computed(() => {
 function isNumericColumn(key) {
 	const row = (props.block.rows || []).find((r) => r[key] !== null && r[key] !== undefined);
 	return typeof row?.[key] === "number";
-}
-
-function humanize(key) {
-	return String(key || "")
-		.replace(/_/g, " ")
-		.replace(/^./, (c) => c.toUpperCase());
 }
 
 // The desk's own formatter, so currency, dates and floats match the rest of the site.
