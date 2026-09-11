@@ -82,6 +82,10 @@ export const getSession = async (name) => {
 							id: c.id,
 							type: "function",
 							function: { name: c.name, arguments: JSON.stringify(c.args || {}) },
+							// The server stamps these (api._labelled) so a reloaded run
+							// shows the same labels the live one did.
+							label: c.label || null,
+							context: c.context || null,
 						}))
 					)
 				: null,

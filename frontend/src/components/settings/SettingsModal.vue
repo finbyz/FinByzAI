@@ -1,6 +1,5 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { FeatherIcon } from "@/lib/ui";
 import SettingsChat from "./SettingsChat.vue";
 import SettingsDefaults from "./SettingsDefaults.vue";
 import SettingsInstructions from "./SettingsInstructions.vue";
@@ -46,8 +45,8 @@ const groups = computed(() => [
 	{
 		label: __("Chat"),
 		items: [
-			{ key: "chat", label: __("Agent & model"), icon: "cpu" },
-			{ key: "tools", label: __("Tools"), icon: "tool" },
+			{ key: "chat", label: __("Agent & model"), icon: "lucide-cpu" },
+			{ key: "tools", label: __("Tools"), icon: "lucide-wrench" },
 		],
 	},
 	...(canEditSystem.value
@@ -55,8 +54,8 @@ const groups = computed(() => [
 				{
 					label: __("Site"),
 					items: [
-						{ key: "defaults", label: __("Defaults"), icon: "sliders" },
-						{ key: "instructions", label: __("Instructions"), icon: "file-text" },
+						{ key: "defaults", label: __("Defaults"), icon: "lucide-sliders-horizontal" },
+						{ key: "instructions", label: __("Instructions"), icon: "lucide-file-text" },
 					],
 				},
 			]
@@ -189,7 +188,7 @@ async function save(store) {
 							]"
 							@click="active = item.key"
 						>
-							<FeatherIcon :name="item.icon" class="h-3.5 w-3.5 shrink-0" />
+							<span class="size-3.5 shrink-0" :class="item.icon" aria-hidden="true"></span>
 							<span :class="narrow ? 'hidden sm:inline' : ''" class="truncate">{{
 								item.label
 							}}</span>
@@ -213,7 +212,7 @@ async function save(store) {
 							:title="__('Close')"
 							@click="close"
 						>
-							<FeatherIcon name="x" class="h-4 w-4" />
+							<span class="lucide-x size-4" aria-hidden="true"></span>
 						</button>
 					</header>
 

@@ -1,6 +1,5 @@
 <script setup>
 import { computed, ref } from "vue";
-import { FeatherIcon } from "@/lib/ui";
 import { __ } from "@/lib/translate";
 
 // A desk-style records table inside the chat: doctype + record count, sticky header,
@@ -123,14 +122,14 @@ function exportCsv() {
 				:title="__('Filter rows')"
 				@click="showFilters = !showFilters"
 			>
-				<FeatherIcon name="filter" class="h-3 w-3" />
+				<span class="lucide-filter size-3" aria-hidden="true"></span>
 			</button>
 			<button
 				class="flex h-5 items-center gap-1 rounded px-1 text-2xs text-ink-gray-5 hover:bg-surface-gray-2"
 				:title="__('Download CSV')"
 				@click="exportCsv"
 			>
-				<FeatherIcon name="download" class="h-3 w-3" />
+				<span class="lucide-download size-3" aria-hidden="true"></span>
 			</button>
 		</div>
 

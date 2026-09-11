@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, ref } from "vue";
-import { Badge, FeatherIcon } from "@/lib/ui";
+import { Badge } from "@/lib/ui";
 import * as api from "@/api/client";
 import { __ } from "@/lib/translate";
 

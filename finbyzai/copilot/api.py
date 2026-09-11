@@ -169,6 +169,17 @@ def recover_conversation(conversation):
     return {"recovered": len(stale)}
 
 
+
+def _labelled(calls):
+    """Stamp each persisted tool call with its activity label and subject, the same
+    two strings the live stream publishes, so a reloaded conversation reads
+    identically to the one that was watched happening."""
+    for call in calls or []:
+        call["label"] = runner.registry.label_for(call.get("name"))
+        call["context"] = runner._context(call.get("args") or {})
+    return calls
+
+
 @frappe.whitelist()
 def get_conversation(conversation):
     """Rebuild a conversation on reload: messages in order, with their blocks."""
@@ -189,7 +200,7 @@ def get_conversation(conversation):
             {
                 "role": row.role,
                 "content": row.content,
-                "tool_calls": runner._json(row.tool_calls),
+                "tool_calls": _labelled(runner._json(row.tool_calls)),
                 "tool_call_id": row.tool_call_id,
                 "run": row.run,
                 "blocks": blocks,

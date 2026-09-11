@@ -5,7 +5,8 @@
   "description": "Copilot slide-in panel for the Frappe desk (frappe-ui)",
   "scripts": {
     "dev": "vite build --watch",
-    "build": "vite build"
+    "build": "vite build",
+    "test": "vite build && node test/render.mjs"
   },
   "dependencies": {
     "frappe-ui": "1.0.0-beta.3",

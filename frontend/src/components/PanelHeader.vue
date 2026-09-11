@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from "vue";
-import { Button, Tooltip } from "@/lib/ui";
+import { Button } from "@/lib/ui";
+import Tip from "./Tip.vue";
 import BrandMark from "./BrandMark.vue";
 import Menu from "./Menu.vue";
 import { useStore } from "@/store";
@@ -62,18 +63,20 @@ function onSelect(item) {
 		<span class="text-base font-medium text-ink-gray-8">{{ __("Copilot") }}</span>
 		<span class="flex-1"></span>
 
-		<Tooltip :text="__('New chat')">
+		<Tip :text="__('New chat')">
 			<Button variant="ghost" icon="lucide-plus" @click="newChat" />
-		</Tooltip>
+		</Tip>
 
 		<Menu :items="menuItems" align="right" side="bottom" searchable @select="onSelect">
 			<template #trigger="{ toggle }">
-				<Button variant="ghost" icon="lucide-more-horizontal" :tooltip="__('More')" @click="toggle" />
+				<Tip :text="__('More')">
+						<Button variant="ghost" icon="lucide-more-horizontal" @click="toggle" />
+					</Tip>
 			</template>
 		</Menu>
 
-		<Tooltip :text="__('Close (Ctrl+I)')">
+		<Tip :text="__('Close (Ctrl+I)')">
 			<Button variant="ghost" icon="lucide-x" @click="emit('close')" />
-		</Tooltip>
+		</Tip>
 	</header>
 </template>

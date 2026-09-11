@@ -1,4 +1,4 @@
-@import "./styles/markdown.css";
+@import "./styles/prose.css";
 
 @tailwind base;
 @tailwind components;
@@ -48,11 +48,22 @@
 	}
 }
 
-/* Suppress the @tailwindcss/forms blue focus ring; the composer draws its own. */
-.flow-composer textarea:focus {
+/* The desk's forms plugin puts a blue ring on every focused field. Every field in
+   the panel draws its own focus state, so suppress it once here rather than
+   per-component — the rule this replaces named a class that no longer existed. */
+.copilot-panel :is(input, textarea, select):focus {
 	outline: none;
 	box-shadow: none;
-	border-color: transparent;
+}
+
+/* Anything that appears or leaves without moving: the jump-to-latest button. */
+.copilot-fade-enter-active,
+.copilot-fade-leave-active {
+	transition: opacity 0.15s ease;
+}
+.copilot-fade-enter-from,
+.copilot-fade-leave-to {
+	opacity: 0;
 }
 .copilot-scrollbar {
 	scrollbar-width: thin;
