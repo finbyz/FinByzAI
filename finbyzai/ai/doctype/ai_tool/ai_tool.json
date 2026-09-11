@@ -11,17 +11,12 @@
   "enabled",
   "execution_side",
   "description",
-  "cost_sensitive",
-  "requires_confirmation",
-  "function_section",
-  "column_break_cpcx",
   "from_package",
   "tool_function",
-  "is_custom",
+  "column_break_cpcx",
   "module",
-  "built_in_configuration_section",
-  "configuration_schema",
-  "provider_mappings"
+  "is_custom",
+  "requires_confirmation"
  ],
  "fields": [
   {
@@ -119,24 +114,11 @@
    "label": "Custom"
   },
   {
-   "depends_on": "eval:doc.tool_type == 'Provider Built-in'",
-   "fieldname": "built_in_configuration_section",
-   "fieldtype": "Section Break",
-   "label": "Built-in Tool Configuration"
-  },
-  {
-   "depends_on": "eval:doc.tool_type == 'Provider Built-in'",
-   "description": "JSON Schema used to validate each agent's configuration for this tool.",
-   "fieldname": "configuration_schema",
-   "fieldtype": "JSON",
-   "label": "Configuration Schema"
-  },
-  {
-   "depends_on": "eval:doc.tool_type == 'Provider Built-in'",
-   "fieldname": "provider_mappings",
-   "fieldtype": "Table",
-   "label": "Provider Mappings",
-   "options": "AI Tool Provider Mapping"
+   "fieldname": "requires_confirmation",
+   "fieldtype": "Check",
+   "label": "Requires Confirmation",
+   "default": "0",
+   "description": "Ask the user to approve before this tool runs. Switch on for any tool that creates, updates, deletes or submits data, or that calls an external service."
   }
  ],
  "index_web_pages_for_search": 1,

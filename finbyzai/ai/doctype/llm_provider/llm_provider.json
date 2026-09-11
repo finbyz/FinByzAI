@@ -6,10 +6,10 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "disabled",
-  "provider",
   "api_key",
-  "api_base"
+  "provider",
+  "disabled",
+  "logo"
  ],
  "fields": [
   {
@@ -34,10 +34,10 @@
    "label": "Disabled"
   },
   {
-   "description": "Only needed for custom OpenAI-compatible endpoints (e.g. a self-hosted gateway). Leave blank for built-in providers like OpenAI, Anthropic, Google, DeepSeek, Perplexity.",
-   "fieldname": "api_base",
-   "fieldtype": "Data",
-   "label": "API Base URL"
+   "fieldname": "logo",
+   "fieldtype": "Attach Image",
+   "label": "Logo",
+   "description": "Shown in the Copilot's model picker. Leave empty to use the bundled logo for this provider."
   }
  ],
  "grid_page_length": 50,

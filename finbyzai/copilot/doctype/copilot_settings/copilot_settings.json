@@ -1,0 +1,76 @@
+{
+ "actions": [],
+ "creation": "2026-09-10 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "enabled",
+  "default_agent",
+  "default_model",
+  "max_iterations",
+  "auto_approve",
+  "system_prompt"
+ ],
+ "fields": [
+  {
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled",
+   "default": "1"
+  },
+  {
+   "fieldname": "default_agent",
+   "fieldtype": "Link",
+   "label": "Default Agent",
+   "options": "AI Agent",
+   "description": "The AI Agent whose LLM, tools, knowledge base and memory the Copilot uses."
+  },
+  {
+   "fieldname": "default_model",
+   "fieldtype": "Link",
+   "label": "Default Model",
+   "options": "LLM",
+   "reqd": 0,
+   "description": "Fallback when the agent has no LLM set."
+  },
+  {
+   "fieldname": "max_iterations",
+   "fieldtype": "Int",
+   "label": "Max Iterations",
+   "default": "25",
+   "description": "Fallback when the agent has no max iterations set."
+  },
+  {
+   "fieldname": "auto_approve",
+   "fieldtype": "Check",
+   "label": "Auto Approve",
+   "default": "0",
+   "description": "Skip the Approve/Reject card for write tools. Development only."
+  },
+  {
+   "fieldname": "system_prompt",
+   "fieldtype": "Long Text",
+   "label": "System Prompt",
+   "description": "Prepended to every turn. The agent's own knowledge base and tools are added automatically."
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-09-10 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Copilot",
+ "name": "Copilot Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "issingle": 1
+}
