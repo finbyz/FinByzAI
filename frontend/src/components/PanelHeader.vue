@@ -8,49 +8,36 @@ import { useStore } from "@/store";
 import { GUTTER } from "@/lib/layout";
 import { __ } from "@/lib/translate";
 
-// The header, ours.
+// The header.
 //
 // It used to carry five icon buttons side by side — history, settings, new chat,
-// fullscreen, close. In a 420px panel that is a row of anonymous glyphs competing for
-// the same attention, and frappe-ui's guidance is explicit: one primary action per
-// surface, the rest subtle or ghost, and action clusters collapse into a single menu.
+// fullscreen, close. In a 420px panel that is a row of anonymous glyphs
+// competing for the same attention, and frappe-ui's guidance is explicit: one
+// primary action per surface, the rest ghost, and action clusters collapse into
+// a single menu.
 //
-// So: New chat stays visible because it is the one thing people reach for mid-thought,
-// Close stays because a panel must always be closable, and everything else moves into
-// one overflow menu. Three controls instead of five, and the recent conversations sit
-// in that menu rather than behind a clock icon nobody recognises.
+// So: the conversation list gets a toggle (it is a place you go, not an action),
+// New chat stays because it is what people reach for mid-thought, Close stays
+// because a panel must always be closable, and Settings and full screen live in
+// the overflow menu.
 const props = defineProps({ onToggleFullscreen: { type: Function, default: null } });
 const emit = defineEmits(["close"]);
 
 const store = useStore();
-const { recentSessions, switchSession, newChat, fullscreen, settingsOpen } = store;
+const { newChat, fullscreen, settingsOpen, sidebarOpen, toggleSidebar } = store;
 
-const menuItems = computed(() => {
-	const items = [
-		{ value: "__settings__", label: __("Settings"), icon: "lucide-settings" },
-		{
-			value: "__fullscreen__",
-			label: fullscreen.value ? __("Exit full screen") : __("Full screen"),
-			icon: fullscreen.value ? "lucide-minimize-2" : "lucide-maximize-2",
-		},
-	];
-	const recent = recentSessions.value || [];
-	if (recent.length) {
-		items.push(
-			...recent.slice(0, 8).map((session) => ({
-				value: session.name,
-				label: session.title || __("Untitled"),
-				group: __("Recent"),
-			}))
-		);
-	}
-	return items;
-});
+const menuItems = computed(() => [
+	{ value: "__settings__", label: __("Settings"), icon: "lucide-settings" },
+	{
+		value: "__fullscreen__",
+		label: fullscreen.value ? __("Exit full screen") : __("Full screen"),
+		icon: fullscreen.value ? "lucide-minimize-2" : "lucide-maximize-2",
+	},
+]);
 
 function onSelect(item) {
 	if (item.value === "__settings__") settingsOpen.value = true;
 	else if (item.value === "__fullscreen__") props.onToggleFullscreen?.();
-	else switchSession(item.value);
 }
 </script>
 
@@ -59,6 +46,10 @@ function onSelect(item) {
 		class="flex min-h-12 shrink-0 items-center gap-2 border-b border-outline-gray-1 py-2"
 		:class="GUTTER"
 	>
+		<Tip :text="sidebarOpen ? __('Hide conversations') : __('Show conversations')">
+			<Button variant="ghost" icon="lucide-panel-left" @click="toggleSidebar" />
+		</Tip>
+
 		<BrandMark :size="18" />
 		<span class="text-base font-medium text-ink-gray-8">{{ __("Copilot") }}</span>
 		<span class="flex-1"></span>
@@ -67,11 +58,11 @@ function onSelect(item) {
 			<Button variant="ghost" icon="lucide-plus" @click="newChat" />
 		</Tip>
 
-		<Menu :items="menuItems" align="right" side="bottom" searchable @select="onSelect">
+		<Menu :items="menuItems" align="right" side="bottom" @select="onSelect">
 			<template #trigger="{ toggle }">
 				<Tip :text="__('More')">
-						<Button variant="ghost" icon="lucide-more-horizontal" @click="toggle" />
-					</Tip>
+					<Button variant="ghost" icon="lucide-more-horizontal" @click="toggle" />
+				</Tip>
 			</template>
 		</Menu>
 

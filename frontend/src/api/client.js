@@ -33,7 +33,9 @@ export const loadModels = () =>
 		}))
 	);
 
-export const loadHistory = () => call("list_conversations", { limit: 15 });
+export const loadHistory = (limit = 30) => call("list_conversations", { limit });
+
+export const deleteConversation = (conversation) => call("delete_conversation", { conversation });
 
 export const loadKnowledgeBases = () =>
 	call("get_knowledge_bases").then((rows) =>
@@ -50,13 +52,6 @@ export const loadTools = (args) => call("get_tools", args);
 export const testModel = (args) => call("test_model", args);
 
 export const saveSettings = (payload) => call("save_settings", payload);
-
-// The backend has no search endpoint; the list is short, so filter it here.
-export const searchSessions = (query) =>
-	call("list_conversations", { limit: 100 }).then((rows) => {
-		const needle = (query || "").toLowerCase();
-		return (rows || []).filter((r) => (r.title || "").toLowerCase().includes(needle)).slice(0, 20);
-	});
 
 // A conversation in the shape the store's reload path expects: tool_calls as an
 // OpenAI-style JSON string, plus our blocks carried through per message.
@@ -124,10 +119,6 @@ export const stopRun = (run_name) => call("stop_run", { run: run_name });
 
 // Approvals arrive as their own event, so the panel never needs the tool→confirm map.
 export const getAgentTools = () => Promise.resolve({});
-
-// No feedback storage on this backend yet; keep the shape so the store stays intact.
-export const getRunFeedback = () => Promise.resolve([]);
-export const submitFeedback = () => Promise.resolve({});
 
 // Upload a file as private and return the created File doc.
 export async function uploadFile(file) {
