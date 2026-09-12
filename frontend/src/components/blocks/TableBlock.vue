@@ -59,11 +59,18 @@ const visibleRows = computed(() => (expanded.value ? rows.value : rows.value.sli
 const hiddenCount = computed(() => Math.max(0, rows.value.length - visibleRows.value.length));
 const filtered = computed(() => rows.value.length !== allRows.value.length);
 
-// Totals for numeric columns, so a long table still answers "how much in all".
+// Columns that must never be summed: an average, a percentage, a per-unit rate, a
+// share, a day count, a reorder level. Adding those up produces a figure that
+// means nothing — "Days Since Last Order: 289" — sitting in a total row as if it
+// were one of the real ones.
+const NOT_ADDITIVE = /\bavg|average|mean|median|pct|percent|rate|ratio|share|days|age|level|score|since|min|max\b/i;
+
+// Totals for the columns that can be added, so a long table still answers "how
+// much in all".
 const totals = computed(() => {
 	const out = {};
 	for (const col of columns.value) {
-		if (col.align !== "right") continue;
+		if (col.align !== "right" || NOT_ADDITIVE.test(col.key)) continue;
 		const numbers = rows.value.map((r) => r[col.key]).filter((v) => typeof v === "number");
 		if (numbers.length > 1) out[col.key] = numbers.reduce((a, b) => a + b, 0);
 	}

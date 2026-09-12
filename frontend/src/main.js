@@ -42,7 +42,12 @@ class CopilotPanel {
 			position: "fixed",
 			top: "0",
 			right: "0",
-			width: this.fullscreen ? "100vw" : `${this._halfWidth}px`,
+			// Full screen is `left: 0`, not `width: 100vw`. 100vw counts the desk's
+			// vertical scrollbar, so the panel came out ~15px wider than the visible
+			// area: the page grew a horizontal scrollbar, and scrolling it cut the
+			// panel's own left edge off — the conversation list half off-screen.
+			left: this.fullscreen ? "0" : "auto",
+			width: this.fullscreen ? "auto" : `${this._halfWidth}px`,
 			height: "100vh",
 			zIndex: "1040",
 			// A restored-open panel renders in place (no slide) so a refresh is seamless.
@@ -80,10 +85,11 @@ class CopilotPanel {
 		const onMove = (e) => {
 			const max = window.innerWidth - 80;
 			const width = Math.min(max, Math.max(MIN_WIDTH, window.innerWidth - e.clientX));
-			this.root.style.width = `${width}px`;
 			this._halfWidth = width;
-			// A manual resize takes the panel out of fullscreen; keep the header icon honest.
+			// Out of fullscreen first: the geometry follows the mode, so setting it
+			// the other way round leaves the panel on `width: auto` for this frame.
 			this.store.fullscreen.value = false;
+			this._applyWidth();
 		};
 		const onUp = () => {
 			document.removeEventListener("mousemove", onMove);
@@ -101,6 +107,13 @@ class CopilotPanel {
 			document.addEventListener("mousemove", onMove);
 			document.addEventListener("mouseup", onUp);
 		});
+	}
+
+	// One place that turns the mode into geometry, so the three callers can't
+	// disagree about it.
+	_applyWidth() {
+		this.root.style.left = this.fullscreen ? "0" : "auto";
+		this.root.style.width = this.fullscreen ? "auto" : `${this._halfWidth}px`;
 	}
 
 	// Navigating the desk means the user wants the desk. A fullscreen panel would hide
@@ -232,7 +245,7 @@ class CopilotPanel {
 	toggleFullscreen() {
 		const next = !this.fullscreen;
 		this.store.fullscreen.value = next;
-		this.root.style.width = next ? "100vw" : `${this._halfWidth}px`;
+		this._applyWidth();
 		this._persist();
 	}
 
