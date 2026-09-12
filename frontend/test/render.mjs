@@ -8,7 +8,7 @@
 // question with no tool call behind it rendering twice or not at all.
 //
 //   yarn test        (builds first, then runs this)
-import { JSDOM } from "jsdom";
+import { JSDOM, VirtualConsole } from "jsdom";
 import fs from "fs";
 
 const js = fs.readFileSync(
@@ -16,7 +16,14 @@ const js = fs.readFileSync(
 	"utf8"
 );
 
+// echarts paints on a canvas, which jsdom can only do with the optional `canvas`
+// package; the chart still mounts and lays out, so the "not implemented" notices
+// are noise rather than a result.
+const quiet = new VirtualConsole();
+quiet.on("jsdomError", () => {});
+
 const dom = new JSDOM("<!doctype html><html data-theme='light'><body></body></html>", {
+	virtualConsole: quiet,
 	runScripts: "outside-only",
 	pretendToBeVisual: true,
 	url: "http://localhost/app",
@@ -46,7 +53,7 @@ const DATA = {
 };
 
 window.frappe = {
-	boot: { user: { first_name: "Sandeep" } },
+	boot: { user: { first_name: "Sandeep" }, sysdefaults: { currency: "IDR" } },
 	provide(path) {
 		let node = window.frappe;
 		for (const part of path.split(".").slice(1)) node = node[part] ||= {};
@@ -62,6 +69,20 @@ window.frappe = {
 		"<p>" + text.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>") + "</p>" +
 		"<table><thead><tr><th>Item</th></tr></thead><tbody><tr><td>A</td></tr></tbody></table>" +
 		"<script>alert(1)</script><a href='javascript:alert(1)'>bad</a><a href='/app/item'>ok</a>",
+	// The real thing wraps every numeric fieldtype in
+	// `<div style='text-align: right'>` unless {only_value: true} is passed; the
+	// stub does the same, so the table is tested against that behaviour.
+	format: (value, df, options) => {
+		const n = Number(value);
+		const text =
+			df.fieldtype === "Currency"
+				? `Rp ${n.toLocaleString("en-US", { minimumFractionDigits: 2 })}`
+				: n.toLocaleString("en-US");
+		return options && options.only_value
+			? text
+			: `<div style='text-align: right'>${text}</div>`;
+	},
+	model: { get_value: () => "Rp" },
 	show_alert: () => {},
 	csrf_token: "x",
 	_: (s) => s,
@@ -72,8 +93,13 @@ window.$ = $;
 window.jQuery = $;
 window.frappe.socketio = null;
 
-// jsdom has no layout, so it ships no scrollTo; the message list calls it on
-// every new part.
+// jsdom has no layout, so it ships neither ResizeObserver (the charts observe
+// their container) nor scrollTo (the message list calls it on every new part).
+window.ResizeObserver = class {
+	observe() {}
+	unobserve() {}
+	disconnect() {}
+};
 window.Element.prototype.scrollTo = function (options) {
 	if (options && typeof options.top === "number") this.scrollTop = options.top;
 };
@@ -323,6 +349,71 @@ for (const [name, ok] of [
 	["fullscreen: header above both panes", root.firstElementChild.firstElementChild.tagName === "HEADER"],
 	["header: toggle is lucide", root.innerHTML.includes("lucide-panel-left")],
 	["header: every control is a lucide mask", (root.querySelector("header").innerHTML.match(/lucide-/g) || []).length >= 4],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
+
+// ── blocks: the tiles, the chart and the table ──────────────────────────────
+store.sidebarOpen.value = false;
+store.messages.value.splice(0);
+const dormant = [
+	{ item_code: "WFGELH25-004", item_name: "Wood Figurines Elephant Head Brown #2 25cm", item_group: "Wood Figurines", last_sold_date: null, days_inactive: null, stock_qty: 1928, valuation_rate: 50000, tied_up_capital: 96400000 },
+	{ item_code: "WFGKMDBRN50-001", item_name: "Wood Figurines Komodo Brown 50cm", item_group: "Wood Figurines", last_sold_date: null, days_inactive: null, stock_qty: 48, valuation_rate: 250000, tied_up_capital: 12000000 },
+	{ item_code: "BRCNFCSBLU725-001", item_name: "Bracelets Natural Flat Coco Sharktooth Blue", item_group: "Bracelets", last_sold_date: "2026-03-02", days_inactive: 190, stock_qty: 1820, valuation_rate: 3956, tied_up_capital: 7199920 },
+];
+const part = (block) => ({ id: `b${Math.random()}`, type: "block", block });
+store.messages.value.push({
+	id: "a3", role: "assistant", pending: false, questions: [], runName: "RUN-3", feedback: null,
+	parts: [
+		part({ type: "kpi", label: "Dormant Sku Count", value: 25 }),
+		part({ type: "kpi", label: "Dormant Tied Up Capital", value: 177586570 }),
+		part({ type: "kpi", label: "Stagnant 90 Plus Tied Up Capital", value: 80615700 }),
+		part({ type: "kpi", label: "Reorder Action Count", value: 20 }),
+		part({ type: "bar", x: "item_name", horizontal: true, series: [{ key: "tied_up_capital", label: "Tied up capital" }], rows: dormant }),
+		part({ type: "table", columns: Object.keys(dormant[0]).map((key) => ({ key, label: key.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()) })), rows: dormant }),
+	],
+});
+await tick();
+
+const table = root.querySelector("table");
+const headers = [...table.querySelectorAll("thead th")].map((th) => th.textContent.trim());
+const firstRow = [...table.querySelectorAll("tbody tr:first-child td")].map((td) => td.textContent.trim());
+for (const [name, ok] of [
+	["cells carry no markup", !table.textContent.includes("<div")],
+	["money is formatted", firstRow.includes("Rp 96,400,000.00")],
+	["quantities are plain numbers", firstRow.includes("1,928")],
+	["a column one row fills is kept", headers.includes("Days inactive") && headers.includes("Last sold date")],
+	["every column is present otherwise", headers.includes("Item code") && headers.includes("Tied up capital")],
+	["a total row, formatted the same way", table.querySelector("tfoot").textContent.includes("Rp 115,599,920.00")],
+	["tiles share one row", Boolean(root.querySelector(".grid-cols-\\[repeat\\(auto-fit\\,minmax\\(11rem\\,1fr\\)\\)\\]"))],
+	["four tiles in it", root.querySelectorAll(".grid > .rounded-lg").length >= 4],
+	["currency sits beside the reading", root.textContent.includes("Rp")],
+	["the chart is drawn", Boolean(root.querySelector("svg, canvas"))],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
+// The reported case: a column that is empty in every row is dropped, rather than
+// showing as a stripe of em dashes that reads like a bug.
+store.messages.value[0].parts.push(part({
+	type: "table",
+	columns: ["item_code", "last_sold_date", "days_inactive"].map((key) => ({ key, label: key })),
+	rows: dormant.slice(0, 2),
+}));
+await tick();
+const pruned = [...root.querySelectorAll("table")].pop();
+const prunedHeaders = [...pruned.querySelectorAll("thead th")].map((th) => th.textContent.trim());
+for (const [name, ok] of [
+	["a column empty in every row is dropped", prunedHeaders.join() === "item_code"],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
+// A report cell that carries HTML shows its text, never its markup.
+store.messages.value[0].parts.push(part({
+	type: "table",
+	columns: [{ key: "status", label: "Status" }],
+	rows: [{ status: "<div class='indicator red'>Overdue</div>" }, { status: "Paid" }],
+}));
+await tick();
+const last = [...root.querySelectorAll("table")].pop();
+for (const [name, ok] of [
+	["html in a report cell is reduced to its text", last.textContent.includes("Overdue") && !last.textContent.includes("indicator")],
 ]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
 
 console.log(bad ? `\n${bad} FAILURES` : "\nall checks passed");

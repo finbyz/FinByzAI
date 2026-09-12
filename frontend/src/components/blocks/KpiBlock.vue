@@ -1,40 +1,45 @@
 <script setup>
 import { computed } from "vue";
 import { NumberChart } from "@/lib/ui";
+import { currencySymbol, looksMonetary } from "@/lib/format";
 
-// frappe-ui's own KPI tile rather than markup we maintain: it draws the reading, the
-// delta arrow and its colouring, and it already knows that a fall is not always bad.
+// frappe-ui's own KPI tile rather than markup we maintain: it draws the reading,
+// the delta arrow and its colouring, and it already knows that a fall is not
+// always bad.
 //
-// Currency comes from the site, through NumberChart's `prefix`. A tile that renders a
-// bare 19825712.8 next to the desk's ₹ 1,98,25,712.80 reads as a different product.
+// Its `prefix` is not used for the currency, though. That slot is an icon well —
+// `size-4`, rendered with v-html — so "Rp" landed cramped and clipped against
+// the figure. The symbol belongs in the reading itself, which is what the
+// `subtitle` slot is for; the slot hands back the component's own `formatValue`,
+// so "168.3M" is still frappe-ui's compaction, not ours.
 const props = defineProps({ block: { type: Object, required: true } });
 
-const CURRENCY_WORDS = /amount|total|price|rate|value|revenue|spend|balance|outstanding|capital|margin|profit/i;
-
-const config = computed(() => {
-	const looksMonetary = CURRENCY_WORDS.test(props.block.label || "");
-	return {
-		title: props.block.label,
-		value: Number(props.block.value) || 0,
-		prefix: props.block.unit || (looksMonetary ? currencySymbol() : ""),
-		delta: typeof props.block.delta === "number" ? props.block.delta : undefined,
-		deltaSuffix: typeof props.block.delta === "number" ? "%" : undefined,
-	};
+const symbol = computed(() => {
+	if (props.block.unit) return props.block.unit;
+	return looksMonetary(props.block.label) ? currencySymbol() : "";
 });
 
-function currencySymbol() {
-	const code = frappe.boot?.sysdefaults?.currency;
-	if (!code) return "";
-	try {
-		return frappe.model?.get_value?.("Currency", code, "symbol") || `${code} `;
-	} catch {
-		return `${code} `;
-	}
-}
+const config = computed(() => ({
+	title: props.block.label,
+	value: Number(props.block.value) || 0,
+	delta: typeof props.block.delta === "number" ? props.block.delta : undefined,
+	deltaSuffix: typeof props.block.delta === "number" ? "%" : undefined,
+}));
 </script>
 
 <template>
 	<div class="overflow-hidden rounded-lg border border-outline-gray-2">
-		<NumberChart :config="config" />
+		<NumberChart :config="config">
+			<template #subtitle="{ formatValue }">
+				<div
+					class="flex flex-1 items-center gap-1 truncate text-[24px] font-semibold leading-10 text-ink-gray-6 tabular-nums"
+				>
+					<span v-if="symbol" class="text-base font-medium text-ink-gray-5">{{
+						symbol
+					}}</span>
+					{{ formatValue(config.value, 1, true) }}
+				</div>
+			</template>
+		</NumberChart>
 	</div>
 </template>

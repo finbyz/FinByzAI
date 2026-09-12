@@ -4,6 +4,7 @@ import Prose from "./Prose.vue";
 import ActivityLine from "./ActivityLine.vue";
 import ApprovalCard from "./ApprovalCard.vue";
 import BlockRenderer from "./blocks/BlockRenderer.vue";
+import KpiBlock from "./blocks/KpiBlock.vue";
 import Tip from "./Tip.vue";
 import { useStore } from "@/store";
 import { __ } from "@/lib/translate";
@@ -16,6 +17,12 @@ import { __ } from "@/lib/translate";
 // it has done one thing as far as the reader is concerned. A call that needs
 // approval always stands alone: it is a question, and questions do not get
 // folded into a tally.
+//
+// Consecutive KPI blocks merge too, into one row of tiles. A tool that reports
+// four headline numbers was emitting four full-width cards, ~100px each, so the
+// answer itself started 400px below the question. `auto-fit` means the row finds
+// its own column count from the width it is given — two in the side panel, four
+// in full screen — with no breakpoint to keep in sync with the panel.
 const props = defineProps({ message: { type: Object, required: true } });
 const { answerQuestion, toolApproval } = useStore();
 
@@ -33,7 +40,11 @@ const items = computed(() => {
 		if (part.type === "text") {
 			out.push({ kind: "text", id: part.id, part });
 		} else if (part.type === "block") {
-			out.push({ kind: "block", id: part.id, part });
+			const last = out[out.length - 1];
+			if (part.block?.type === "kpi" && last?.kind === "kpis") last.blocks.push(part.block);
+			else if (part.block?.type === "kpi")
+				out.push({ kind: "kpis", id: part.id, blocks: [part.block] });
+			else out.push({ kind: "block", id: part.id, part });
 		} else if (needsDecision(part)) {
 			const question = questions.value.get(part.id);
 			if (question && question._answer === undefined)
@@ -87,6 +98,12 @@ async function copy() {
 	<div class="copilot-parts group/msg flex flex-col">
 		<template v-for="(item, i) in items" :key="item.id">
 			<Prose v-if="item.kind === 'text'" :part="item.part" />
+			<div
+				v-else-if="item.kind === 'kpis'"
+				class="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-2"
+			>
+				<KpiBlock v-for="(block, n) in item.blocks" :key="n" :block="block" />
+			</div>
 			<BlockRenderer v-else-if="item.kind === 'block'" :block="item.part.block" />
 			<ApprovalCard
 				v-else-if="item.kind === 'decision'"
