@@ -98,7 +98,11 @@ function submit() {
 	if (!canSend.value) return;
 	send(text.value);
 	text.value = "";
-	resize();
+	// After the next flush, not now: `resize` measures the textarea's own
+	// scrollHeight, and the element still holds the five lines that were just sent
+	// until Vue has written the empty value into it. Measuring here left the field
+	// standing at its full height with nothing in it.
+	nextTick(resize);
 }
 
 function onKeydown(event) {
@@ -112,6 +116,12 @@ function onKeydown(event) {
 function resize() {
 	const node = el.value;
 	if (!node) return;
+	// Empty carries no inline height at all, so `rows="1"` decides it again. Relying
+	// on a measurement to come back to one row is what made this fragile.
+	if (!node.value) {
+		node.style.height = "";
+		return;
+	}
 	node.style.height = "auto";
 	node.style.height = `${Math.min(node.scrollHeight, 168)}px`;
 }
@@ -135,7 +145,7 @@ defineExpose({
 	focus,
 	setText: (value) => {
 		text.value = value;
-		resize();
+		nextTick(resize);
 		focus();
 	},
 });
@@ -181,7 +191,12 @@ defineExpose({
 					@input="resize"
 				></textarea>
 
-				<div class="flex items-center gap-0.5 px-1.5 pb-1.5">
+				<!-- `px-2 pb-2` rather than `px-1.5`: a solid button fills its whole
+				     28px box, so six pixels from the border read as the block being
+				     jammed against it, while the placeholder text sits ten pixels in.
+				     `gap-1` for the same reason — two icon buttons two pixels apart
+				     look like one wide control. -->
+				<div class="flex items-center gap-1 px-2 pb-2">
 					<Menu
 						v-if="agents.length > 1"
 						:items="agentItems"
@@ -257,7 +272,7 @@ defineExpose({
 					/>
 
 					<Tip v-if="sending" :text="__('Stop')">
-						<Button theme="red" variant="solid" @click="stopRun">
+						<Button theme="red" variant="subtle" @click="stopRun">
 							<template #icon><span class="size-2.5 rounded-sm bg-current"></span></template>
 						</Button>
 					</Tip>
