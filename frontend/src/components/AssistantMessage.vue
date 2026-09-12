@@ -141,7 +141,7 @@ async function copy() {
 		     slow" is a real question; Copy appears on hover, because the answer is
 		     the deliverable and nothing else here is. -->
 		<div
-			v-if="!message.pending && (answer || message.duration)"
+			v-if="!message.pending && (answer || message.duration || message.stopped)"
 			class="flex items-center gap-1 text-xs text-ink-gray-4"
 		>
 			<Tip v-if="answer" :text="copied ? __('Copied') : __('Copy answer')">
@@ -169,6 +169,10 @@ async function copy() {
 			<Tip v-if="message.duration" :text="__('Time for this turn')">
 				<span class="tabular-nums">{{ elapsed }}</span>
 			</Tip>
+			<span v-if="message.stopped" class="flex items-center gap-1">
+				<span class="lucide-circle-slash size-3.5" aria-hidden="true"></span>
+				{{ __("Stopped") }}
+			</span>
 		</div>
 	</div>
 </template>
