@@ -16,6 +16,8 @@ Every block is a dict the panel can render directly:
     {"type": "records", "doctype": str, "rows": [dict]}   # rows link into the desk
 """
 
+import json
+
 import frappe
 
 ROW_LIMIT = 500
@@ -24,6 +26,12 @@ ROW_LIMIT = 500
 # block to the panel, and passes the rest of the result to the model — so a 3,000-row
 # table can reach the user's screen without ever entering the context window.
 BLOCKS_KEY = "_blocks"
+
+# Set by the runner for the duration of a copilot turn. A tool outside this app —
+# a Nayla domain tool — has no other way to know whether anything is listening for
+# its charts: the same function also answers the AI Agent and the scheduled email
+# digest, and there a chart payload is nothing but wasted context.
+PANEL_FLAG = "copilot_panel"
 
 
 def attach(result, *block_list):
@@ -39,6 +47,31 @@ def take(result):
     if not isinstance(result, dict):
         return result, []
     return result, result.pop(BLOCKS_KEY, []) or []
+
+
+def take_any(result):
+    """`take`, but it also looks inside the JSON string an external tool returns.
+
+    A tool registered as an `AI Tool` — every Nayla domain tool — returns a JSON
+    string, so it had no way to draw anything: the runner only unpacked blocks from
+    a dict. Now such a tool can attach a chart by putting the same `_blocks` key in
+    its payload, and the key is stripped before the payload reaches the model.
+    """
+    if isinstance(result, dict):
+        return take(result)
+    if not isinstance(result, str):
+        return result, []
+    try:
+        payload = json.loads(result)
+    except (ValueError, TypeError):
+        return result, []
+    if not isinstance(payload, dict) or not payload.get(BLOCKS_KEY):
+        return result, []
+    attached = payload.pop(BLOCKS_KEY) or []
+    # json.dumps, not frappe.as_json: as_json sorts keys, and a table's columns come
+    # from the order the tool wrote them in — sorted, "Item code" lands after
+    # "Days inactive".
+    return json.dumps(payload, default=str), attached
 
 
 def kpi(label, value, delta=None, unit=None):
@@ -159,6 +192,30 @@ def autorender(result, tool_name=None):
             out.append(table(rows))
 
     return out
+
+
+CHART_TYPES = frozenset(("line", "bar", "area", "donut"))
+
+
+def render(result, attached, tool_name=None):
+    """The blocks to publish for one tool call.
+
+    A tool that attached its own tiles or table is trusted completely — that is
+    every builtin. A tool that only declared a chart still gets the automatic
+    tiles and tables, with its chart placed after the tiles: the headline
+    numbers, then the shape, then the detail.
+    """
+    attached = list(attached or [])
+    if {b.get("type") for b in attached} - CHART_TYPES:
+        return attached
+
+    auto = autorender(result, tool_name)
+    if not attached:
+        return auto
+    cut = 0
+    while cut < len(auto) and auto[cut].get("type") == "kpi":
+        cut += 1
+    return auto[:cut] + attached + auto[cut:]
 
 
 def _summary_cards(section: dict) -> list:

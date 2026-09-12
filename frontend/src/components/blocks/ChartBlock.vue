@@ -43,6 +43,13 @@ const config = computed(() => ({
 }));
 
 const empty = computed(() => !data.value.length || !series.value.length);
+
+// A horizontal bar chart needs room per bar, not a fixed box: ten item names in a
+// 240px frame come out as ten unreadable slivers. Vertical charts keep the frame.
+const height = computed(() => {
+	if (!config.value.swapXY) return "15rem";
+	return `${Math.max(15, data.value.length * 1.75 + 3)}rem`;
+});
 </script>
 
 <template>
@@ -50,7 +57,7 @@ const empty = computed(() => !data.value.length || !series.value.length);
 		<div v-if="empty" class="flex h-32 items-center justify-center text-base text-ink-gray-5">
 			{{ __("Nothing to plot") }}
 		</div>
-		<div v-else class="h-60 w-full">
+		<div v-else class="w-full" :style="{ height }">
 			<AxisChart :config="config" />
 		</div>
 	</div>
