@@ -556,5 +556,42 @@ for (const [name, ok] of [
 	["footer: the turn says how long it took", tiles.includes("6.2s")],
 ]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
 
+
+// ── the composer ────────────────────────────────────────────────────────────
+store.messages.value.splice(0);
+store.sending.value = false;
+DATA.start_run = { run: "RUN-C", conversation: "c11" };
+DATA.get_run = () => ({ run: "RUN-C", status: "Completed", error: null, output: "ok", iterations: 1, duration: 1, pending_call: null, events: [{ type: "text", delta: "ok" }] });
+await tick();
+
+const field = root.querySelector("textarea");
+// A five-line prompt grows the field: jsdom reports scrollHeight 0, so the grown
+// state is asserted through the code path rather than the pixels — what matters is
+// that sending puts the field back to having no inline height at all, which is what
+// `rows="1"` needs to decide it again.
+field.value = "one\ntwo\nthree\nfour\nfive";
+field.dispatchEvent(new window.Event("input", { bubbles: true }));
+await tick();
+field.style.height = "132px"; // as the browser would have left it
+field.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+await new Promise((r) => setTimeout(r, 120));
+
+const controls = root.querySelector("textarea").parentElement.lastElementChild;
+for (const [name, ok] of [
+	["composer: the prompt was sent", store.messages.value.some((m) => m.role === "user" && m.content.includes("five"))],
+	["composer: the field is empty again", root.querySelector("textarea").value === ""],
+	["composer: and back to one row", root.querySelector("textarea").style.height === ""],
+	["composer: controls line up with the text", controls.className.includes("px-2") && !controls.className.includes("px-1.5")],
+	["composer: the icon buttons are not touching", controls.className.includes("gap-1")],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
+store.sending.value = true;
+await tick();
+const stop = [...root.querySelector("textarea").parentElement.lastElementChild.querySelectorAll("button")].pop();
+for (const [name, ok] of [
+	["composer: stopping is subtle, not a solid block", stop.className.includes("bg-surface-red-2") || stop.className.includes("bg-surface-red-1")],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+store.sending.value = false;
+
 console.log(bad ? `\n${bad} FAILURES` : "\nall checks passed");
 process.exit(bad ? 1 : 0);
