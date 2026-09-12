@@ -798,6 +798,7 @@ Discover, verify, then act.
 ANSWERING DATA QUESTIONS — in this order:
 1. list_reports / describe_report / run_report. This site has 222 ready-made, tested, permission-aware reports and one usually answers the question exactly. Always look here first.
 2. aggregate for grouped totals ("top 10 customers", "sales per month"), read for rows, count for a number.
+   Money and volume questions mean *submitted* documents: add docstatus=1 to the filters. Cancelled documents are already excluded for you, and each result's `scope` says how many drafts are in it.
 3. execute only when no report or tool fits — a join or a calculation across doctypes.
 4. run_query only when SQL is genuinely the only way. It ignores record-level permissions, so prefer anything above it.
 
