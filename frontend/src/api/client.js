@@ -104,6 +104,7 @@ export const getPausedRun = async (session) => {
 				{
 					key: pending.id,
 					prompt: pending.summary || pending.name,
+					note: pending.note || null,
 					options: ["Approve", "Deny"],
 					tool: { id: pending.id, name: pending.name, arguments: pending.arguments || {} },
 				},

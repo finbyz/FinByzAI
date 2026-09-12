@@ -512,6 +512,25 @@ for (const [name, ok] of [
 	["approval: it offers the decision", root.textContent.includes("Approve") && root.textContent.includes("Reject")],
 	["approval: the composer is released", store.sending.value === false],
 	["approval: the arguments are shown", root.textContent.includes("frappe.get_list")],
+	["approval: no note on a first attempt", !root.textContent.includes("first attempt was rejected")],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
+// A retried write says what the site rejected the first time, so being asked twice
+// for what looks like the same thing has a reason attached.
+store.messages.value.splice(0);
+store.messages.value.push({
+	id: "a5", role: "assistant", pending: false, runName: "RUN-5", duration: null,
+	parts: [{ id: "r1", type: "tool", name: "create", label: "Creating Records", context: "Sales Order",
+		arguments: { doctype: "Sales Order", records: [{ customer: "Sharkeez" }] }, result: null, approval: null }],
+	questions: [{ key: "r1", kind: "approval", prompt: "Create 1 Sales Order record",
+		note: "Delivery warehouse required for stock item BWR-001",
+		options: ["Approve", "Deny"], _showOther: false, _otherText: "", _answer: undefined }],
+});
+store.toolApproval.value = { create: true };
+await tick();
+for (const [name, ok] of [
+	["retry: the card says what was rejected", root.textContent.includes("Delivery warehouse required")],
+	["retry: and does not claim it is waiting", !root.textContent.includes("waiting for you before")],
 ]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
 
 // ── the footer, the declared formats ────────────────────────────────────────

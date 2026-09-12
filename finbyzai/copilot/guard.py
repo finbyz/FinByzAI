@@ -84,7 +84,14 @@ def run_guarded(name, fn, kwargs=None):
     try:
         result = fn(**kwargs)
     except Exception as e:
-        frappe.db.rollback(save_point=savepoint)
+        # A tool that committed before it failed has already destroyed the savepoint,
+        # and MySQL answers the rollback with 1305 "SAVEPOINT does not exist". That
+        # exception must not replace the tool's own error: the contract here is that
+        # this function never raises, and the error the model needs to read is `e`.
+        try:
+            frappe.db.rollback(save_point=savepoint)
+        except Exception:
+            pass
         payload = normalize_exception(e)
         payload["tool"] = name
         return payload

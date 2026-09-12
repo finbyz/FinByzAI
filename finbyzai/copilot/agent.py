@@ -170,6 +170,8 @@ def instructions(agent, settings, knowledge_base=None):
         if content and kind in ("system", ""):
             parts.append(content)
 
+    parts.append(_site_context())
+
     active_kb = knowledge_base or (agent.knowledge_base if agent else None)
     if active_kb:
         parts.append(
@@ -179,6 +181,42 @@ def instructions(agent, settings, knowledge_base=None):
         )
 
     return "\n\n".join(parts)
+
+
+def _site_context() -> str:
+    """Today's date, the company, the currency and the fiscal year.
+
+    Without this the model is guessing at the one thing it cannot infer. Watching it
+    work, it wrote `delivery_date: "2025-01-15"` — eight months in the past — and
+    reasoned about "this year" from its training cutoff rather than from the site. Every
+    question with a date in it depends on this, so it costs a couple of hundred
+    characters in every request and earns them back immediately.
+    """
+    today = frappe.utils.getdate(frappe.utils.nowdate())
+    lines = [f"SITE — today is {today.strftime('%A, %d %B %Y')}."]
+
+    company = frappe.db.get_single_value("Global Defaults", "default_company")
+    if company:
+        currency = frappe.db.get_value("Company", company, "default_currency")
+        lines.append(f'The default company is "{company}"' + (f" and it reports in {currency}." if currency else "."))
+
+    fiscal = frappe.get_all(
+        "Fiscal Year",
+        filters={"year_start_date": ("<=", today), "year_end_date": (">=", today), "disabled": 0},
+        fields=["name", "year_start_date", "year_end_date"],
+        limit=1,
+    )
+    if fiscal:
+        year = fiscal[0]
+        lines.append(
+            f"The current fiscal year is {year.name} ({year.year_start_date} to {year.year_end_date}); "
+            f'"this year" means the calendar year {today.year} unless the user says fiscal year.'
+        )
+    else:
+        lines.append(f'"This year" means the calendar year {today.year}.')
+
+    lines.append("Never invent a date. Derive every date from today's date above.")
+    return " ".join(lines)
 
 
 def shape_history(agent, messages: list) -> list:

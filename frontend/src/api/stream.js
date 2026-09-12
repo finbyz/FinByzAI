@@ -69,6 +69,7 @@ function follow(run, onEvent, signal) {
 						: {
 								key: call.id,
 								prompt: call.summary || call.name,
+								note: call.note || null,
 								options: ["Approve", "Deny"],
 								kind: "approval",
 							};
@@ -118,6 +119,8 @@ function follow(run, onEvent, signal) {
 					pending = {
 						key: event.id,
 						prompt: event.summary || event.name,
+						// Why this card is back after the user already allowed it once.
+						note: event.note || null,
 						options: ["Approve", "Deny"],
 						kind: "approval",
 					};
