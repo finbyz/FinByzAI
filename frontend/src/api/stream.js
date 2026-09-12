@@ -82,13 +82,19 @@ function follow(run, onEvent, signal) {
 				onEvent({ type: "tool_ended", id: call.id, name: call.name, result: JSON.stringify({ awaiting_approval: true }) });
 			}
 
-			onEvent({
-				type: "done",
-				status: state.status,
-				output: state.output,
-				questions: state.status === "Paused" && pending ? JSON.stringify([pending]) : null,
-			});
-			finish();
+			try {
+				onEvent({
+					type: "done",
+					status: state.status,
+					output: state.output,
+					duration: state.duration,
+					questions: state.status === "Paused" && pending ? [pending] : null,
+				});
+			} finally {
+				// Whatever the view made of that, the run is over: `finish()` is what
+				// clears the poll and releases the composer.
+				finish();
+			}
 		};
 
 		const handler = (event) => {
@@ -137,11 +143,14 @@ function follow(run, onEvent, signal) {
 					if (event.status === "Failed" && event.error) {
 						onEvent({ type: "error", message: event.error });
 					}
-					onEvent({
-						...event,
-						questions: event.status === "Paused" && pending ? JSON.stringify([pending]) : null,
-					});
-					finish();
+					try {
+						onEvent({
+							...event,
+							questions: event.status === "Paused" && pending ? [pending] : null,
+						});
+					} finally {
+						finish();
+					}
 					break;
 
 				default:

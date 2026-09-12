@@ -74,12 +74,19 @@ def take_any(result):
     return json.dumps(payload, default=str), attached
 
 
-def kpi(label, value, delta=None, unit=None):
+def kpi(label, value, delta=None, unit=None, format=None):
+    """`format` is "currency" | "number"; omit it only when nothing here knows.
+
+    The panel falls back to guessing from the label when it is absent, and guessing
+    is how a count of Sales Invoices came out as "Rp 0".
+    """
     block = {"type": "kpi", "label": label, "value": value}
     if delta is not None:
         block["delta"] = delta
     if unit:
         block["unit"] = unit
+    if format:
+        block["format"] = format
     return block
 
 
@@ -89,7 +96,31 @@ def table(rows, columns=None, doctype=None):
     block = {"type": "table", "columns": _columns(columns, rows), "rows": rows}
     if doctype:
         block["doctype"] = doctype
+        _stamp_formats(block["columns"], doctype)
     return block
+
+
+# Fieldtypes whose numbers are money, and whose are just numbers. The panel cannot
+# know this — it sees `base_grand_total` and a float — so when the rows come from a
+# doctype, the meta says which is which and the guessing stops here.
+_CURRENCY_TYPES = frozenset(("Currency",))
+_NUMBER_TYPES = frozenset(("Int", "Float", "Percent", "Rating"))
+
+
+def _stamp_formats(columns, doctype):
+    try:
+        meta = frappe.get_meta(doctype)
+    except Exception:
+        return
+    for column in columns:
+        if column.get("format"):
+            continue
+        field = meta.get_field(column.get("key"))
+        fieldtype = field.fieldtype if field else None
+        if fieldtype in _CURRENCY_TYPES:
+            column["format"] = "currency"
+        elif fieldtype in _NUMBER_TYPES:
+            column["format"] = "number"
 
 
 def line(rows, x, series):
@@ -123,9 +154,16 @@ def _columns(columns, rows):
     for col in columns:
         if isinstance(col, dict):
             key = col.get("key")
-            out.append({"key": key, "label": col.get("label") or _label(key), "align": col.get("align")})
+            out.append(
+                {
+                    "key": key,
+                    "label": col.get("label") or _label(key),
+                    "align": col.get("align"),
+                    "format": col.get("format"),
+                }
+            )
         else:
-            out.append({"key": col, "label": _label(col), "align": None})
+            out.append({"key": col, "label": _label(col), "align": None, "format": None})
     return out
 
 
@@ -144,6 +182,12 @@ def _label(key):
 
 
 # ── rendering results from tools that know nothing about blocks ───────────────
+
+# Tools whose result is context for the model, not an answer for the reader: the
+# field list of a doctype, the doctypes matching a word, the filters a report takes.
+# Rendering those put a 167-row table of fieldnames in the middle of a conversation
+# about sales. They stay in the activity line, one click from the step that ran.
+QUIET_TOOLS = frozenset(("find_doctypes", "describe", "list_reports", "describe_report"))
 
 AUTO_TABLE_LIMIT = 3
 AUTO_KPI_LIMIT = 4
@@ -164,6 +208,9 @@ def autorender(result, tool_name=None):
     much it emits, and returns nothing at all for markdown or prose — a wrong guess
     that fills the chat with junk tables is worse than no table.
     """
+    if tool_name in QUIET_TOOLS:
+        return []
+
     payload = _loads(result)
     if payload is None:
         return []

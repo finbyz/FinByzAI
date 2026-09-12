@@ -261,6 +261,7 @@ async function switchSession(name) {
 	// Merge consecutive assistant rows (one per iteration in the doc) into one
 	// message, as live does — otherwise the tool grouping fragments per iteration.
 	let current = null;
+	const runs = doc.runs || {};
 	for (const m of doc.messages || []) {
 		if (m.role === "user") {
 			current = null;
@@ -272,9 +273,12 @@ async function switchSession(name) {
 			});
 		} else if (m.role === "assistant") {
 			if (!current) current = pushAssistant(false);
-			if (m.run) current.runName = m.run;
+			if (m.run) {
+				current.runName = m.run;
+				current.duration = runs[m.run]?.duration ?? current.duration;
+			}
 			if (m.content) current.parts.push(makeTextPart(m.content));
-			for (const t of parseToolCalls(m.tool_calls)) {
+			for (const t of parseList(m.tool_calls)) {
 				current.parts.push(
 					makeToolPart(t.id, t.function.name, t.function.arguments, t.label, t.context)
 				);
@@ -302,7 +306,7 @@ async function switchSession(name) {
 async function restorePausedRun(session) {
 	const runs = await api.getPausedRun(session);
 	if (sessionName.value !== session || !runs.length || !runs[0].questions) return;
-	const questions = JSON.parse(runs[0].questions);
+	const questions = parseList(runs[0].questions);
 	if (!questions.length) return;
 
 	const last = [...messages.value].reverse().find((m) => m.role === "assistant");
@@ -399,6 +403,17 @@ function stopRun() {
 	else if (sessionName.value) api.recoverSession(sessionName.value).catch(() => {});
 }
 
+// Ask the same question again. The first attempt stays in the scrollback: it is
+// what actually happened, the server has it either way, and a bad answer next to
+// a good one is often the useful comparison. Cheaper than a "regenerate" that has
+// to delete a turn on both sides and stay consistent through a reload.
+function askAgain(msg) {
+	if (sending.value || paused.value) return;
+	const index = messages.value.indexOf(msg);
+	const question = [...messages.value.slice(0, index)].reverse().find((m) => m.role === "user");
+	if (question?.content) send(question.content);
+}
+
 // Records one answer and stamps the tool's approval state; once every question
 // on the paused message is answered, resumes the run with all answers at once.
 // A Deny is sent through like any answer — the agent records it and stops the run.
@@ -470,8 +485,14 @@ function handleEvent(event, msg) {
 			// what the agent already said.
 			if (event.output && !msg.parts.some((p) => p.type === "text"))
 				appendText(msg, event.output);
+			msg.duration = event.duration ?? msg.duration;
 			if (event.status === "Paused") {
-				msg.questions = prepareQuestions(event.questions);
+				// `questions` arrives as a JSON string from the recovery path and as an
+				// array from the stream. Handing the string straight to
+				// prepareQuestions threw inside the event handler, which left the run
+				// with no approval card and the composer stuck showing Stop — the
+				// "stuck until I refresh" case.
+				msg.questions = prepareQuestions(parseList(event.questions));
 				msg.runName = runName.value;
 				requestScroll(true);
 			}
@@ -554,6 +575,7 @@ function pushAssistant(pending = true) {
 		pending,
 		questions: [],
 		runName: null,
+		duration: null,
 	};
 	messages.value.push(msg);
 	// Return the reactive proxy, not the raw object — streaming mutates this after
@@ -574,10 +596,13 @@ function failMessage(msg, error) {
 	msg.pending = false;
 }
 
-function parseToolCalls(raw) {
+// A safe JSON.parse to an array, for the two payloads that arrive as strings.
+function parseList(raw) {
 	if (!raw) return [];
+	if (Array.isArray(raw)) return raw;
 	try {
-		return JSON.parse(raw);
+		const parsed = JSON.parse(raw);
+		return Array.isArray(parsed) ? parsed : [];
 	} catch {
 		return [];
 	}
@@ -645,6 +670,7 @@ export function useStore() {
 		send,
 		stopRun,
 		answerQuestion,
+		askAgain,
 		attachFiles,
 		removeAttachment,
 	};
