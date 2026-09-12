@@ -144,7 +144,54 @@ def get_run(run):
         "output": doc.output,
         "iterations": doc.iterations,
         "pending_call": runner._json(doc.pending_call),
+        "events": _replay(doc),
     }
+
+
+def _replay(doc):
+    """The turn so far, as the same events the realtime channel publishes.
+
+    Realtime is an optimisation, not the delivery mechanism. Every step of a run is
+    committed as it happens — a Copilot Message per tool call, per tool result and
+    per piece of the reply — so the whole turn can be reconstructed from the
+    database at any moment. The panel polls this while a run is in flight, which
+    means the conversation still moves step by step on a site where socketio
+    cannot connect at all, instead of sitting blank until the user reloads.
+    """
+    rows = frappe.get_all(
+        "Copilot Message",
+        filters={
+            "parent": doc.conversation,
+            "parenttype": "Copilot Conversation",
+            "run": doc.name,
+        },
+        fields=["role", "content", "tool_calls", "tool_call_id", "blocks", "idx"],
+        order_by="idx asc",
+    )
+
+    events = []
+    for row in rows:
+        if row.role == "assistant":
+            for call in _labelled(runner._json(row.tool_calls)) or []:
+                events.append(
+                    {
+                        "type": "tool_started",
+                        "id": call.get("id"),
+                        "name": call.get("name"),
+                        "label": call.get("label"),
+                        "context": call.get("context"),
+                        "arguments": call.get("args") or {},
+                    }
+                )
+            if row.content:
+                events.append({"type": "text", "delta": row.content})
+        elif row.role == "tool":
+            events.append(
+                {"type": "tool_ended", "id": row.tool_call_id, "ok": True, "result": row.content}
+            )
+        for block in runner._json(row.blocks) or []:
+            events.append({"type": "block", "block": block})
+    return events
 
 
 @frappe.whitelist()

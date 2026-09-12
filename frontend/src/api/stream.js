@@ -5,8 +5,11 @@
 import * as api from "@/api/client";
 import { __ } from "@/lib/translate";
 
-// How often to ask the server what happened when no event has arrived.
-const WATCHDOG_MS = 4000;
+// How often to ask the server what the run has done, while realtime is quiet.
+// Short, because on a site whose socketio cannot connect this poll *is* the
+// stream: it is what makes the panel show each step as it happens rather than
+// nothing until the user reloads.
+const POLL_MS = 1200;
 
 const call = (method, args) => frappe.xcall(`finbyzai.copilot.api.${method}`, args || {});
 
@@ -21,6 +24,8 @@ function follow(run, onEvent, signal) {
 		let settled = false;
 		let watchdog = null;
 		let lastEventAt = Date.now();
+		// How much of the server's replay has already been handed to the store.
+		let replayed = 0;
 
 		const finish = () => {
 			if (settled) return;
@@ -30,21 +35,29 @@ function follow(run, onEvent, signal) {
 			resolve();
 		};
 
-		// Realtime is one delivery path, and it can fail: a run that errors in the
-		// first 200ms can finish before this subscription exists, socketio may be down,
-		// a backgrounded tab can miss events. Flow never needed this — its SSE stream
-		// closing *was* the end-of-run signal. Here the only equivalent is to ask.
-		// So while nothing is arriving, check the run itself, and if the server says it
-		// is over, synthesize the events that never came.
+		// Realtime is the fast path, not the delivery mechanism. It can fail
+		// completely — socketio unreachable, a run that finishes before this
+		// subscription exists, a backgrounded tab — so while nothing is arriving the
+		// panel asks the server what the run has done and replays it. The server
+		// hands back the whole turn as events (api._replay), and the store rebuilds
+		// the message from them, so a poll is correct whether realtime delivered
+		// nothing or half.
 		const check = async () => {
-			if (settled || Date.now() - lastEventAt < WATCHDOG_MS) return;
+			if (settled || Date.now() - lastEventAt < POLL_MS) return;
 			let state;
 			try {
 				state = await api.getRun(run);
 			} catch {
 				return; // transient; the next tick tries again
 			}
-			if (settled || !state || state.status === "Running") return;
+			if (settled || !state) return;
+
+			const events = state.events || [];
+			if (events.length > replayed) {
+				replayed = events.length;
+				onEvent({ type: "replay", events });
+			}
+			if (state.status === "Running") return;
 
 			if (state.status === "Failed" && state.error) {
 				onEvent({ type: "error", message: state.error });
@@ -137,7 +150,7 @@ function follow(run, onEvent, signal) {
 		};
 
 		frappe.realtime.on(channel, handler);
-		watchdog = setInterval(check, WATCHDOG_MS);
+		watchdog = setInterval(check, POLL_MS);
 		signal?.addEventListener("abort", finish, { once: true });
 	});
 }

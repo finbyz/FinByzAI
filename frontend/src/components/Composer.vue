@@ -31,7 +31,7 @@ const {
 	attachments,
 	sending,
 	paused,
-	locked,
+	agentLocked,
 	loaded,
 	needsSetup,
 	uploading,
@@ -62,7 +62,7 @@ const el = ref(null);
 const fileInput = ref(null);
 const dragging = ref(false);
 
-const inputDisabled = computed(() => !loaded.value || needsSetup.value || locked.value);
+const inputDisabled = computed(() => !loaded.value || needsSetup.value);
 const canSend = computed(() => text.value.trim() && !inputDisabled.value && !uploading.value);
 
 const placeholder = computed(() => {
@@ -186,7 +186,7 @@ defineExpose({
 						v-if="agents.length > 1"
 						:items="agentItems"
 						:model-value="selectedAgent"
-						:disabled="locked"
+						:disabled="agentLocked"
 						searchable
 						@update:model-value="setAgent"
 					>
@@ -194,7 +194,7 @@ defineExpose({
 							<button
 								type="button"
 								class="flex h-6 max-w-[11rem] items-center gap-1 rounded px-1.5 text-sm text-ink-gray-7 hover:bg-surface-gray-3 active:bg-surface-gray-4 disabled:opacity-50"
-								:disabled="locked"
+								:disabled="agentLocked"
 								@click="toggle"
 							>
 								<img

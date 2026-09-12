@@ -62,7 +62,22 @@ const decision = computed(() => {
 const openable = computed(
 	() => !single.value || hasArgs(props.parts[0].arguments) || failed.value
 );
-const open = ref(false);
+// Open while the turn is running, closed once it is done — unless the reader
+// says otherwise, after which their choice sticks.
+//
+// This is the difference between a panel that narrates and one that surprises
+// you: during a run you watch each step arrive and can see what failed and what
+// it did next, and when the answer lands the whole thing folds up into one line
+// so the scrollback stays about the answers.
+const touched = ref(false);
+const chosen = ref(false);
+const open = computed({
+	get: () => (touched.value ? chosen.value : props.live && !props.sealed),
+	set: (value) => {
+		touched.value = true;
+		chosen.value = value;
+	},
+});
 const stepOpen = ref({});
 
 const detail = (s) => hasArgs(s.part.arguments) || Boolean(s.error);

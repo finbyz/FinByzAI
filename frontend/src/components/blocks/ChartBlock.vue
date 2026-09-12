@@ -27,11 +27,18 @@ const data = computed(() =>
 	})
 );
 
+// The measure's name goes on the y axis, which is where frappe-ui draws it — as
+// "↑ Revenue". Leaving it out is what produced the "↑ undefined" on every chart
+// (eChartOptions.ts sets `name: `↑ ${config.yAxis.title}`` with no guard), and
+// when there is no single measure the arrow is suppressed rather than left bare.
+const measure = computed(() =>
+	series.value.length === 1 ? series.value[0].label || series.value[0].key || "" : ""
+);
+
 const config = computed(() => ({
 	data: data.value,
-	title: series.value.length === 1 ? series.value[0].label || "" : "",
 	xAxis: { key: props.block.x, type: "category" },
-	yAxis: {},
+	yAxis: measure.value ? { title: measure.value } : { echartOptions: { name: "" } },
 	// Horizontal bars for long category labels — AxisChart refuses swapXY on anything
 	// but bars, so only the bar kind may ask for it.
 	swapXY: props.kind === "bar" ? Boolean(props.block.horizontal) : false,
@@ -42,18 +49,27 @@ const config = computed(() => ({
 	})),
 }));
 
-const empty = computed(() => !data.value.length || !series.value.length);
+// A series whose key is in none of the rows plots nothing, and AxisChart answers a
+// config it cannot use with a bare red "Error". Say so ourselves instead.
+const plottable = computed(() =>
+	data.value.some((row) => series.value.some((s) => typeof row[s.label || s.key] === "number"))
+);
+const empty = computed(() => !data.value.length || !series.value.length || !plottable.value);
 
-// A horizontal bar chart needs room per bar, not a fixed box: ten item names in a
-// 240px frame come out as ten unreadable slivers. Vertical charts keep the frame.
+// frappe-ui's ECharts wrapper carries `min-h-[300px]` on its own div, so a
+// shorter box does not shrink the chart — it overflows, and the chart paints
+// over the block below it. That was the overlap in the panel. So 300px is the
+// floor, the card clips anything beyond it, and a horizontal bar chart grows
+// with its bars instead of squeezing ten item names into one frame.
+const MIN_HEIGHT = 19; // rem, just over the 300px the chart insists on
 const height = computed(() => {
-	if (!config.value.swapXY) return "15rem";
-	return `${Math.max(15, data.value.length * 1.75 + 3)}rem`;
+	if (!config.value.swapXY) return `${MIN_HEIGHT}rem`;
+	return `${Math.max(MIN_HEIGHT, data.value.length * 1.75 + 4)}rem`;
 });
 </script>
 
 <template>
-	<div class="rounded-lg border border-outline-gray-2 bg-surface-white p-2">
+	<div class="overflow-hidden rounded-lg border border-outline-gray-2 bg-surface-white p-2">
 		<div v-if="empty" class="flex h-32 items-center justify-center text-base text-ink-gray-5">
 			{{ __("Nothing to plot") }}
 		</div>

@@ -63,7 +63,8 @@ window.frappe = {
 	xcall: (method, args) => {
 		const key = method.split(".").pop();
 		if (!(key in DATA)) return Promise.reject(new Error("no stub for " + key));
-		return Promise.resolve(DATA[key]);
+		const value = DATA[key];
+		return Promise.resolve(typeof value === "function" ? value(args) : value);
 	},
 	markdown: (text) =>
 		"<p>" + text.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>") + "</p>" +
@@ -92,6 +93,11 @@ window.__ = (s, args) =>
 window.$ = $;
 window.jQuery = $;
 window.frappe.socketio = null;
+
+// Realtime that never delivers — the site this panel runs on has exactly this
+// failure (socketio cannot authenticate), so it is the case worth testing.
+const realtime = { handlers: {}, on(ch, fn) { this.handlers[ch] = fn; }, off(ch) { delete this.handlers[ch]; } };
+window.frappe.realtime = realtime;
 
 // jsdom has no layout, so it ships neither ResizeObserver (the charts observe
 // their container) nor scrollTo (the message list calls it on every new part).
@@ -414,6 +420,66 @@ await tick();
 const last = [...root.querySelectorAll("table")].pop();
 for (const [name, ok] of [
 	["html in a report cell is reduced to its text", last.textContent.includes("Overdue") && !last.textContent.includes("indicator")],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
+
+// ── a whole turn with realtime dead ─────────────────────────────────────────
+// The panel must narrate and finish on the polling path alone: this is the
+// site's actual condition, and before the replay it showed "Working…" and then
+// an empty message until the user reloaded.
+store.messages.value.splice(0);
+store.sessionName.value = null;
+
+const steps = [
+	[],
+	[{ type: "tool_started", id: "t1", name: "selling_intelligence", label: "Selling intelligence", context: null, arguments: { months: 12 } }],
+	[
+		{ type: "tool_started", id: "t1", name: "selling_intelligence", label: "Selling intelligence", context: null, arguments: { months: 12 } },
+		{ type: "tool_ended", id: "t1", ok: true, result: JSON.stringify({ rows: 3 }) },
+		{ type: "block", block: { type: "kpi", label: "Total Revenue", value: 19825712.8 } },
+	],
+	[
+		{ type: "tool_started", id: "t1", name: "selling_intelligence", label: "Selling intelligence", context: null, arguments: { months: 12 } },
+		{ type: "tool_ended", id: "t1", ok: true, result: JSON.stringify({ rows: 3 }) },
+		{ type: "block", block: { type: "kpi", label: "Total Revenue", value: 19825712.8 } },
+		{ type: "text", delta: "Nayla Bahamas is **100%** of revenue." },
+	],
+];
+let tick_n = 0;
+DATA.start_run = { run: "RUN-POLL", conversation: "c9" };
+DATA.get_run = () => {
+	const events = steps[Math.min(tick_n, steps.length - 1)];
+	const done = tick_n >= steps.length - 1;
+	tick_n++;
+	return { run: "RUN-POLL", status: done ? "Completed" : "Running", error: null,
+		output: "Nayla Bahamas is **100%** of revenue.", iterations: 1, pending_call: null, events };
+};
+
+store.send("Which customer bought the most this year?");
+await new Promise((r) => setTimeout(r, 400));
+const turn = () => store.messages.value[1];
+for (const [name, ok] of [
+	["poll: the question is on screen at once", root.textContent.includes("bought the most")],
+	["poll: working while nothing has happened yet", root.textContent.includes("Working…")],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
+// Two polls in (the first finds nothing yet, the second the running step).
+await new Promise((r) => setTimeout(r, 2600));
+for (const [name, ok] of [
+	["poll: the step appears while it runs", root.textContent.includes("Selling intelligence")],
+	["poll: the step is expanded while live", root.textContent.includes("Months")],
+	["poll: still streaming", turn().pending === true],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
+await new Promise((r) => setTimeout(r, 3000));
+for (const [name, ok] of [
+	["poll: the tile arrives", root.textContent.includes("Total Revenue")],
+	["poll: the answer arrives", root.innerHTML.includes("<strong>100%</strong>")],
+	["poll: nothing is duplicated", (root.innerHTML.match(/Total Revenue/g) || []).length === 1],
+	["poll: the step is still named", root.textContent.includes("Selling intelligence")],
+	["poll: the turn ends", store.sending.value === false && turn().pending === false],
+	["poll: and folds up once it is done", !root.textContent.includes("Months")],
+	["poll: and a follow-up can be typed", root.querySelector("textarea").disabled === false],
 ]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
 
 console.log(bad ? `\n${bad} FAILURES` : "\nall checks passed");

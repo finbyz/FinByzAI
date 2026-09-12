@@ -68,7 +68,12 @@ const forceScroll = ref(false);
 const focusTick = ref(0);
 
 // ── derived ───────────────────────────────────────────────────────────────
-const locked = computed(() => messages.value.length > 0);
+// A conversation's agent is fixed once it has started — its history was built by
+// that agent's tools and instructions. This locks the *agent picker*, nothing
+// else; it used to be wired into the composer's disabled state too, which meant
+// the first answer ended the conversation and the only way to ask a follow-up
+// was to start a new chat.
+const agentLocked = computed(() => messages.value.length > 0);
 const needsSetup = computed(() => loaded.value && (!agents.value.length || !models.value.length));
 const uploading = computed(() => attachments.value.some((a) => a.status === "uploading"));
 const paused = computed(() => {
@@ -169,7 +174,7 @@ function loadToolApproval(agent) {
 
 // ── selection ────────────────────────────────────────────────────────────────
 function setAgent(name) {
-	if (locked.value) return;
+	if (agentLocked.value) return;
 	selectedAgent.value = name;
 	loadToolApproval(name);
 }
@@ -451,8 +456,20 @@ function handleEvent(event, msg) {
 			if (event.block) msg.parts.push(makeBlockPart(event.block));
 			requestScroll();
 			break;
+		// Realtime is silent, so the server has handed back the whole turn as
+		// events. Rebuild the message from them: that is the only way to be right
+		// whether realtime delivered nothing or stopped halfway.
+		case "replay":
+			applyReplay(msg, event.events);
+			requestScroll();
+			break;
 		case "done":
 			msg.pending = false;
+			// A turn whose text never streamed still has an answer — the run carries
+			// it. Without this the message ends up empty and the user reloads to read
+			// what the agent already said.
+			if (event.output && !msg.parts.some((p) => p.type === "text"))
+				appendText(msg, event.output);
 			if (event.status === "Paused") {
 				msg.questions = prepareQuestions(event.questions);
 				msg.runName = runName.value;
@@ -484,6 +501,25 @@ const makeToolPart = (id, name, args, label, context) => ({
 	result: null,
 	approval: null,
 });
+
+// Rebuilds a message's parts from a server replay (api._replay). Wholesale, not
+// merged: a half-delivered stream plus an append would duplicate text and blocks,
+// and the persisted run is the authority on what actually happened.
+function applyReplay(msg, events) {
+	const parts = [];
+	for (const event of events || []) {
+		if (event.type === "text") parts.push(makeTextPart(event.delta || ""));
+		else if (event.type === "block" && event.block) parts.push(makeBlockPart(event.block));
+		else if (event.type === "tool_started")
+			parts.push(
+				makeToolPart(event.id, event.name, event.arguments, event.label, event.context)
+			);
+	}
+	msg.parts = parts;
+	for (const event of events || []) {
+		if (event.type === "tool_ended") setToolResult(msg, event.id, event.result);
+	}
+}
 
 function setToolResult(msg, id, result) {
 	const part = msg.parts.find((p) => p.type === "tool" && p.id === id);
@@ -590,7 +626,7 @@ export function useStore() {
 		forceScroll,
 		focusTick,
 		// derived
-		locked,
+		agentLocked,
 		needsSetup,
 		paused,
 		uploading,
