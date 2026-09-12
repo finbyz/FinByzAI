@@ -482,5 +482,60 @@ for (const [name, ok] of [
 	["poll: and a follow-up can be typed", root.querySelector("textarea").disabled === false],
 ]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
 
+
+// ── an approval, with realtime dead ─────────────────────────────────────────
+// The card has to appear from the poll alone. It did not: `questions` arrives as
+// a JSON string there, prepareQuestions got the string, threw inside the event
+// handler, and the run was left with no card and the composer stuck on Stop.
+store.messages.value.splice(0);
+store.sessionName.value = null;
+store.toolApproval.value = { execute: true };
+DATA.start_run = { run: "RUN-ASK", conversation: "c10" };
+let asks = 0;
+DATA.get_run = () => {
+	const call = { id: "x1", name: "execute", label: "Executing", kind: "approval",
+		summary: "Find items matching beach wrap",
+		arguments: { description: "Find items matching beach wrap", code: "items = frappe.get_list('Item')" } };
+	const paused = asks++ > 0;
+	return {
+		run: "RUN-ASK", status: paused ? "Paused" : "Running", error: null, output: null,
+		iterations: 1, duration: paused ? 6.2 : null,
+		pending_call: paused ? call : null,
+		events: [],
+	};
+};
+
+store.send("create a sales order for Sharkeez");
+await new Promise((r) => setTimeout(r, 3000));
+for (const [name, ok] of [
+	["approval: the card arrives without a reload", root.textContent.includes("Find items matching beach wrap")],
+	["approval: it offers the decision", root.textContent.includes("Approve") && root.textContent.includes("Reject")],
+	["approval: the composer is released", store.sending.value === false],
+	["approval: the arguments are shown", root.textContent.includes("frappe.get_list")],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
+// ── the footer, the declared formats ────────────────────────────────────────
+store.messages.value.splice(0);
+store.messages.value.push({
+	id: "a4", role: "assistant", pending: false, questions: [], runName: "RUN-4", duration: 6.2,
+	parts: [
+		{ id: "k1", type: "block", block: { type: "kpi", label: "Sales Invoice (filtered)", value: 0, format: "number" } },
+		{ id: "k2", type: "block", block: { type: "kpi", label: "Dormant Tied Up Capital", value: 177586570, format: "currency" } },
+		{ id: "x9", type: "text", text: "Nothing last year." },
+		{ id: "tb", type: "block", block: { type: "table",
+			columns: [{ key: "customer", label: "Customer" }, { key: "value", label: "SUM of base_grand_total", format: "currency" }, { key: "orders", label: "Orders", format: "number" }],
+			rows: [{ customer: "Sharkeez", value: 2477067.18, orders: 4 }] } },
+	],
+});
+await tick();
+const tiles = root.textContent;
+for (const [name, ok] of [
+	["kpi: a count is not money", /Sales Invoice \(filtered\)\s*0/.test(tiles.replace(/\s+/g, " "))],
+	["kpi: a declared currency still is", tiles.includes("Rp")],
+	["table: a declared currency column is formatted", tiles.includes("Rp 2,477,067.18")],
+	["table: a declared number column is not", tiles.includes("4") && !tiles.includes("Rp 4")],
+	["footer: the turn says how long it took", tiles.includes("6.2s")],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
 console.log(bad ? `\n${bad} FAILURES` : "\nall checks passed");
 process.exit(bad ? 1 : 0);

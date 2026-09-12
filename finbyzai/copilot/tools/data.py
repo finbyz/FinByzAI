@@ -132,7 +132,9 @@ def aggregate(
 
     title = f"{agg_key.upper()} of {measure or 'records'} by {frappe.unscrub(group_by)}"
     series = [{"key": alias, "label": title}]
-    columns = [group_by, {"key": alias, "label": title}]
+    # The measure's own fieldtype decides how the figure reads. A SUM of a Currency
+    # field is money; a COUNT never is, whatever the field was called.
+    columns = [group_by, {"key": alias, "label": title, "format": _measure_format(doctype, measure, agg_key)}]
     shape = (chart or "bar").lower()
 
     if shape == "line":
@@ -162,8 +164,23 @@ def count(doctype: str, filters: dict | None = None) -> dict:
     total = frappe.db.count(doctype, filters or {})
     return blocks.attach(
         {"doctype": doctype, "count": total},
-        blocks.kpi(f"{doctype}{' (filtered)' if filters else ''}", total),
+        # A count is a count: without saying so, a tile labelled "Sales Invoice
+        # (filtered)" was given the site's currency symbol and read "Rp 0".
+        blocks.kpi(f"{doctype}{' (filtered)' if filters else ''}", total, format="number"),
     )
+
+
+def _measure_format(doctype: str, measure: str | None, agg_key: str):
+    """"currency" | "number", from the aggregated field's own fieldtype."""
+    if agg_key == "count" or not measure:
+        return "number"
+    try:
+        field = frappe.get_meta(doctype).get_field(measure)
+    except Exception:
+        return None
+    if not field:
+        return None
+    return "currency" if field.fieldtype == "Currency" else "number"
 
 
 def _default_fields(doctype: str) -> list:

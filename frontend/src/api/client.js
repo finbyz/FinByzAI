@@ -65,6 +65,8 @@ export const getSession = async (name) => {
 		model: data.model,
 		attachments: [],
 		active_run: data.active_run || null,
+		// { run: { duration, status } } — so a reloaded turn still says how long it took
+		runs: data.runs || {},
 		messages: (data.messages || []).map((m) => ({
 			role: m.role,
 			content: m.content,

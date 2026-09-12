@@ -24,7 +24,7 @@ import { __ } from "@/lib/translate";
 // its own column count from the width it is given — two in the side panel, four
 // in full screen — with no breakpoint to keep in sync with the panel.
 const props = defineProps({ message: { type: Object, required: true } });
-const { answerQuestion, toolApproval } = useStore();
+const { answerQuestion, askAgain, toolApproval, sending } = useStore();
 
 const questions = computed(() => new Map(props.message.questions.map((q) => [q.key, q])));
 
@@ -80,6 +80,14 @@ const answer = computed(() =>
 		.join("\n\n")
 		.trim()
 );
+// Seconds under a minute, then minutes: "8.4s", "1m 12s".
+const elapsed = computed(() => {
+	const seconds = Number(props.message.duration) || 0;
+	if (!seconds) return "";
+	if (seconds < 60) return __("{0}s", [seconds.toFixed(1)]);
+	return __("{0}m {1}s", [Math.floor(seconds / 60), Math.round(seconds % 60)]);
+});
+
 const copied = ref(false);
 let timer = 0;
 async function copy() {
@@ -128,15 +136,17 @@ async function copy() {
 
 		<div v-if="working" class="copilot-shimmer-text text-sm">{{ __("Working…") }}</div>
 
-		<!-- The answer is the deliverable; copying it is the one action this turn
-		     needs. It appears on hover so it isn't part of the reading surface. -->
+		<!-- The footer: how long the turn took, and the one action it needs. The
+		     time is always there once the turn is done, because "why did that feel
+		     slow" is a real question; Copy appears on hover, because the answer is
+		     the deliverable and nothing else here is. -->
 		<div
-			v-if="answer && !message.pending"
-			class="flex opacity-0 transition-opacity focus-within:opacity-100 group-hover/msg:opacity-100"
+			v-if="!message.pending && (answer || message.duration)"
+			class="flex items-center gap-1 text-xs text-ink-gray-4"
 		>
-			<Tip :text="copied ? __('Copied') : __('Copy answer')">
+			<Tip v-if="answer" :text="copied ? __('Copied') : __('Copy answer')">
 				<button
-					class="-ml-1 rounded p-1 hover:bg-surface-gray-2"
+					class="-ml-1 rounded p-1 opacity-0 transition-opacity focus-visible:opacity-100 group-hover/msg:opacity-100"
 					:aria-label="__('Copy answer')"
 					@click="copy"
 				>
@@ -146,6 +156,18 @@ async function copy() {
 						aria-hidden="true"
 					></span>
 				</button>
+			</Tip>
+			<Tip v-if="!sending" :text="__('Ask the same question again')">
+				<button
+					class="rounded p-1 opacity-0 transition-opacity focus-visible:opacity-100 group-hover/msg:opacity-100"
+					:aria-label="__('Ask again')"
+					@click="askAgain(message)"
+				>
+					<span class="lucide-rotate-ccw size-3.5 text-ink-gray-5" aria-hidden="true"></span>
+				</button>
+			</Tip>
+			<Tip v-if="message.duration" :text="__('Time for this turn')">
+				<span class="tabular-nums">{{ elapsed }}</span>
 			</Tip>
 		</div>
 	</div>

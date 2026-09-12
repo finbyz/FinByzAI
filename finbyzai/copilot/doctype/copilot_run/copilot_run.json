@@ -12,6 +12,7 @@
   "output",
   "error",
   "iterations",
+  "duration",
   "attachments",
   "pending_call",
   "decision",
@@ -67,6 +68,13 @@
    "fieldtype": "Int",
    "label": "Iterations",
    "default": "0"
+  },
+  {
+   "fieldname": "duration",
+   "fieldtype": "Float",
+   "label": "Duration (s)",
+   "precision": "1",
+   "read_only": 1
   },
   {
    "fieldname": "attachments",

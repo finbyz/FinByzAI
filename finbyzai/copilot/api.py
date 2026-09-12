@@ -143,6 +143,7 @@ def get_run(run):
         "error": doc.error,
         "output": doc.output,
         "iterations": doc.iterations,
+        "duration": doc.duration,
         "pending_call": runner._json(doc.pending_call),
         "events": _replay(doc),
     }
@@ -270,6 +271,15 @@ def get_conversation(conversation):
         "model": doc.model,
         "messages": messages,
         "blocks": all_blocks,
+        # How long each turn took, so a reloaded conversation still says it.
+        "runs": {
+            row.name: {"duration": row.duration, "status": row.status}
+            for row in frappe.get_all(
+                "Copilot Run",
+                filters={"conversation": doc.name},
+                fields=["name", "duration", "status"],
+            )
+        },
     }
     if active:
         # Resubscribe rather than showing the last turn as failed.

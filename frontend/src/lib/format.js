@@ -43,15 +43,17 @@ export function plainText(value) {
 }
 
 /**
- * One cell. `key` decides whether a number is money; nothing else is inferred.
- * Empty is an em dash, never "" — a blank cell reads as a broken table.
+ * One cell. `format` is what the block declared for the column ("currency" |
+ * "number", stamped from the doctype's own meta server-side); the column name is
+ * only read when nothing was declared. Empty is an em dash, never "" — a blank
+ * cell reads as a broken table.
  */
-export function formatCell(value, key) {
+export function formatCell(value, key, format) {
 	if (value === null || value === undefined || value === "") return "—";
 	if (typeof value === "boolean") return value ? __("Yes") : __("No");
 	if (typeof value === "number") {
-		const fieldtype = looksMonetary(key) ? "Currency" : "Float";
-		return frappe.format(value, { fieldtype }, { only_value: true });
+		const money = format ? format === "currency" : looksMonetary(key);
+		return frappe.format(value, { fieldtype: money ? "Currency" : "Float" }, { only_value: true });
 	}
 	if (typeof value === "object") return "—"; // an empty {} / []; anything else renders elsewhere
 	return plainText(value);

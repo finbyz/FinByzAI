@@ -2,7 +2,7 @@
 import { computed, ref } from "vue";
 import { TextInput } from "@/lib/ui";
 import { humanize } from "@/lib/tools";
-import { formatCell, looksMonetary, plainText } from "@/lib/format";
+import { formatCell, plainText } from "@/lib/format";
 import { __ } from "@/lib/translate";
 
 // A records table inside the chat, on frappe-ui's ListView vocabulary: the header
@@ -39,7 +39,9 @@ const columns = computed(() => {
 			key: col.key,
 			label: col.label || humanize(col.key),
 			align: col.align || (isNumericColumn(col.key) ? "right" : "left"),
-			monetary: looksMonetary(col.key),
+			// Declared by the block when the server knew the fieldtype; the column
+			// name is only guessed from when it did not.
+			format: col.format || null,
 		}));
 });
 
@@ -84,7 +86,7 @@ function isNumericColumn(key) {
 
 // Formatting lives in lib/format.js — the desk's formatters, with the two traps
 // (HTML-wrapped numbers, HTML inside report cells) handled in one place.
-const cell = formatCell;
+const cell = (value, col) => formatCell(value, col.key, col.format);
 
 const isLink = (col, row) =>
 	Boolean(props.block.doctype) && col.key === "name" && typeof row[col.key] === "string";
@@ -198,7 +200,7 @@ function exportCsv() {
 								class="text-ink-blue-3 hover:underline"
 								>{{ row[col.key] }}</a
 							>
-							<template v-else>{{ cell(row[col.key], col.key) }}</template>
+							<template v-else>{{ cell(row[col.key], col) }}</template>
 						</td>
 					</tr>
 					<tr v-if="!rows.length">
@@ -217,7 +219,7 @@ function exportCsv() {
 							:class="col.align === 'right' ? 'text-right tabular-nums' : 'text-left'"
 						>
 							<template v-if="totals[col.key] !== undefined">{{
-								cell(totals[col.key], col.key)
+								cell(totals[col.key], col)
 							}}</template>
 							<template v-else-if="i === 0">{{ __("Total") }}</template>
 						</td>

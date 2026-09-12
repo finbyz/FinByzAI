@@ -14,8 +14,13 @@ import { currencySymbol, looksMonetary } from "@/lib/format";
 // so "168.3M" is still frappe-ui's compaction, not ours.
 const props = defineProps({ block: { type: Object, required: true } });
 
+// The block says what it is when the tool knew — a count is a count, a SUM of a
+// Currency field is money. Only when nothing was declared does the label get
+// read, which is how a tile titled "Sales Invoice (filtered)" came out as "Rp 0".
 const symbol = computed(() => {
 	if (props.block.unit) return props.block.unit;
+	if (props.block.format === "currency") return currencySymbol();
+	if (props.block.format) return "";
 	return looksMonetary(props.block.label) ? currencySymbol() : "";
 });
 
