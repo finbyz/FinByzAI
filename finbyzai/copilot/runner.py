@@ -149,6 +149,8 @@ def _loop(doc, settings, resumed=None):
     stalled = False
 
     while doc.iterations < max_iterations:
+        if _stopped(doc):
+            return
         doc.db_set("iterations", doc.iterations + 1, update_modified=False)
 
         history = _wellformed(
@@ -190,6 +192,10 @@ def _loop(doc, settings, resumed=None):
             return
 
         for call in tool_calls:
+            # Checked again here: the model call above can take half a minute, and a
+            # stop pressed during it must land before anything is written.
+            if _stopped(doc):
+                return
             name, arguments, call_id = call.get("name"), call.get("args") or {}, call.get("id")
 
             # `registry.get` throws for anything unregistered, and a tool that came
@@ -393,6 +399,8 @@ def _pause(doc, call_id: str, name: str, arguments: dict, kind: str = "approval"
     a question (the agent needs a fact it cannot discover). Both persist the call so
     the answer can arrive minutes later, in a different worker.
     """
+    if _stopped(doc):
+        return
     call = {"id": call_id, "name": name, "arguments": arguments, "kind": kind, "note": note}
     doc.db_set(
         {
@@ -711,6 +719,17 @@ def publish(run: str, event: dict):
     frappe.publish_realtime(USER_CHANNEL, payload, user=frappe.session.user)
 
 
+def _stopped(doc) -> bool:
+    """Has the user pressed Stop since this turn began?
+
+    Stop is a flag the worker has to look at. `api.stop_run` sets the status and
+    returns at once — it cannot interrupt a worker mid-call — so if the loop never
+    reads it, Stop stops nothing: the agent kept calling the model, kept running
+    tools, and finished by writing "Completed" over the status the user had just set.
+    """
+    return frappe.db.get_value("Copilot Run", doc.name, "status") == "Stopped"
+
+
 def _elapsed(doc) -> float:
     """Seconds from the run being queued to now, to one decimal.
 
@@ -722,6 +741,10 @@ def _elapsed(doc) -> float:
 
 
 def _complete(doc, output: str):
+    # A tool call already in flight can land after the stop; its result is kept but
+    # the run stays Stopped, and no "done: Completed" goes out to contradict it.
+    if _stopped(doc):
+        return
     seconds = _elapsed(doc)
     doc.db_set(
         {"status": "Completed", "output": output or "", "duration": seconds}, update_modified=False
@@ -739,6 +762,8 @@ def _fail(doc, message: str):
     The message rides on `done` too. The two events travel independently, and a client
     that only catches the second one must still be able to show what went wrong.
     """
+    if _stopped(doc):
+        return
     doc.db_set(
         {"status": "Failed", "error": message, "duration": _elapsed(doc)}, update_modified=False
     )

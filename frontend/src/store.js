@@ -352,11 +352,13 @@ async function send(text) {
 			abortController.signal
 		);
 	} catch (e) {
-		if (e.name === "AbortError") assistant.pending = false;
-		else failMessage(assistant, e);
+		if (e.name !== "AbortError") failMessage(assistant, e);
 	} finally {
 		abortController = null;
 		sending.value = false;
+		// A stream that ended without a `done` — aborted, or the connection simply
+		// went away — must not leave the turn looking like it is still working.
+		assistant.pending = false;
 		requestScroll();
 		focusTick.value++;
 	}
@@ -381,11 +383,11 @@ async function resume(answers, pausedMsg) {
 			abortController.signal
 		);
 	} catch (e) {
-		if (e.name === "AbortError") pausedMsg.pending = false;
-		else failMessage(pausedMsg, e);
+		if (e.name !== "AbortError") failMessage(pausedMsg, e);
 	} finally {
 		abortController = null;
 		sending.value = false;
+		pausedMsg.pending = false;
 		requestScroll();
 		focusTick.value++;
 	}
@@ -396,6 +398,15 @@ async function resume(answers, pausedMsg) {
 function stopRun() {
 	if (!sending.value) return;
 	abortController?.abort();
+
+	// The abort ends the stream at once, so no `done` event is coming — the turn has
+	// to be closed here. Without this the message stayed `pending` and the panel
+	// shimmered "Working…" forever while the composer had gone back to Send.
+	const last = messages.value[messages.value.length - 1];
+	if (last?.role === "assistant") {
+		last.pending = false;
+		last.stopped = true;
+	}
 	const rn = runName.value;
 	// Stopped before run_started arrived: no run name yet, so finalize any Running
 	// run on the session instead so the next turn isn't briefly blocked.
@@ -576,6 +587,7 @@ function pushAssistant(pending = true) {
 		questions: [],
 		runName: null,
 		duration: null,
+		stopped: false,
 	};
 	messages.value.push(msg);
 	// Return the reactive proxy, not the raw object — streaming mutates this after

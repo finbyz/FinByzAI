@@ -593,5 +593,31 @@ for (const [name, ok] of [
 ]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
 store.sending.value = false;
 
+
+// ── Stop ends the turn in the view ──────────────────────────────────────────
+// The abort ends the stream, so no `done` arrives; the message has to stop being
+// pending here or the panel shimmers "Working…" with nothing running.
+store.messages.value.splice(0);
+store.sessionName.value = null;
+DATA.start_run = { run: "RUN-STOP", conversation: "c12" };
+DATA.stop_run = { status: "Stopped" };
+DATA.get_run = () => ({ run: "RUN-STOP", status: "Running", error: null, output: null, iterations: 1, duration: null, pending_call: null, events: [] });
+
+store.send("count everything, slowly");
+await new Promise((r) => setTimeout(r, 200));
+const turn2 = () => store.messages.value[1];
+for (const [name, ok] of [
+	["stop: working while it runs", turn2().pending === true && root.textContent.includes("Working…")],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
+store.stopRun();
+await new Promise((r) => setTimeout(r, 200));
+for (const [name, ok] of [
+	["stop: the turn is no longer pending", turn2().pending === false],
+	["stop: 'Working…' is gone", !root.textContent.includes("Working…")],
+	["stop: the composer is usable again", store.sending.value === false && root.querySelector("textarea").disabled === false],
+	["stop: and it says it was stopped", root.textContent.includes("Stopped")],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
 console.log(bad ? `\n${bad} FAILURES` : "\nall checks passed");
 process.exit(bad ? 1 : 0);
