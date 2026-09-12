@@ -13,6 +13,8 @@ dict syntax") and the models don't know that; this tool takes a plain
 group_by/measure/agg and builds the dict form itself.
 """
 
+import json
+
 import frappe
 
 from finbyzai.copilot import blocks
@@ -24,6 +26,142 @@ AGG_LIMIT = 200
 # 200-row read should not spend 200 rows of context.
 PREVIEW_ROWS = 20
 AGGREGATIONS = {"sum": "SUM", "count": "COUNT", "avg": "AVG", "min": "MIN", "max": "MAX"}
+
+
+# ── filters ───────────────────────────────────────────────────────────────────
+
+# Every operator Frappe understands, so a mistyped one is caught here with a hint
+# rather than turning into a confusing SQL error.
+OPERATORS = frozenset(
+    (
+        "=", "!=", ">", "<", ">=", "<=", "like", "not like", "in", "not in",
+        "between", "is", "descendants of", "ancestors of", "not descendants of",
+        "not ancestors of",
+    )
+)
+
+
+def normalize_filters(doctype: str, filters):
+    """Accept every filter shape a model plausibly writes, and reject the rest loudly.
+
+    This is not politeness. Two of these shapes were *silently* returning the wrong
+    answer — a JSON string matched nothing, and the four-element form with a leading
+    doctype was ignored by `frappe.db.count`, which answered 134 for a filter that
+    should have matched 0 — and a third ("between" with the two dates unwrapped, the
+    most natural thing to write) failed with "too many values to unpack", which tells
+    the model nothing it can act on. A wrong number presented as fact is the worst
+    outcome this app can produce, so the shapes are handled here instead.
+
+    Accepted:
+        {"status": "Overdue"}                       plain equality
+        {"posting_date": [">=", "2026-01-01"]}      operator and value
+        {"posting_date": ["between", a, b]}         two values, unwrapped
+        {"status": ["in", "Paid", "Overdue"]}       values, unwrapped
+        [["posting_date", ">=", "2026-01-01"]]      Frappe's list form
+        [["Sales Invoice", "status", "=", "Paid"]]  the same, with the doctype
+        '{"status": "Overdue"}'                     a JSON string
+        {"filters": {...}}                          double-wrapped
+    """
+    if not filters:
+        return {}
+
+    if isinstance(filters, str):
+        text = filters.strip()
+        try:
+            filters = json.loads(text)
+        except ValueError:
+            frappe.throw(
+                f"`filters` was the string {text[:80]!r}, which is not JSON. Pass an "
+                'object like {"status": "Overdue"}.',
+                title="Bad filters",
+            )
+
+    # Models sometimes wrap the argument in its own name.
+    while isinstance(filters, dict) and set(filters) == {"filters"}:
+        filters = filters["filters"]
+
+    if isinstance(filters, dict):
+        return {key: _condition(key, value) for key, value in filters.items()}
+
+    if isinstance(filters, list | tuple):
+        out = {}
+        for item in filters:
+            if isinstance(item, dict):
+                out.update(normalize_filters(doctype, item))
+                continue
+            if not isinstance(item, list | tuple):
+                frappe.throw(
+                    f"`filters` contained {item!r}. Each condition must be "
+                    '[fieldname, operator, value].',
+                    title="Bad filters",
+                )
+            parts = list(item)
+            # [doctype, fieldname, operator, value] — Frappe's own long form. It is
+            # only meaningful for a joined read, and `count` drops it silently, so the
+            # doctype is removed when it is this one and refused when it is another.
+            if len(parts) == 4:
+                if parts[0] != doctype:
+                    frappe.throw(
+                        f"`filters` asked about {parts[0]}, but this call reads {doctype}. "
+                        "Read one doctype at a time.",
+                        title="Bad filters",
+                    )
+                parts = parts[1:]
+            if len(parts) == 3:
+                out[parts[0]] = _condition(parts[0], [parts[1], parts[2]])
+            elif len(parts) == 2:
+                out[parts[0]] = _condition(parts[0], parts[1])
+            else:
+                frappe.throw(
+                    f"`filters` contained {item!r}. Each condition must be "
+                    '[fieldname, operator, value].',
+                    title="Bad filters",
+                )
+        return out
+
+    frappe.throw(
+        f"`filters` must be an object, not {type(filters).__name__}. "
+        'For example {"status": "Overdue"}.',
+        title="Bad filters",
+    )
+
+
+def _condition(field: str, value):
+    """One field's condition, in the [operator, value] shape Frappe expects."""
+    if not isinstance(value, list | tuple):
+        return value
+
+    parts = list(value)
+    if not parts:
+        frappe.throw(f"`filters` gave {field} an empty condition.", title="Bad filters")
+
+    operator = parts[0] if isinstance(parts[0], str) else None
+    if not operator or operator.lower() not in OPERATORS:
+        # A bare list of values is an `in`, which is what a model means by
+        # {"status": ["Paid", "Overdue"]}.
+        return ["in", parts]
+
+    operator = operator.lower()
+    rest = parts[1:]
+    if len(rest) == 1:
+        return [operator, rest[0]]
+    # ["between", a, b] and ["in", a, b, c] — the values written out rather than
+    # wrapped in their own list. This is the most common thing a model writes.
+    if operator == "between":
+        if len(rest) != 2:
+            frappe.throw(
+                f"`filters` gave {field} a `between` with {len(rest)} values. "
+                "It takes exactly two, the start and the end.",
+                title="Bad filters",
+            )
+        return [operator, rest]
+    if operator in ("in", "not in"):
+        return [operator, rest]
+    frappe.throw(
+        f"`filters` gave {field} the condition {value!r}. Use [operator, value], "
+        'for example ["between", ["2026-01-01", "2026-03-31"]].',
+        title="Bad filters",
+    )
 
 
 @tool(
@@ -44,8 +182,9 @@ def read(
     parent: str | None = None,
 ) -> dict:
     limit = max(1, min(int(limit or 50), ROW_LIMIT))
+    conditions = normalize_filters(doctype, filters)
     kwargs = {
-        "filters": filters or {},
+        "filters": conditions,
         "fields": fields or _default_fields(doctype),
         "limit": limit + 1,
         "ignore_ifnull": True,
@@ -107,12 +246,13 @@ def aggregate(
         raise frappe.ValidationError(f"`measure` is required for agg={agg_key!r} (the field to total)")
 
     limit = max(1, min(int(limit or 20), AGG_LIMIT))
+    conditions = normalize_filters(doctype, filters)
     alias = "value"
     function = {AGGREGATIONS[agg_key]: "*" if agg_key == "count" else measure, "as": alias}
 
     rows = frappe.get_list(
         doctype,
-        filters=filters or {},
+        filters=conditions,
         fields=[group_by, function],
         group_by=group_by,
         order_by=f"{alias} {'asc' if ascending else 'desc'}",
@@ -161,7 +301,7 @@ def aggregate(
 def count(doctype: str, filters: dict | None = None) -> dict:
     if not frappe.has_permission(doctype, "read"):
         raise frappe.PermissionError(f"No permission to read {doctype}")
-    total = frappe.db.count(doctype, filters or {})
+    total = frappe.db.count(doctype, normalize_filters(doctype, filters))
     return blocks.attach(
         {"doctype": doctype, "count": total},
         # A count is a count: without saying so, a tile labelled "Sales Invoice

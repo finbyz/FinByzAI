@@ -250,11 +250,58 @@ def _schema_changes_allowed() -> bool:
     )
 
 
+# Columns that decide what a document *is*, rather than what it says. `doc.update()`
+# takes them like any other field: watching a run, the model put `docstatus: 1` in a
+# create and Frappe inserted a submitted document — no submit(), no on_submit hooks,
+# so a Sales Invoice like that is posted with no ledger entries behind it. The
+# approval card, meanwhile, said only "Create 1 record".
+CONTROL_FIELDS = frozenset(
+    (
+        "docstatus",
+        "owner",
+        "creation",
+        "modified",
+        "modified_by",
+        "parent",
+        "parenttype",
+        "parentfield",
+        "idx",
+        "_user_tags",
+        "_comments",
+        "_assign",
+        "_liked_by",
+    )
+)
+
+
+def _assert_no_control_fields(doctype: str, values):
+    """Refuse the fields that change a document's state or provenance."""
+    if isinstance(values, list | tuple):
+        for item in values:
+            _assert_no_control_fields(doctype, item)
+        return
+    if not isinstance(values, dict):
+        return
+    found = sorted(set(values) & CONTROL_FIELDS)
+    if found:
+        raise frappe.ValidationError(
+            f"{', '.join(found)} cannot be set through this tool. "
+            "Submitting, cancelling and re-assigning are actions, not fields: create "
+            "or update the document, then call run_action(action='submit') — which "
+            "runs the document's own lifecycle and asks the user again."
+        )
+    # Child rows carry the same trap.
+    for value in values.values():
+        if isinstance(value, list | tuple):
+            _assert_no_control_fields(doctype, value)
+
+
 def _assert_known_fields(doctype: str, values: dict):
     """Frappe's doc.update() silently drops keys that aren't fields, so a typo would
     look like a success and the model would report having set something it didn't."""
     if not isinstance(values, dict):
         return
+    _assert_no_control_fields(doctype, values)
     meta = frappe.get_meta(doctype)
     known = {df.fieldname for df in meta.fields}
     known.update(frappe.model.default_fields)

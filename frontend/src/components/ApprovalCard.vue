@@ -107,7 +107,13 @@ function sendOther() {
 			</span>
 			<div class="min-w-0 flex-1">
 				<p class="break-words text-base font-medium text-ink-gray-8">{{ title }}</p>
-				<p class="pt-0.5 text-p-sm text-ink-gray-5">
+				<!-- A retried write says what the site rejected the first time. Being
+				     asked twice for what looks like the same thing, with no reason
+				     given, is how a confirmation stops meaning anything. -->
+				<p v-if="question.note" class="pt-0.5 text-p-sm text-ink-gray-6">
+					{{ __("The first attempt was rejected: {0}", [question.note]) }}
+				</p>
+				<p v-else class="pt-0.5 text-p-sm text-ink-gray-5">
 					{{
 						isTool
 							? __("Copilot is waiting for you before it changes anything.")
