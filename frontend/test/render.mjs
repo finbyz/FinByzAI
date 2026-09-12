@@ -31,7 +31,16 @@ const DATA = {
 	get_agents: [{ name: "Copilot", title: "Copilot", llm: "gpt" }, { name: "Nayla", title: "Nayla BI" }],
 	get_models: [{ name: "m1", title: "Sonnet", provider: "Anthropic" }],
 	get_knowledge_bases: [],
-	list_conversations: [],
+	list_conversations: [
+		{ name: "c1", title: "Which customers slipped away?", modified: new Date().toISOString() },
+		{ name: "c2", title: "Dormant stock value", modified: new Date(Date.now() - 3 * 864e5).toISOString() },
+		{ name: "c3", title: "Margin trend by month", modified: new Date(Date.now() - 40 * 864e5).toISOString() },
+		{ name: "c4", title: "What should we manufacture next?", modified: new Date(Date.now() - 2 * 864e5).toISOString() },
+		{ name: "c5", title: "Purchase plan for this week", modified: new Date(Date.now() - 90 * 864e5).toISOString() },
+	],
+	delete_conversation: { deleted: 1 },
+	get_conversation: { conversation: "c2", title: "Dormant stock value", agent: "Copilot", messages: [], blocks: [] },
+	recover_conversation: { recovered: 0 },
 	get_tools: { tools: [{ name: "read" }, { name: "selling_intelligence" }] },
 	get_settings: {},
 };
@@ -62,6 +71,12 @@ window.__ = (s, args) =>
 window.$ = $;
 window.jQuery = $;
 window.frappe.socketio = null;
+
+// jsdom has no layout, so it ships no scrollTo; the message list calls it on
+// every new part.
+window.Element.prototype.scrollTo = function (options) {
+	if (options && typeof options.top === "number") this.scrollTop = options.top;
+};
 
 window.eval(js);
 handlers["app_ready"]?.();
@@ -227,6 +242,87 @@ for (const [name, ok] of [
 	["settings: opens", root.textContent.includes("Agent & model")],
 	["settings: nav icons are lucide", root.innerHTML.includes("lucide-cpu")],
 	["settings: select on the panel menu", root.innerHTML.includes("shadow-2xl")],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
+
+// ── the conversation list ───────────────────────────────────────────────────
+store.settingsOpen.value = false;
+for (const [name, ok] of [
+	["list: open with full screen on load", store.sidebarOpen.value === true],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
+store.fullscreen.value = false;
+await tick();
+for (const [name, ok] of [
+	["list: closed with the side panel", store.sidebarOpen.value === false],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
+store.sidebarOpen.value = true;
+await tick();
+let side = root.querySelector("aside");
+for (const [name, ok] of [
+	["list: renders", Boolean(side)],
+	["list: on frappe-ui's sidebar ground", side?.className.includes("bg-surface-menu-bar")],
+	["list: grouped by date", /Today/.test(side.textContent) && /Previous 7 days/.test(side.textContent) && /Earlier/.test(side.textContent)],
+	["list: no count badge", !/\b5\b/.test(side.textContent)],
+	["list: no second New chat", !/New chat/i.test(side.textContent)],
+	["list: search shown only past the threshold", !side.querySelector("input")],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
+// Picking one loads it and, in the side panel, closes the list.
+const row = [...side.querySelectorAll("button")].find((b) => b.textContent.includes("Dormant stock"));
+row?.click();
+await tick();
+for (const [name, ok] of [
+	["pick: switches session", store.sessionName.value === "c2"],
+	["pick: closes the drawer", store.sidebarOpen.value === false],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
+// Deleting asks first.
+store.sidebarOpen.value = true;
+await tick();
+side = root.querySelector("aside");
+const trash = [...side.querySelectorAll("button")].find((b) => b.innerHTML.includes("lucide-trash-2"));
+trash?.click();
+await tick();
+for (const [name, ok] of [
+	["delete: confirms in the row", root.querySelector("aside").textContent.includes("Delete this chat?")],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
+// Past the threshold the search appears, and it narrows the list.
+store.recentSessions.value = [
+	...store.recentSessions.value,
+	...Array.from({ length: 4 }, (_, i) => ({
+		name: `x${i}`, title: `Older chat ${i}`, modified: new Date(Date.now() - 200 * 864e5).toISOString(),
+	})),
+];
+await tick();
+side = root.querySelector("aside");
+const search = side.querySelector("input");
+for (const [name, ok] of [
+	["search: appears past the threshold", Boolean(search)],
+	["search: is a frappe-ui field", Boolean(search) && search.className.includes("rounded")],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
+search.value = "dormant";
+search.dispatchEvent(new window.Event("input", { bubbles: true }));
+await new Promise((r) => setTimeout(r, 300));
+side = root.querySelector("aside");
+for (const [name, ok] of [
+	["search: filters", side.textContent.includes("Dormant stock") && !side.textContent.includes("Older chat")],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+search.value = "";
+search.dispatchEvent(new window.Event("input", { bubbles: true }));
+await new Promise((r) => setTimeout(r, 300));
+
+// Full screen gives it a pane of its own, and the header stays above both.
+store.fullscreen.value = true;
+await tick();
+for (const [name, ok] of [
+	["fullscreen: list becomes a pane", root.querySelector("aside")?.className.includes("w-60")],
+	["fullscreen: header above both panes", root.firstElementChild.firstElementChild.tagName === "HEADER"],
+	["header: toggle is lucide", root.innerHTML.includes("lucide-panel-left")],
+	["header: every control is a lucide mask", (root.querySelector("header").innerHTML.match(/lucide-/g) || []).length >= 4],
 ]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
 
 console.log(bad ? `\n${bad} FAILURES` : "\nall checks passed");

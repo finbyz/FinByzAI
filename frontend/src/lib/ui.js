@@ -4,6 +4,7 @@ export { default as Button } from "frappe-ui/src/components/Button/Button.vue";
 export { default as Badge } from "frappe-ui/src/components/Badge/Badge.vue";
 export { default as Spinner } from "frappe-ui/src/components/Spinner.vue";
 export { default as Switch } from "frappe-ui/src/components/Switch/Switch.vue";
+export { default as TextInput } from "frappe-ui/src/components/TextInput/TextInput.vue";
 // No Tooltip: frappe-ui's portals its bubble to document.body, outside the
 // #copilot-root prefix every rule in this bundle carries, so it renders unstyled.
 // components/Tip.vue is the in-panel stand-in.

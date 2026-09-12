@@ -40,6 +40,27 @@ const attachments = ref([]);
 const sending = ref(false);
 const loaded = ref(false);
 const fullscreen = ref(false);
+const sidebarOpen = ref(false);
+
+function toggleSidebar(val) {
+	sidebarOpen.value = typeof val === "boolean" ? val : !sidebarOpen.value;
+}
+
+async function deleteSession(name) {
+	if (!name) return;
+	try {
+		await api.deleteConversation(name);
+		if (sessionName.value === name) {
+			newChat();
+		}
+		await refreshHistory();
+	} catch (e) {
+		frappe.show_alert?.({
+			message: __("Failed to delete conversation"),
+			indicator: "red",
+		});
+	}
+}
 
 // Bumped whenever new content arrives / focus is wanted; views watch & react.
 const scrollTick = ref(0);
@@ -69,10 +90,6 @@ function modelLogo(name) {
 function agentLogo(name) {
 	if (!name) return null;
 	return agents.value.find((a) => a.name === name)?.logo || null;
-}
-function knowledgeLabel(name) {
-	if (!name) return null;
-	return knowledgeBases.value.find((k) => k.name === name)?.title || name;
 }
 function setKnowledgeBase(name) {
 	selectedKnowledgeBase.value = name || null;
@@ -273,19 +290,8 @@ async function switchSession(name) {
 			built[i].interrupted = true;
 	}
 
-	await restoreFeedback(name, seq);
 	requestScroll();
 	await restorePausedRun(name);
-}
-
-async function restoreFeedback(session, seq) {
-	const runs = await api.getRunFeedback(session).catch(() => []);
-	if (seq !== switchSeq || !runs.length) return;
-	const byRun = new Map(runs.map((r) => [r.name, r]));
-	for (const m of messages.value) {
-		const fb = m.runName && byRun.get(m.runName);
-		if (fb) m.feedback = { rating: fb.feedback_rating, comment: fb.feedback_comment || "" };
-	}
 }
 
 async function restorePausedRun(session) {
@@ -386,18 +392,6 @@ function stopRun() {
 	// run on the session instead so the next turn isn't briefly blocked.
 	if (rn) api.stopRun(rn).catch(() => {});
 	else if (sessionName.value) api.recoverSession(sessionName.value).catch(() => {});
-}
-
-// Record thumbs feedback on a finished turn (rating "None" clears it). A Down comment
-// is saved as agent memory server-side. Local state updates only after the server accepts.
-async function submitFeedback(msg, rating, comment = "") {
-	const result = await api.submitFeedback({
-		run_name: msg.runName,
-		rating,
-		comment: comment || null,
-	});
-	msg.feedback = rating === "None" ? null : { rating, comment };
-	return result;
 }
 
 // Records one answer and stamps the tool's approval state; once every question
@@ -524,7 +518,6 @@ function pushAssistant(pending = true) {
 		pending,
 		questions: [],
 		runName: null,
-		feedback: null,
 	};
 	messages.value.push(msg);
 	// Return the reactive proxy, not the raw object — streaming mutates this after
@@ -578,7 +571,6 @@ export function useStore() {
 		agentLogo,
 		knowledgeBases,
 		selectedKnowledgeBase,
-		knowledgeLabel,
 		setKnowledgeBase,
 		// state
 		agents,
@@ -592,6 +584,7 @@ export function useStore() {
 		sending,
 		loaded,
 		fullscreen,
+		sidebarOpen,
 		toolApproval,
 		scrollTick,
 		forceScroll,
@@ -611,10 +604,11 @@ export function useStore() {
 		setModel,
 		newChat,
 		switchSession,
+		deleteSession,
+		toggleSidebar,
 		send,
 		stopRun,
 		answerQuestion,
-		submitFeedback,
 		attachFiles,
 		removeAttachment,
 	};
