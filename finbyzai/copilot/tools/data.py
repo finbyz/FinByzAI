@@ -164,6 +164,38 @@ def _condition(field: str, value):
     )
 
 
+def scope_to_live(doctype: str, conditions: dict):
+    """Exclude cancelled documents, and say whether drafts are in the answer.
+
+    Watching six models answer "which customer bought the most this year", the ones
+    that used `aggregate` reported 28.8M and the one that used the domain tool
+    reported 19.8M. The domain tool was right: it filters docstatus, and this site
+    has 34 cancelled Sales Invoices in 2026. A cancelled document is not data, so it
+    is excluded unless the model asked about docstatus itself — and because a draft
+    *is* data but is not revenue, the count of drafts is handed back so the model can
+    say so rather than quietly mixing them in.
+    """
+    if "docstatus" in conditions:
+        return conditions, None
+    try:
+        if not frappe.get_meta(doctype).is_submittable:
+            return conditions, None
+    except Exception:
+        return conditions, None
+
+    scoped = {**conditions, "docstatus": ["!=", 2]}
+    drafts = frappe.db.count(doctype, {**conditions, "docstatus": 0})
+    if drafts:
+        note = (
+            f"Cancelled documents are excluded. {drafts} of these are drafts — add "
+            'docstatus=1 to the filters for submitted documents only, which is what '
+            "money and volume questions usually mean."
+        )
+    else:
+        note = "Cancelled documents are excluded; every record here is submitted."
+    return scoped, note
+
+
 @tool(
     "read",
     """Read records. `filters` is a dict like {"status": "Overdue"} or
@@ -182,7 +214,7 @@ def read(
     parent: str | None = None,
 ) -> dict:
     limit = max(1, min(int(limit or 50), ROW_LIMIT))
-    conditions = normalize_filters(doctype, filters)
+    conditions, scope = scope_to_live(doctype, normalize_filters(doctype, filters))
     kwargs = {
         "filters": conditions,
         "fields": fields or _default_fields(doctype),
@@ -202,6 +234,7 @@ def read(
         "doctype": doctype,
         "rows": rows[:PREVIEW_ROWS],
         "count": len(rows),
+        "scope": scope,
         "truncated": truncated,
         "hint": "More rows exist. Narrow the filters or aggregate instead of paging."
         if truncated
@@ -246,7 +279,7 @@ def aggregate(
         raise frappe.ValidationError(f"`measure` is required for agg={agg_key!r} (the field to total)")
 
     limit = max(1, min(int(limit or 20), AGG_LIMIT))
-    conditions = normalize_filters(doctype, filters)
+    conditions, scope = scope_to_live(doctype, normalize_filters(doctype, filters))
     alias = "value"
     function = {AGGREGATIONS[agg_key]: "*" if agg_key == "count" else measure, "as": alias}
 
@@ -266,6 +299,7 @@ def aggregate(
         "agg": agg_key,
         "rows": rows,
         "count": len(rows),
+        "scope": scope,
     }
     if not rows:
         return payload
@@ -301,9 +335,10 @@ def aggregate(
 def count(doctype: str, filters: dict | None = None) -> dict:
     if not frappe.has_permission(doctype, "read"):
         raise frappe.PermissionError(f"No permission to read {doctype}")
-    total = frappe.db.count(doctype, normalize_filters(doctype, filters))
+    conditions, scope = scope_to_live(doctype, normalize_filters(doctype, filters))
+    total = frappe.db.count(doctype, conditions)
     return blocks.attach(
-        {"doctype": doctype, "count": total},
+        {"doctype": doctype, "count": total, "scope": scope},
         # A count is a count: without saying so, a tile labelled "Sales Invoice
         # (filtered)" was given the site's currency symbol and read "Rp 0".
         blocks.kpi(f"{doctype}{' (filtered)' if filters else ''}", total, format="number"),
