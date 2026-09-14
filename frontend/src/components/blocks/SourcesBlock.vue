@@ -1,4 +1,5 @@
 <script setup>
+import { ref } from "vue";
 import { hostnameOf } from "@/lib/tools";
 import { __ } from "@/lib/translate";
 
@@ -16,6 +17,15 @@ import { __ } from "@/lib/translate";
 // number would point at nothing. A card carries its own context — title, domain
 // — and needs no anchor.
 defineProps({ items: { type: Array, required: true } });
+
+// OpenRouter's citation doesn't carry a favicon, but nothing here needs to fetch
+// one specially: DuckDuckGo's own icon service resolves a bare domain to
+// whatever that site already serves, with no key and no request through this
+// app's own backend. A domain with none — or a request that fails — falls back
+// to the plain globe glyph rather than a broken-image box; `broken` is a plain
+// per-render set of the domains that have already failed once.
+const broken = ref(new Set());
+const faviconOf = (url) => `https://icons.duckduckgo.com/ip3/${hostnameOf(url)}.ico`;
 </script>
 
 <template>
@@ -35,8 +45,16 @@ defineProps({ items: { type: Array, required: true } });
 				class="flex w-44 shrink-0 flex-col gap-1 rounded-lg border border-outline-gray-2 bg-surface-white p-2.5 transition-colors hover:border-outline-gray-3 hover:bg-surface-gray-1"
 			>
 				<p class="line-clamp-2 text-p-sm text-ink-gray-8">{{ item.title }}</p>
-				<p class="flex min-w-0 items-center gap-1 text-2xs text-ink-gray-4">
-					<span class="lucide-arrow-up-right size-3 shrink-0" aria-hidden="true"></span>
+				<p class="flex min-w-0 items-center gap-1.5 text-2xs text-ink-gray-4">
+					<img
+						v-if="!broken.has(hostnameOf(item.url))"
+						:src="faviconOf(item.url)"
+						class="size-3.5 shrink-0 rounded-[2px]"
+						alt=""
+						loading="lazy"
+						@error="broken.add(hostnameOf(item.url))"
+					/>
+					<span v-else class="lucide-globe size-3 shrink-0" aria-hidden="true"></span>
 					<span class="truncate">{{ hostnameOf(item.url) }}</span>
 				</p>
 			</a>

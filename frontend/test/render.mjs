@@ -788,6 +788,7 @@ for (const [name, ok] of [
 	["sources: a repeated url isn't shown twice", links.filter((a) => a.href.includes("example2.com")).length === 1],
 	["sources: opens in a new tab, not the panel", links.every((a) => a.target === "_blank" && a.rel.includes("noopener"))],
 	["sources: the domain is shown, not the full url", sourcesEl.textContent.includes("example1.com") && !sourcesEl.textContent.includes("https://")],
+	["sources: a favicon is requested per domain, free — no key, no backend round trip", links.every((a) => a.querySelector("img")?.src === `https://icons.duckduckgo.com/ip3/${a.href.match(/https?:\/\/([^/]+)/)[1]}.ico`)],
 ]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
 
 // No sources at all: no empty "Sources" row left behind.
