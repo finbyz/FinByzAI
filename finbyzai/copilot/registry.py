@@ -105,6 +105,7 @@ def load_tools():
         interact,
         memory,
         meta,
+        notify,
         reports,
         visualize,
         write,
