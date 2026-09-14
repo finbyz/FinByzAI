@@ -497,6 +497,7 @@ def get_settings():
             "default_model": settings.default_model,
             "max_iterations": settings.max_iterations,
             "auto_approve": bool(settings.auto_approve),
+            "enable_external_search": bool(settings.enable_external_search),
         },
     }
     # The prompt is long and only an admin can change it; don't ship it to everyone.
@@ -521,6 +522,7 @@ def save_settings(system=None, conversation=None):
             "default_model",
             "max_iterations",
             "auto_approve",
+            "enable_external_search",
             "system_prompt",
         )
         doc = frappe.get_single("Copilot Settings")

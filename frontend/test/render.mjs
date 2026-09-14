@@ -276,6 +276,27 @@ for (const [name, ok] of [
 	["settings: select on the panel menu", root.innerHTML.includes("shadow-2xl")],
 ]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
 
+// The Defaults pane, System Manager only — where external search is turned on.
+// Reopen so the settings watcher re-fetches with this data (it loads once per
+// open, on the transition to true).
+store.settingsOpen.value = false;
+await tick();
+DATA.get_settings = {
+	can_edit_system: true,
+	agents: [], models: [],
+	system: { enabled: true, max_iterations: 25, auto_approve: false, enable_external_search: false },
+};
+store.settingsOpen.value = true;
+await tick();
+const defaultsTab = [...root.querySelectorAll("button")].find((b) => b.textContent.includes("Defaults"));
+defaultsTab?.click();
+await tick();
+for (const [name, ok] of [
+	["settings: the external search toggle is there, off by default", root.textContent.includes("External web search")],
+	["settings: and says what it costs", root.textContent.includes("costs a small real amount")],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+store.settingsOpen.value = false;
+
 
 // ── the conversation list ───────────────────────────────────────────────────
 store.settingsOpen.value = false;

@@ -9,6 +9,7 @@
   "default_model",
   "max_iterations",
   "auto_approve",
+  "enable_external_search",
   "system_prompt"
  ],
  "fields": [
@@ -46,6 +47,13 @@
    "label": "Auto Approve",
    "default": "0",
    "description": "Skip the Approve/Reject card for write tools. Development only."
+  },
+  {
+   "fieldname": "enable_external_search",
+   "fieldtype": "Check",
+   "label": "Enable External Search",
+   "default": "0",
+   "description": "Lets the agent search the open web (through this site's own OpenRouter key) for anything outside this ERP. Off by default: each search sends the query to a third party and costs a small real amount. Turning this on is a deliberate decision, not a per-search approval — the agent will call it without asking each time once enabled."
   },
   {
    "fieldname": "system_prompt",
