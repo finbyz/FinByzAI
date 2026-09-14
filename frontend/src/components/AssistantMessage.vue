@@ -103,7 +103,7 @@ async function copy() {
 </script>
 
 <template>
-	<div class="copilot-parts group/msg flex flex-col">
+	<div class="copilot-parts flex flex-col">
 		<template v-for="(item, i) in items" :key="item.id">
 			<Prose v-if="item.kind === 'text'" :part="item.part" />
 			<div
@@ -136,17 +136,17 @@ async function copy() {
 
 		<div v-if="working" class="copilot-shimmer-text text-sm">{{ __("Working…") }}</div>
 
-		<!-- The footer: how long the turn took, and the one action it needs. The
-		     time is always there once the turn is done, because "why did that feel
-		     slow" is a real question; Copy appears on hover, because the answer is
-		     the deliverable and nothing else here is. -->
+		<!-- The footer: how long the turn took, and the two actions on it. All three
+		     sit at the same visibility — hiding Copy and Ask again behind a hover
+		     only works if the reader already knows they're there to go looking for,
+		     which defeats the point of putting them in reach at all. -->
 		<div
 			v-if="!message.pending && (answer || message.duration || message.stopped)"
 			class="flex items-center gap-1 text-xs text-ink-gray-4"
 		>
 			<Tip v-if="answer" :text="copied ? __('Copied') : __('Copy answer')">
 				<button
-					class="-ml-1 rounded p-1 opacity-0 transition-opacity focus-visible:opacity-100 group-hover/msg:opacity-100"
+					class="-ml-1 rounded p-1 hover:bg-surface-gray-2"
 					:aria-label="__('Copy answer')"
 					@click="copy"
 				>
@@ -159,7 +159,7 @@ async function copy() {
 			</Tip>
 			<Tip v-if="!sending" :text="__('Ask the same question again')">
 				<button
-					class="rounded p-1 opacity-0 transition-opacity focus-visible:opacity-100 group-hover/msg:opacity-100"
+					class="rounded p-1 hover:bg-surface-gray-2"
 					:aria-label="__('Ask again')"
 					@click="askAgain(message)"
 				>

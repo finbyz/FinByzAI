@@ -556,6 +556,19 @@ for (const [name, ok] of [
 	["footer: the turn says how long it took", tiles.includes("6.2s")],
 ]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
 
+// Copy and Ask again used to need a hover to even be seen — the duration beside
+// them never did. All three now sit at the same visibility: none of the three
+// buttons carries an opacity-hiding class, so nothing here depends on :hover to
+// become visible (jsdom does no layout, so this checks the classes that decide
+// visibility rather than a rendered opacity value).
+const footer = [...root.querySelectorAll("button")].filter(
+	(b) => b.querySelector(".lucide-copy, .lucide-rotate-ccw")
+);
+for (const [name, ok] of [
+	["footer: copy/ask-again buttons found", footer.length === 2],
+	["footer: neither needs a hover to appear", footer.every((b) => !/opacity-0|group-hover/.test(b.className))],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
 
 // ── the composer ────────────────────────────────────────────────────────────
 store.messages.value.splice(0);
