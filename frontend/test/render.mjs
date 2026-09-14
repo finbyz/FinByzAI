@@ -533,6 +533,25 @@ for (const [name, ok] of [
 	["retry: and does not claim it is waiting", !root.textContent.includes("waiting for you before")],
 ]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
 
+// send_email with a table attached: the title says so in words, and the raw call
+// id it was built from doesn't show up as a meaningless argument underneath.
+store.messages.value.splice(0);
+store.messages.value.push({
+	id: "a6", role: "assistant", pending: false, runName: "RUN-6", duration: null,
+	parts: [{ id: "e1", type: "tool", name: "send_email", label: "Sending Email", context: "Weekly numbers",
+		arguments: { to: ["me"], subject: "Weekly numbers", body: "See attached.", attach_from_call: "aggregate_9ngyk53c4wsy" },
+		result: null, approval: null }],
+	questions: [{ key: "e1", kind: "approval", prompt: 'Email me: "Weekly numbers" (with the full table attached)',
+		options: ["Approve", "Deny"], _showOther: false, _otherText: "", _answer: undefined }],
+});
+store.toolApproval.value = { send_email: true };
+await tick();
+for (const [name, ok] of [
+	["send_email: says the table is attached, in words", root.textContent.includes("with the full table attached")],
+	["send_email: the raw call id isn't shown as an argument", !root.textContent.includes("aggregate_9ngyk53c4wsy")],
+	["send_email: the real fields still are", root.textContent.includes("See attached.")],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
 // ── the footer, the declared formats ────────────────────────────────────────
 store.messages.value.splice(0);
 store.messages.value.push({

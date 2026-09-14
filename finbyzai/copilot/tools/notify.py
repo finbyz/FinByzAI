@@ -9,13 +9,24 @@ the site. It goes through `frappe.sendmail`, the same primitive
 `AIDigestSchedule.build_and_send` already uses for the scheduled briefing, so a
 message sent from the chat and a message sent by the digest go out through identical
 plumbing and land in the same Email Queue.
+
+`attach_from_call` is the same idea `visualize` is built on: the model writes the
+words, the data comes back out of a call it actually made. Asked to "email the table
+too", a model can only retype what it already summarized — the three rows it chose
+to mention, not the other twenty-one — so the full table goes out as a CSV read back
+from the tool call's own persisted result instead.
 """
+
+import csv
+import io
 
 import frappe
 
 from finbyzai.copilot.registry import tool
+from finbyzai.copilot.tools.visualize import rows_from_call
 
 MAX_RECIPIENTS = 20
+MAX_ATTACHMENT_ROWS = 5000
 
 # What "email me this" resolves to — the signed-in user's own address, and only that.
 # A model that could send to any name it heard in the conversation would be a data
@@ -36,7 +47,14 @@ SELF_ALIASES = {"me", "myself", "my email", "my own email", "my email address"}
 
     Link the email to a record the user is discussing by passing `reference_doctype`
     and `reference_name` (e.g. a Sales Invoice) — it will show up on that record's own
-    timeline in the desk, not only in the recipient's inbox.""",
+    timeline in the desk, not only in the recipient's inbox.
+
+    `attach_from_call` attaches the *complete* table behind an earlier tool call as a
+    CSV — every row it produced, not the handful you mentioned in `body`. Use it
+    whenever the user asks for "the table too" / "the full report" / "the data, not
+    just the summary": write "last" for the most recent call that produced a table,
+    or the exact id of an earlier one. Leave it out entirely for no attachment. You
+    cannot attach numbers you typed yourself — only a real call's own result.""",
     confirm=True,
     tags=["write"],
     label="Sending Email",
@@ -48,6 +66,7 @@ def send_email(
     cc: list | None = None,
     reference_doctype: str | None = None,
     reference_name: str | None = None,
+    attach_from_call: str | None = None,
 ) -> dict:
     recipients = _resolve(to, "to")
     cc_list = _resolve(cc or [], "cc")
@@ -62,6 +81,7 @@ def send_email(
         raise frappe.ValidationError("`body` is required — what should the email say?")
 
     reference_doctype, reference_name = _resolved_reference(reference_doctype, reference_name)
+    attachment = _csv_attachment(attach_from_call) if attach_from_call else None
 
     queue = frappe.sendmail(
         recipients=recipients,
@@ -71,6 +91,7 @@ def send_email(
         as_markdown=True,
         reference_doctype=reference_doctype,
         reference_name=reference_name,
+        attachments=[attachment] if attachment else None,
         now=True,
     )
     # frappe.sendmail can process a call with no error and still queue nothing: every
@@ -93,6 +114,7 @@ def send_email(
         "queue": queue.name,
         "reference_doctype": reference_doctype,
         "reference_name": reference_name,
+        "attachment": attachment["fname"] if attachment else None,
     }
 
 
@@ -117,6 +139,53 @@ def _resolve(addresses, field: str) -> list:
         if text not in out:
             out.append(text)
     return out
+
+
+def _csv_attachment(call_id: str) -> dict:
+    """The full rows an earlier tool call produced, as a CSV attachment — not the
+    sample the model saw, the same persisted result `visualize` draws its own
+    second view from. Refuses to fabricate a spreadsheet out of anything the model
+    could have invented: no rows, or rows that aren't flat records, is an error the
+    model can read and act on, not a blank or malformed attachment.
+    """
+    rows, source = rows_from_call(call_id)
+    if not rows:
+        raise frappe.ValidationError(
+            f"Call {call_id!r} produced no rows to attach. Fetch the data first, "
+            "then email it."
+        )
+    if not all(isinstance(row, dict) for row in rows):
+        raise frappe.ValidationError(
+            f"Call {call_id!r} did not return a table — nothing to attach as a CSV."
+        )
+    truncated = len(rows) > MAX_ATTACHMENT_ROWS
+    rows = rows[:MAX_ATTACHMENT_ROWS]
+
+    # One column order for every row: every key, first seen first — matches the
+    # panel's own table so the attachment reads in the same order the user saw it.
+    columns = []
+    for row in rows:
+        for key in row:
+            if key not in columns:
+                columns.append(key)
+
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=columns, extrasaction="ignore")
+    writer.writeheader()
+    for row in rows:
+        # A nested value (a dict/list inside a cell) has no cell to live in; written
+        # as JSON text rather than dropped, so the column still lines up across rows.
+        writer.writerow(
+            {k: frappe.as_json(v) if isinstance(v, dict | list) else v for k, v in row.items()}
+        )
+
+    # The same title the table already carries in the panel (see blocks.table's
+    # `title` and the doctype fallback) — "Reorder Recommendations.csv" rather than
+    # a filename built out of the call's own internal id.
+    label = (source or {}).get("title") or (source or {}).get("doctype") or "table"
+    slug = frappe.scrub(label).replace("_", "-")
+    name = f"{slug}{'-truncated' if truncated else ''}.csv"
+    return {"fname": name, "fcontent": buffer.getvalue().encode("utf-8")}
 
 
 def _resolved_reference(doctype: str | None, name: str | None):

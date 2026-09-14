@@ -509,7 +509,11 @@ def _summary(name: str, arguments: dict) -> str:
         who = arguments.get("to") or []
         shown = ", ".join(who[:3]) + (f" +{len(who) - 3} more" if len(who) > 3 else "")
         subject = (arguments.get("subject") or "").strip()
-        return f'Email {shown}: "{subject}"' if subject else f"Email {shown}" if shown else "Send an email"
+        # "with the full table attached" rather than leaving `attach_from_call` — a
+        # call id meaningless to the user — to show up as a raw argument below.
+        suffix = " (with the full table attached)" if arguments.get("attach_from_call") else ""
+        base = f'Email {shown}: "{subject}"' if subject else f"Email {shown}" if shown else "Send an email"
+        return base + suffix
     if name in _external_confirm:
         described = ", ".join(f"{k}={v!r}" for k, v in list((arguments or {}).items())[:3])
         return f"Run {registry.label_for(name)}" + (f" ({described})" if described else "")
@@ -853,6 +857,7 @@ KNOWLEDGE AND MEMORY:
 WRITING:
 - create / update / run_action / delete. The user is shown an Approve/Reject card before each one; that is expected, so state plainly what you are about to do.
 - send_email(to, subject, body) sends a real email through this site's mail settings. Write "me" in `to` or `cc` for the signed-in user's own address rather than asking them what it is — only ever their own address, never a guess at someone else's. Approval shows the exact recipients and body; do not tell the user it was sent before they answer that card.
+- When the user wants the table itself emailed, not just your summary of it — "send this to my email", "the table too", "the full report" — pass `attach_from_call="last"` (or the exact id of an earlier call). That attaches every row the call produced as a CSV; write `body` as the short interpretation you would say anyway, not a copy of the table.
 - If a tool returns an error, read it. `fields` lists what was missing, `hint` says what to do. Fix the arguments and retry. If a write partially succeeded, reuse the returned names instead of creating the records again.
 - Never retry a call whose error says retryable: false. Explain it to the user instead.
 

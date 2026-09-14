@@ -38,11 +38,19 @@ const title = computed(() => paragraphs.value[0].trim() || __("Confirm this step
 const body = computed(() => (isTool.value ? "" : paragraphs.value.slice(1).join("\n\n").trim()));
 
 // `execute`'s description became the title, so it would only repeat below.
+// `send_email`'s attach_from_call is an internal call id, not something a person
+// reads — the title already says "with the full table attached" for it.
 const args = computed(() => {
 	if (!isTool.value) return null;
-	if (props.tool.name !== "execute") return props.tool.arguments;
-	const { description, ...rest } = parseArgs(props.tool.arguments);
-	return rest;
+	if (props.tool.name === "execute") {
+		const { description, ...rest } = parseArgs(props.tool.arguments);
+		return rest;
+	}
+	if (props.tool.name === "send_email") {
+		const { attach_from_call, ...rest } = parseArgs(props.tool.arguments);
+		return rest;
+	}
+	return props.tool.arguments;
 });
 const showArgs = computed(() => hasArgs(args.value));
 
