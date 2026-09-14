@@ -26,6 +26,13 @@ const expanded = ref(false);
 
 const allRows = computed(() => props.block.rows || []);
 
+// What this table holds, in the header bar. A tool sets `title` when it has one
+// (a report's name, an unscrubbed result key, the sentence describing generated
+// code); `doctype` is the fallback for a plain doctype read, which already says
+// enough on its own. Neither is guaranteed — a hand-assembled table can still
+// have none, and the bar just carries the record count then, as before.
+const heading = computed(() => props.block.title || props.block.doctype || null);
+
 const hasValue = (key) =>
 	allRows.value.some((row) => row[key] !== null && row[key] !== undefined && row[key] !== "");
 
@@ -123,15 +130,18 @@ function exportCsv() {
 		<div
 			class="flex items-center gap-2 border-b border-outline-gray-1 px-2.5 py-1.5 text-ink-gray-6"
 		>
-			<span v-if="block.doctype" class="text-sm font-medium text-ink-gray-8">{{
-				block.doctype
-			}}</span>
-			<span class="rounded bg-surface-gray-2 px-1.5 py-0.5 text-xs text-ink-gray-6">
+			<span
+				v-if="heading"
+				class="min-w-0 truncate text-sm font-medium text-ink-gray-8"
+				:title="heading"
+				>{{ heading }}</span
+			>
+			<span class="shrink-0 rounded bg-surface-gray-2 px-1.5 py-0.5 text-xs text-ink-gray-6">
 				{{ filtered ? __("{0} of {1} records", [rows.length, allRows.length]) : __("{0} records", [rows.length]) }}
 			</span>
 			<span class="flex-1"></span>
 			<button
-				class="flex size-6 items-center justify-center rounded hover:bg-surface-gray-3"
+				class="flex size-6 shrink-0 items-center justify-center rounded hover:bg-surface-gray-3"
 				:class="showFilters ? 'text-ink-gray-8' : 'text-ink-gray-5'"
 				:title="__('Filter rows')"
 				@click="showFilters = !showFilters"
@@ -139,7 +149,7 @@ function exportCsv() {
 				<span class="lucide-filter size-3.5" aria-hidden="true"></span>
 			</button>
 			<button
-				class="flex size-6 items-center justify-center rounded text-ink-gray-5 hover:bg-surface-gray-3"
+				class="flex size-6 shrink-0 items-center justify-center rounded text-ink-gray-5 hover:bg-surface-gray-3"
 				:title="__('Download CSV')"
 				@click="exportCsv"
 			>

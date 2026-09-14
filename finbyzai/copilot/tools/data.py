@@ -315,14 +315,16 @@ def aggregate(
         # A time series reads as a line; sort by the group so the x axis runs forward.
         ordered = sorted(rows, key=lambda r: str(r.get(group_by) or ""))
         return blocks.attach(
-            payload, blocks.line(ordered, x=group_by, series=series), blocks.table(ordered, columns=columns)
+            payload,
+            blocks.line(ordered, x=group_by, series=series),
+            blocks.table(ordered, columns=columns, title=title),
         )
     if shape == "none":
-        return blocks.attach(payload, blocks.table(rows, columns=columns))
+        return blocks.attach(payload, blocks.table(rows, columns=columns, title=title))
     return blocks.attach(
         payload,
         blocks.bar(rows, x=group_by, series=series, horizontal=len(rows) > 8),
-        blocks.table(rows, columns=columns),
+        blocks.table(rows, columns=columns, title=title),
     )
 
 

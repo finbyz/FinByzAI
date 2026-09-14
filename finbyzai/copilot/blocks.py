@@ -90,14 +90,35 @@ def kpi(label, value, delta=None, unit=None, format=None):
     return block
 
 
-def table(rows, columns=None, doctype=None):
-    """`columns` may be a list of keys or of {"key","label"} dicts; inferred when omitted."""
+def table(rows, columns=None, doctype=None, title=None):
+    """`columns` may be a list of keys or of {"key","label"} dicts; inferred when omitted.
+
+    `title` is what the panel puts in the table's own header bar — the one thing that
+    told the user what a table actually held used to be the doctype, and most tables
+    have none: a domain tool's "20 records" and "25 records" sat next to each other
+    with nothing to tell them apart until you scrolled up to the question. Pass the
+    clearest name you have — a report's name, a dict key unscrubbed, the sentence the
+    model wrote to describe its own code.
+    """
     rows = _clip(rows)
     block = {"type": "table", "columns": _columns(columns, rows), "rows": rows}
+    if title:
+        block["title"] = title
     if doctype:
         block["doctype"] = doctype
         _stamp_formats(block["columns"], doctype)
     return block
+
+
+def flat_table(rows, title=None):
+    """A table block for `rows`, or None when they are not flat records worth one.
+
+    The shared gate between autorender (which only has a dict key to name a table)
+    and a tool that has a real title of its own (`execute`'s own `description`) —
+    one definition of "flat enough to be a table", used both places.
+    """
+    flat = _flat_records(rows)
+    return table(flat, title=title) if flat else None
 
 
 # Fieldtypes whose numbers are money, and whose are just numbers. The panel cannot
@@ -217,8 +238,10 @@ def autorender(result, tool_name=None):
 
     out = []
     if isinstance(payload, list):
-        rows = _flat_records(payload)
-        return [table(rows)] if rows else []
+        # No dict key to name this one, so fall back to the tool's own name —
+        # "Selling Intelligence" beats a table with nothing above it at all.
+        block = flat_table(payload, title=_label(tool_name) if tool_name else None)
+        return [block] if block else []
 
     if not isinstance(payload, dict):
         return []
@@ -234,9 +257,13 @@ def autorender(result, tool_name=None):
             break
         if key in SKIP_KEYS or key in SUMMARY_KEYS or not isinstance(value, list):
             continue
-        rows = _flat_records(value)
-        if rows:
-            out.append(table(rows))
+        # The dict key is the one thing here that says what the rows are —
+        # "reorder_recommendations" unscrubbed reads as "Reorder Recommendations".
+        # Two domain-tool tables used to sit side by side as bare "25 records" and
+        # "20 records" with nothing to tell them apart.
+        block = flat_table(value, title=_label(key))
+        if block:
+            out.append(block)
 
     return out
 

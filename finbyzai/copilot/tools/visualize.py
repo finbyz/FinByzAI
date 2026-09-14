@@ -79,7 +79,7 @@ def visualize(
     elif shape in ("bar", "line"):
         block = _chart(shape, rows, x, series, available, horizontal)
     else:
-        block = blocks.table(rows, columns=columns or None, doctype=source.get("doctype"))
+        block = blocks.table(rows, columns=columns or None, doctype=source.get("doctype"), title=label)
 
     return blocks.attach(
         {

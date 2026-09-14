@@ -143,7 +143,11 @@ def run_report(report: str, filters: dict | None = None, limit: int = BLOCK_ROWS
     # Full rows go to the panel, not into the model's context.
     return blocks.attach(
         payload,
-        blocks.table(rows[:limit], columns=[{"key": c["key"], "label": c["label"]} for c in columns]),
+        blocks.table(
+            rows[:limit],
+            columns=[{"key": c["key"], "label": c["label"]} for c in columns],
+            title=report,
+        ),
     )
 
 
