@@ -51,7 +51,10 @@ def execute(code: str, description: str | None = None) -> dict:
 
     out = execute_code(code)
     out["description"] = description
-    return out
+    # When the script's own `result` is a flat list, it deserves the same table every
+    # other tool gets — titled with the sentence the model already wrote to describe
+    # what it was computing, since nothing else here can say what the rows are.
+    return blocks.attach(out, blocks.flat_table(out.get("result"), title=description))
 
 
 @tool(
@@ -101,4 +104,4 @@ def run_query(sql: str, description: str | None = None, limit: int = SQL_ROW_LIM
         "truncated": len(rows) > SQL_PREVIEW_ROWS,
         "note": "Raw SQL result — not filtered by the user's record-level permissions.",
     }
-    return blocks.attach(payload, blocks.table(rows[:limit], columns=columns))
+    return blocks.attach(payload, blocks.table(rows[:limit], columns=columns, title=description))

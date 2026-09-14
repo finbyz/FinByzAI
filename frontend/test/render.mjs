@@ -619,5 +619,61 @@ for (const [name, ok] of [
 	["stop: and it says it was stopped", root.textContent.includes("Stopped")],
 ]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
 
+
+// ── table headings ──────────────────────────────────────────────────────────
+// The exact bug reported: a domain tool's autorendered tables sat side by side
+// as bare "25 records" / "20 records" with nothing to say which was which.
+store.messages.value.splice(0);
+const heading = (block) => {
+	store.messages.value = [{
+		id: "h1", role: "assistant", pending: false, questions: [], runName: "RUN-H", duration: null,
+		parts: [{ id: "hb", type: "block", block }],
+	}];
+};
+
+heading({ type: "table", title: "Reorder Recommendations",
+	columns: [{ key: "item_code", label: "Item Code" }], rows: [{ item_code: "A" }] });
+await tick();
+for (const [name, ok] of [
+	["heading: a declared title is shown", root.textContent.includes("Reorder Recommendations")],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
+heading({ type: "table", doctype: "Sales Invoice",
+	columns: [{ key: "name", label: "Name" }], rows: [{ name: "ACC-SINV-001" }] });
+await tick();
+for (const [name, ok] of [
+	["heading: falls back to doctype when no title", root.textContent.includes("Sales Invoice")],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
+heading({ type: "table", title: "Inactive Items 60 To 90 Days",
+	columns: [{ key: "item_code", label: "Item Code" }], rows: [{ item_code: "A" }] });
+const other = { type: "table", title: "Reorder Recommendations",
+	columns: [{ key: "item_code", label: "Item Code" }], rows: [{ item_code: "B" }] };
+store.messages.value[0].parts.push({ id: "hb2", type: "block", block: other });
+await tick();
+const titledTables = [...root.querySelectorAll(".rounded-lg")].map((el) => el.textContent).filter((t) => t.includes("Item Code"));
+for (const [name, ok] of [
+	["heading: two tables read differently", root.textContent.includes("Inactive Items 60 To 90 Days") && root.textContent.includes("Reorder Recommendations")],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
+// A long title (execute's own description) truncates rather than pushing the
+// record count and buttons off the header bar.
+heading({ type: "table", title: "Compute items inactive between 60 and 90 days and their tied up capital across every warehouse",
+	columns: [{ key: "a", label: "A" }], rows: [{ a: 1 }] });
+await tick();
+const headEl = [...root.querySelectorAll("span")].find((e) => e.title === "Compute items inactive between 60 and 90 days and their tied up capital across every warehouse");
+for (const [name, ok] of [
+	["heading: a long one truncates, not wraps", Boolean(headEl) && headEl.className.includes("truncate")],
+	["heading: full text still reachable on hover", Boolean(headEl) && headEl.getAttribute("title")?.length > 40],
+	["heading: the record count survives next to it", root.textContent.includes("1 records") || root.textContent.includes("record")],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
+// Neither title nor doctype: unchanged old behaviour, just the count chip.
+heading({ type: "table", columns: [{ key: "a", label: "A" }], rows: [{ a: 1 }] });
+await tick();
+for (const [name, ok] of [
+	["heading: no heading, no crash, count still shown", root.textContent.includes("1 records")],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
 console.log(bad ? `\n${bad} FAILURES` : "\nall checks passed");
 process.exit(bad ? 1 : 0);
