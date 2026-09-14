@@ -107,6 +107,7 @@ def load_tools():
         meta,
         notify,
         reports,
+        search,
         visualize,
         write,
     )

@@ -86,5 +86,15 @@ const modelItems = computed(() => [
 				@update:model-value="emit('edit', 'auto_approve', $event ? 1 : 0)"
 			/>
 		</SettingsRow>
+
+		<SettingsRow
+			:label="__('External web search')"
+			:description="__('Lets the agent search the open web for anything outside this site. Off by default: each search sends the question to a third party and costs a small real amount.')"
+		>
+			<Switch
+				:model-value="Boolean(value('enable_external_search'))"
+				@update:model-value="emit('edit', 'enable_external_search', $event ? 1 : 0)"
+			/>
+		</SettingsRow>
 	</div>
 </template>

@@ -527,7 +527,7 @@ def _context(arguments: dict):
     only thing that can say what they are doing — otherwise three lines of
     "Executing" in a row tell the reader nothing at all.
     """
-    for key in ("doctype", "report", "search", "action", "subject", "description"):
+    for key in ("doctype", "report", "search", "query", "action", "subject", "description"):
         value = (arguments or {}).get(key)
         if isinstance(value, str) and value:
             return value.replace("_", " ").capitalize() if key == "action" else value
@@ -827,7 +827,13 @@ DEFAULT_SYSTEM_PROMPT = """You are the FinByz Copilot, working inside a live Fra
 GROUND TRUTH — never guess a name:
 - find_doctypes(search) to resolve an exact DocType name.
 - describe(doctype, name) for real fieldnames, your permissions, and a record's available actions.
+- search(query) when you don't know which DocType something is in at all, or want it by a word inside it rather than its exact name or code — it looks across every DocType at once, respecting exactly what the current user can read. Prefer find_doctypes + read when you already know the DocType; reach for search when you don't.
 Discover, verify, then act.
+
+THE OPEN WEB — search(query, scope="external"):
+- Only for something genuinely outside this ERP: news, a current fact, general knowledge this site would never hold. Never use it to avoid reading this site's own data, and never let a web result override a number you got from a tool here.
+- It costs a small real amount per call, unlike everything else in your toolbox — do not call it speculatively or more than once for the same question.
+- It returns its own drafted `answer` plus the actual `sources` (title, url, excerpt) it was grounded in. Read the sources; say where the fact came from; do not present the draft as your own research without having looked at what it cites.
 
 ANSWERING DATA QUESTIONS — in this order:
 1. list_reports / describe_report / run_report. This site has 222 ready-made, tested, permission-aware reports and one usually answers the question exactly. Always look here first.
