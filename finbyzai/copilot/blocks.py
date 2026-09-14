@@ -14,6 +14,7 @@ Every block is a dict the panel can render directly:
     {"type": "line",  "x": str, "series": [{"key","label"}], "rows": [dict]}
     {"type": "bar",   "x": str, "series": [{"key","label"}], "rows": [dict], "horizontal": bool}
     {"type": "records", "doctype": str, "rows": [dict]}   # rows link into the desk
+    {"type": "sources", "items": [{"title","url","snippet"}]}  # external links, open in a new tab
 """
 
 import json
@@ -161,6 +162,20 @@ def bar(rows, x, series, horizontal=False):
 def records(doctype, rows):
     """A list the panel renders as links into the desk form view."""
     return {"type": "records", "doctype": doctype, "rows": _clip(rows)}
+
+
+def sources(items):
+    """The real pages an external-search answer was grounded in, as clickable
+    links — same idea as `records`, for a doctype-less, off-site destination.
+    Only entries with a real url are kept; a title with nowhere to send a click
+    is not a source.
+    """
+    clean = [
+        {"title": (it.get("title") or it.get("url") or "").strip(), "url": it["url"], "snippet": it.get("snippet") or ""}
+        for it in (items or [])
+        if it.get("url")
+    ]
+    return {"type": "sources", "items": _clip(clean)} if clean else None
 
 
 def _clip(rows):

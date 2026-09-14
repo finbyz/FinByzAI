@@ -5,6 +5,7 @@ import ActivityLine from "./ActivityLine.vue";
 import ApprovalCard from "./ApprovalCard.vue";
 import BlockRenderer from "./blocks/BlockRenderer.vue";
 import KpiBlock from "./blocks/KpiBlock.vue";
+import SourcesBlock from "./blocks/SourcesBlock.vue";
 import Tip from "./Tip.vue";
 import { useStore } from "@/store";
 import { __ } from "@/lib/translate";
@@ -44,6 +45,9 @@ const items = computed(() => {
 			if (part.block?.type === "kpi" && last?.kind === "kpis") last.blocks.push(part.block);
 			else if (part.block?.type === "kpi")
 				out.push({ kind: "kpis", id: part.id, blocks: [part.block] });
+			// Sources never render here — see the `sources` computed below and the
+			// comment on SourcesBlock.vue for why.
+			else if (part.block?.type === "sources") continue;
 			else out.push({ kind: "block", id: part.id, part });
 		} else if (needsDecision(part)) {
 			const question = questions.value.get(part.id);
@@ -54,6 +58,24 @@ const items = computed(() => {
 			const last = out[out.length - 1];
 			if (last?.kind === "activity") last.parts.push(part);
 			else out.push({ kind: "activity", id: part.id, parts: [part] });
+		}
+	}
+	return out;
+});
+
+// Every "sources" block in the turn, flattened into one deduplicated row shown
+// once at the end — Claude's own citation strip, not this app's usual rule that
+// a block sits where the tool call that produced it happened to run. A turn
+// that searched twice gets one bibliography, not two.
+const sources = computed(() => {
+	const seen = new Set();
+	const out = [];
+	for (const part of props.message.parts) {
+		if (part.type !== "block" || part.block?.type !== "sources") continue;
+		for (const item of part.block.items || []) {
+			if (seen.has(item.url)) continue;
+			seen.add(item.url);
+			out.push(item);
 		}
 	}
 	return out;
@@ -135,6 +157,8 @@ async function copy() {
 		/>
 
 		<div v-if="working" class="copilot-shimmer-text text-sm">{{ __("Working…") }}</div>
+
+		<SourcesBlock v-if="sources.length" :items="sources" />
 
 		<!-- The footer: how long the turn took, and the two actions on it. All three
 		     sit at the same visibility — hiding Copy and Ask again behind a hover
