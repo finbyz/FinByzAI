@@ -11,11 +11,23 @@ conversation, never as Administrator, so a result is exactly what that person
 could have found themselves by typing into the desk's own search bar.
 
 `scope="external"` is the open web — for "what's the news on X" and anything
-this ERP would never contain. It rides on the OpenRouter key this site already
-has configured for chat models, using OpenRouter's own web-search plugin
-(backed by Exa) rather than a second API key and a second bill to manage. Each
-call is a small but real charge against that account — see EXTERNAL_MODEL and
-the module docstring below before raising EXTERNAL_RESULTS.
+this ERP would never contain. It goes through OpenRouter's own web-search
+plugin (backed by Exa) — the request shape (`plugins: [{"id": "web"}]`, a POST
+to openrouter.ai) is OpenRouter's own proprietary extension, not something
+Google's or OpenAI's native APIs understand, so this needs an LLM Provider
+record literally named "OpenRouter" with its own funded key.
+
+That requirement is independent of whichever provider a site actually chats
+through. A site whose agent only ever talks to Gemini or GPT still needs this
+one extra, cheap provider record purely to power search — same as `send_email`
+needing a working Email Account regardless of which LLM answered the question.
+Nothing here reads the conversation's own model or its provider; EXTERNAL_MODEL
+below is a second, independent choice, fixed because search results read the
+same whichever model assembled the request.
+
+Billing: every external call is charged to whatever OpenRouter account owns
+that key — Exa's own fee (~$0.007/call as of writing), passed straight
+through, not billed to Google, OpenAI or the client's own account with them.
 """
 
 import frappe
@@ -75,7 +87,11 @@ def search(query: str, scope: str = "internal", doctype: str | None = None, limi
             ui_blocks.append(blocks.table(rows, title=f'Search results: "{query}"'))
 
     if scope in ("external", "both"):
-        payload["external"] = _external(query)
+        result = _external(query)
+        payload["external"] = result
+        block = blocks.sources(result.get("sources"))
+        if block:
+            ui_blocks.append(block)
 
     return blocks.attach(payload, *ui_blocks)
 
@@ -178,12 +194,7 @@ def _external(query: str) -> dict:
             "trade-off deliberately."
         )
 
-    api_key = frappe.get_doc("LLM Provider", EXTERNAL_PROVIDER).get_password("api_key")
-    if not api_key:
-        raise frappe.ValidationError(
-            f"No API key configured on the {EXTERNAL_PROVIDER} LLM Provider — "
-            "external search needs one."
-        )
+    api_key = _openrouter_key()
 
     try:
         response = requests.post(
@@ -215,3 +226,36 @@ def _external(query: str) -> dict:
         if a.get("type") == "url_citation" and a.get("url_citation")
     ]
     return {"answer": message.get("content") or "", "sources": sources}
+
+
+def _openrouter_key() -> str:
+    """The funded OpenRouter key external search needs — independent of whatever
+    the client actually chats through.
+
+    Bare `frappe.get_doc` on a missing name raises `DoesNotExistError`, which the
+    guard reports as retryable (it isn't: calling again with the same arguments
+    fails identically forever) and names an internal record the model has no way
+    to act on. Checked explicitly instead, with the one thing that actually fixes
+    it: a Google- or OpenAI-only site needs this provider too, only for this tool.
+    """
+    if not frappe.db.exists("LLM Provider", EXTERNAL_PROVIDER):
+        raise frappe.PermissionError(
+            f'External search needs an LLM Provider named "{EXTERNAL_PROVIDER}" with '
+            "its own funded API key — regardless of which provider this site actually "
+            "chats through. None exists on this site yet; ask an administrator to add "
+            "one (an OpenRouter account is free to create)."
+        )
+    # get_password() raises its own exception for an unset/empty key rather than
+    # returning a falsy value — a different failure shape than the missing-record
+    # case above, so it needs its own catch to land on the same clean message.
+    try:
+        api_key = frappe.get_doc("LLM Provider", EXTERNAL_PROVIDER).get_password("api_key")
+    except Exception:
+        api_key = None
+    if not api_key:
+        raise frappe.PermissionError(
+            f'The "{EXTERNAL_PROVIDER}" LLM Provider exists but has no API key set — '
+            "external search needs one, independent of whichever provider this site "
+            "chats through."
+        )
+    return api_key

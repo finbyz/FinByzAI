@@ -755,5 +755,47 @@ for (const [name, ok] of [
 ]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
 store.agents.value = [{ name: "Copilot", title: "Copilot" }];
 
+// ── sources: after the answer, once, clickable ──────────────────────────────
+// Two "search" calls in one turn (scope="both", or two separate calls) each
+// attach their own sources block mid-stream — before the model's own prose,
+// which is written after it reads the tool results. The reader should never
+// see a bibliography above the paragraph it supports, so the panel pulls every
+// sources block out of that order and renders one deduplicated row at the very
+// end of the message, after all of it.
+store.messages.value.splice(0);
+const source = (n) => ({ title: `Result ${n}`, url: `https://example${n}.com/page`, snippet: `Excerpt ${n}` });
+store.messages.value.push({
+	id: "a7", role: "assistant", pending: false, questions: [], runName: "RUN-7", duration: 4.2,
+	parts: [
+		{ id: "s1", type: "block", block: { type: "sources", items: [source(1), source(2)] } },
+		{ id: "t1", type: "text", text: "Here is what today's coverage says." },
+		{ id: "s2", type: "block", block: { type: "sources", items: [source(2), source(3)] } }, // s2 is a dup
+	],
+});
+await tick();
+
+const sourcesEl = [...root.querySelectorAll("div")].find(
+	(el) => el.textContent.trim().startsWith("Sources") && el.querySelector("a[href]")
+);
+const links = sourcesEl ? [...sourcesEl.querySelectorAll("a[href]")] : [];
+const positions = [...root.querySelectorAll(".copilot-parts > *")].map((el) => el.textContent);
+const textIndex = positions.findIndex((t) => t.includes("today's coverage"));
+const sourcesIndex = positions.findIndex((t) => t.includes("Sources") && t.includes("example1.com"));
+
+for (const [name, ok] of [
+	["sources: renders below the prose it supports, not above it", textIndex >= 0 && sourcesIndex > textIndex],
+	["sources: two calls merge into one row", links.length === 3],
+	["sources: a repeated url isn't shown twice", links.filter((a) => a.href.includes("example2.com")).length === 1],
+	["sources: opens in a new tab, not the panel", links.every((a) => a.target === "_blank" && a.rel.includes("noopener"))],
+	["sources: the domain is shown, not the full url", sourcesEl.textContent.includes("example1.com") && !sourcesEl.textContent.includes("https://")],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
+// No sources at all: no empty "Sources" row left behind.
+store.messages.value[0].parts = [{ id: "t2", type: "text", text: "No search this time." }];
+await tick();
+for (const [name, ok] of [
+	["sources: nothing rendered when there are none", !root.textContent.includes("Sources")],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
 console.log(bad ? `\n${bad} FAILURES` : "\nall checks passed");
 process.exit(bad ? 1 : 0);

@@ -164,3 +164,14 @@ export function columnsOf(rows) {
 }
 
 export { isRecord };
+
+/** "https://www.example.com/path" → "example.com" — the bit worth showing next to
+ *  a source link, not the whole address. Falls back to the raw string for
+ *  anything that isn't a real URL rather than throwing. */
+export function hostnameOf(url) {
+	try {
+		return new URL(url).hostname.replace(/^www\./, "");
+	} catch {
+		return String(url || "");
+	}
+}
