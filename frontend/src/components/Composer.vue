@@ -195,7 +195,16 @@ defineExpose({
 				     28px box, so six pixels from the border read as the block being
 				     jammed against it, while the placeholder text sits ten pixels in.
 				     `gap-1` for the same reason — two icon buttons two pixels apart
-				     look like one wide control. -->
+				     look like one wide control.
+				     `min-w-0` on this row's shrinkable children below, not this row
+				     itself: a flex item's default shrink floor is its own min-content
+				     size, and a nowrap label ("Nayla Inventory Decision Support Agent")
+				     has a min-content size equal to its full rendered width — so
+				     without the override neither picker would shrink at all in the
+				     collapsed panel, and their text spilled straight over the send
+				     button rather than actually stopping at `max-w`. Attach, Stop and
+				     Send are frappe-ui Buttons, `shrink-0` by default, so they always
+				     keep their space; the two pickers give way first. -->
 				<div class="flex items-center gap-1 px-2 pb-2">
 					<Menu
 						v-if="agents.length > 1"
@@ -208,7 +217,7 @@ defineExpose({
 						<template #trigger="{ toggle }">
 							<button
 								type="button"
-								class="flex h-6 max-w-[11rem] items-center gap-1 rounded px-1.5 text-sm text-ink-gray-7 hover:bg-surface-gray-3 active:bg-surface-gray-4 disabled:opacity-50"
+								class="flex h-6 min-w-0 max-w-[11rem] items-center gap-1 rounded px-1.5 text-sm text-ink-gray-7 hover:bg-surface-gray-3 active:bg-surface-gray-4 disabled:opacity-50"
 								:disabled="agentLocked"
 								@click="toggle"
 							>
@@ -219,13 +228,13 @@ defineExpose({
 									alt=""
 								/>
 								<span v-else class="lucide-bot size-3.5 shrink-0 text-ink-gray-5" aria-hidden="true"></span>
-								<span class="truncate">{{ agentLabel(selectedAgent) || __("Agent") }}</span>
+								<span class="min-w-0 truncate">{{ agentLabel(selectedAgent) || __("Agent") }}</span>
 								<span class="lucide-chevron-down size-3 shrink-0 text-ink-gray-4" aria-hidden="true"></span>
 							</button>
 						</template>
 					</Menu>
 
-					<span v-if="agents.length > 1" class="text-ink-gray-3">/</span>
+					<span v-if="agents.length > 1" class="shrink-0 text-ink-gray-3">/</span>
 
 					<Menu
 						:items="modelItems"
@@ -236,7 +245,7 @@ defineExpose({
 						<template #trigger="{ toggle }">
 							<button
 								type="button"
-								class="flex h-6 max-w-[13rem] items-center gap-1 rounded px-1.5 text-sm text-ink-gray-7 hover:bg-surface-gray-3 active:bg-surface-gray-4"
+								class="flex h-6 min-w-0 max-w-[13rem] items-center gap-1 rounded px-1.5 text-sm text-ink-gray-7 hover:bg-surface-gray-3 active:bg-surface-gray-4"
 								@click="toggle"
 							>
 								<img
@@ -246,7 +255,7 @@ defineExpose({
 									alt=""
 								/>
 								<span v-else class="lucide-sparkles size-3.5 shrink-0 text-ink-gray-5" aria-hidden="true"></span>
-								<span class="truncate">{{ modelLabel(selectedModel) || __("Default model") }}</span>
+								<span class="min-w-0 truncate">{{ modelLabel(selectedModel) || __("Default model") }}</span>
 								<span class="lucide-chevron-down size-3 shrink-0 text-ink-gray-4" aria-hidden="true"></span>
 							</button>
 						</template>

@@ -675,5 +675,32 @@ for (const [name, ok] of [
 	["heading: no heading, no crash, count still shown", root.textContent.includes("1 records")],
 ]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
 
+
+// ── the composer's picker row never overflows into Send ─────────────────────
+// jsdom does no layout, so the actual pixel overlap can't be reproduced here —
+// what can be pinned down is the CSS contract that prevents it: a flex item's
+// shrink floor is its own min-content size, and for a `white-space: nowrap`
+// label (what `truncate` sets) that floor is the full rendered text width
+// unless `min-width: 0` overrides it. Miss that on either the picker button or
+// its inner label, and a long agent/model name spills past `max-w` into the
+// buttons beside it instead of eliding — which is exactly what "Cohere North
+// Mini Code:free" did next to Send in the collapsed panel.
+store.agents.value = [
+	{ name: "Copilot", title: "Copilot" },
+	{ name: "Nayla", title: "Nayla Inventory Decision Support Agent" },
+];
+await tick();
+const pickerRow = root.querySelector("textarea").parentElement.lastElementChild;
+const pickers = [...pickerRow.querySelectorAll("button")].filter((b) =>
+	b.className.includes("max-w-[")
+);
+for (const [name, ok] of [
+	["composer: both pickers render", pickers.length === 2],
+	["composer: each picker can shrink below its content", pickers.every((b) => b.className.includes("min-w-0"))],
+	["composer: each label can actually truncate", pickers.every((b) => b.querySelector("span.truncate")?.className.includes("min-w-0"))],
+	["composer: Attach/Send never shrink", [...pickerRow.querySelectorAll("button")].filter((b) => !b.className.includes("max-w-[")).every((b) => b.className.includes("shrink-0"))],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+store.agents.value = [{ name: "Copilot", title: "Copilot" }];
+
 console.log(bad ? `\n${bad} FAILURES` : "\nall checks passed");
 process.exit(bad ? 1 : 0);
