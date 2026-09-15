@@ -316,7 +316,7 @@ def rename_conversation(conversation, title):
 @frappe.whitelist()
 def delete_conversation(conversation):
     doc = _own_conversation(conversation)
-    frappe.delete_doc("Copilot Conversation", doc.name, ignore_permissions=True, delete_permanently=True)
+    frappe.delete_doc("Copilot Conversation", doc.name, ignore_permissions=True)
     return {"deleted": doc.name}
 
 
