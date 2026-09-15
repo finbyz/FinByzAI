@@ -90,14 +90,17 @@ class AIAgent(Document):
 
             frappe.logger().info(f"Testing agent with query: {query}")
             frappe.logger().info(f"Additional variables: {additional_vars}")
+            
+            # Invoke the agent with query and additional variables
+            response = self.agent_service.invoke(query=query, **additional_vars)
 
-            response = self.agent_service.invoke(
-                query=query,
-                conversation_id=conversation_id,
-                **additional_vars,
-            )
-
+            # Normalise + surface the response
             formatted_response = self._format_response(response)
+            frappe.msgprint(
+                formatted_response
+                if isinstance(formatted_response, str)
+                else frappe.as_json(formatted_response)
+            )
 
             return {
                 "success": True,
@@ -125,3 +128,25 @@ class AIAgent(Document):
                 "agent_type": self.agent_type,
                 "llm": self.llm if self.agent_type != "Gemini Cache Agent" else self.gemini_cache
             }
+
+    def _format_response(self, response):
+        """Normalise an agent response into a JSON-serialisable, display-friendly value.
+
+        Agent types return different shapes: a plain string (ReAct / StrOutputParser),
+        a LangChain message object (``.content``), a pydantic model (``.model_dump()``
+        when an output schema is set), or an AgentExecutor dict (``{"output": ...}``).
+        """
+        if response is None:
+            return ""
+        if isinstance(response, str):
+            return response
+        if hasattr(response, "model_dump"):
+            try:
+                return response.model_dump()
+            except Exception:
+                pass
+        if hasattr(response, "content"):
+            return response.content
+        if isinstance(response, dict):
+            return response.get("output", response)
+        return str(response)
