@@ -86,6 +86,8 @@ app_include_css = [_copilot_asset("copilot.css")]
 # before_install = "finbyzai.install.before_install"
 # after_install = "finbyzai.install.after_install"
 
+after_migrate = ["finbyzai.copilot.setup.ensure_defaults"]
+
 # Uninstallation
 # ------------
 
