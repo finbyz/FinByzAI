@@ -503,6 +503,13 @@ def get_settings():
     # The prompt is long and only an admin can change it; don't ship it to everyone.
     if is_admin:
         out["system"]["system_prompt"] = settings.system_prompt
+        # The built-in prompt, always current — so the dialog can show what an
+        # empty field actually resolves to, and "Reset to default" has something
+        # to reset *to*. A blank override was the whole point: a saved prompt
+        # freezes at whatever DEFAULT_SYSTEM_PROMPT said the day it was written,
+        # silently missing every improvement since. This site's own override sat
+        # untouched since the prompt was a third shorter than it is now.
+        out["system_prompt_default"] = runner.DEFAULT_SYSTEM_PROMPT
     return out
 
 
