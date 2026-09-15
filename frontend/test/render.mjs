@@ -297,6 +297,39 @@ for (const [name, ok] of [
 ]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
 store.settingsOpen.value = false;
 
+// Instructions: a saved override can silently rot — this site's own sat frozen
+// for weeks, missing every prompt fix shipped since, including the one that
+// stopped the agent answering "hello" by going and reading customer records.
+// "Reset to default" only appears once there is something to reset.
+await tick();
+DATA.get_settings = {
+	can_edit_system: true,
+	agents: [], models: [],
+	system: { enabled: true, max_iterations: 25, auto_approve: false, enable_external_search: false, system_prompt: "An old, frozen prompt." },
+	system_prompt_default: "The current, always up to date default.",
+};
+store.settingsOpen.value = true;
+await tick();
+const instructionsTab = [...root.querySelectorAll("button")].find((b) => b.textContent.includes("Instructions"));
+instructionsTab?.click();
+await tick();
+const resetLink = [...root.querySelectorAll("button")].find((b) => b.textContent.includes("Reset to default"));
+for (const [name, ok] of [
+	["instructions: an override shows the reset link", Boolean(resetLink)],
+	["instructions: and says it is overriding", root.textContent.includes("overriding the default")],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+
+resetLink?.click();
+await tick();
+const textarea = root.querySelector("textarea.font-mono");
+for (const [name, ok] of [
+	["instructions: reset clears the override", textarea?.value === ""],
+	["instructions: the field explains the blank state", root.textContent.includes("Using the built-in default")],
+	["instructions: the placeholder shows what blank resolves to", textarea?.placeholder === "The current, always up to date default."],
+	["instructions: the reset link is gone once there is nothing to reset", !root.textContent.includes("Reset to default")],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+store.settingsOpen.value = false;
+
 
 // ── the conversation list ───────────────────────────────────────────────────
 store.settingsOpen.value = false;
