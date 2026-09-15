@@ -88,6 +88,8 @@ after_install = "finbyzai.workflow_builder.setup.after_install"
 
 after_migrate = "finbyzai.install.after_migrate"
 
+after_migrate = ["finbyzai.copilot.setup.ensure_defaults"]
+
 # Uninstallation
 # ------------
 
