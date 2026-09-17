@@ -61,13 +61,13 @@ def _attach_exported_tools():
 
 
 def _ensure_settings():
+    """Defaults apply only the first time this Single is ever saved. After that —
+    even if every field is still at its default — an admin's own choice (including
+    turning Copilot off) must survive every later migrate untouched.
+    """
+    if frappe.db.count("Singles", {"doctype": "Copilot Settings"}):
+        return
     settings = frappe.get_single("Copilot Settings")
-    changed = False
-    if not settings.default_agent:
-        settings.default_agent = AGENT
-        changed = True
-    if not settings.enabled:
-        settings.enabled = 1
-        changed = True
-    if changed:
-        settings.save(ignore_permissions=True)
+    settings.default_agent = settings.default_agent or AGENT
+    settings.enabled = 1
+    settings.save(ignore_permissions=True)
