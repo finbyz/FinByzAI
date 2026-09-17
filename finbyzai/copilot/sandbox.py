@@ -164,15 +164,21 @@ def _gated_get_value(doctype: str, filters=None, fieldname: str = "name"):
 
 
 def _gated_count(doctype: str, filters=None) -> int:
+    """frappe.db.count skips permissions, same as get_value; route through get_list."""
     if not frappe.has_permission(doctype, "read"):
         raise frappe.PermissionError(f"No permission to read {doctype}")
-    return frappe.db.count(doctype, filters or {})
+    rows = frappe.get_list(
+        doctype, filters=filters or {}, fields=[{"COUNT": "*", "as": "total"}], limit_page_length=0
+    )
+    return rows[0].total if rows else 0
 
 
 def _gated_exists(doctype: str, name=None) -> bool:
+    """frappe.db.exists skips permissions (get_value(..., ignore=True) under the hood)."""
     if not frappe.has_permission(doctype, "read"):
         raise frappe.PermissionError(f"No permission to read {doctype}")
-    return bool(frappe.db.exists(doctype, name))
+    filters = name if isinstance(name, dict) else ({"name": name} if name is not None else {})
+    return bool(frappe.get_list(doctype, filters=filters, fields=["name"], limit=1))
 
 
 def _clip(value):

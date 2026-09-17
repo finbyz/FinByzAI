@@ -20,6 +20,18 @@ import frappe
 from finbyzai.copilot import blocks
 from finbyzai.copilot.registry import tool
 
+def permitted_count(doctype: str, filters: dict) -> int:
+    """A row count that respects user permissions and permission-query conditions.
+
+    `frappe.db.count` runs a raw SQL count with no permission filtering at all —
+    a user restricted to their own territory would get the site-wide total. Routed
+    through `frappe.get_list` (same rule as the module docstring) with an aggregate
+    field instead of loading rows.
+    """
+    rows = frappe.get_list(doctype, filters=filters, fields=[{"COUNT": "*", "as": "total"}], limit_page_length=0)
+    return rows[0].total if rows else 0
+
+
 ROW_LIMIT = 200
 AGG_LIMIT = 200
 # Rows handed to the model. The table block carries all of them to the panel — a
@@ -184,7 +196,7 @@ def scope_to_live(doctype: str, conditions: dict):
         return conditions, None
 
     scoped = {**conditions, "docstatus": ["!=", 2]}
-    drafts = frappe.db.count(doctype, {**conditions, "docstatus": 0})
+    drafts = permitted_count(doctype, {**conditions, "docstatus": 0})
     if drafts:
         note = (
             f"Cancelled documents are excluded. {drafts} of these are drafts — add "
@@ -338,7 +350,7 @@ def count(doctype: str, filters: dict | None = None) -> dict:
     if not frappe.has_permission(doctype, "read"):
         raise frappe.PermissionError(f"No permission to read {doctype}")
     conditions, scope = scope_to_live(doctype, normalize_filters(doctype, filters))
-    total = frappe.db.count(doctype, conditions)
+    total = permitted_count(doctype, conditions)
     return blocks.attach(
         {"doctype": doctype, "count": total, "scope": scope},
         # A count is a count: without saying so, a tile labelled "Sales Invoice
