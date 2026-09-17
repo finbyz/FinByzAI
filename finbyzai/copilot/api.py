@@ -195,6 +195,12 @@ def _replay(doc):
     return events
 
 
+#: Seconds a freshly-enqueued run gets before it's fair game for recovery — comfortably
+#: longer than the panel-open-to-worker-claim gap, far shorter than the claim's own
+#: crash safety net (runner.CLAIM_TTL, ~31 minutes).
+RECOVER_GRACE = 60
+
+
 @frappe.whitelist()
 def recover_conversation(conversation):
     """Fail runs left Running by a worker that died or a panel that went away.
@@ -202,11 +208,27 @@ def recover_conversation(conversation):
     The panel calls this when it (re)opens a conversation. Without it a crashed run
     would block every later turn on that conversation, since only one turn may be in
     flight at a time. A Paused run is left alone — it is waiting for the user, not stuck.
+
+    A run is only ever recovered when it can be shown to be dead: no worker currently
+    holds its execution claim (runner.is_claimed), and it has had long enough to be
+    claimed off the queue. Skipping either check would fail a run whose worker is
+    still very much alive and mid-turn — the worker keeps writing to a conversation
+    the panel now believes is free, and a new turn started on top of it interleaves
+    both runs' messages into one transcript.
     """
     doc = _own_conversation(conversation)
-    stale = frappe.get_all(
-        "Copilot Run", filters={"conversation": doc.name, "status": "Running"}, pluck="name"
+    candidates = frappe.get_all(
+        "Copilot Run",
+        filters={"conversation": doc.name, "status": "Running"},
+        fields=["name", "modified"],
     )
+    now = frappe.utils.now_datetime()
+    stale = [
+        row.name
+        for row in candidates
+        if not runner.is_claimed(row.name)
+        and frappe.utils.time_diff_in_seconds(now, row.modified) > RECOVER_GRACE
+    ]
     for name in stale:
         frappe.db.set_value(
             "Copilot Run",
@@ -622,9 +644,25 @@ def _new_conversation(text, model=None, agent=None, knowledge_base=None):
     ).insert(ignore_permissions=True)
 
 
+def _start_lock_key(conversation):
+    return f"{frappe.local.site}|copilot:start:{conversation}"
+
+
 def _block_while_running(conversation):
     """One turn at a time per conversation — two loops writing the same message list
-    would interleave tool calls and confuse the model."""
+    would interleave tool calls and confuse the model.
+
+    The check and the caller's insert of the new Running row are two separate steps;
+    without a lock between them, two requests arriving together can both see no
+    active run and both proceed to insert one. The redis claim is held just long
+    enough to cover that gap — once the new row exists, its own "Running" status is
+    what every later request actually checks against.
+    """
+    if not frappe.cache.set(_start_lock_key(conversation), "1", nx=True, ex=5):
+        frappe.throw(
+            _("This conversation has a turn in progress. Answer it or stop it first."),
+            title=_("Still working"),
+        )
     active = frappe.get_all(
         "Copilot Run",
         filters={"conversation": conversation, "status": ("in", ("Running", "Paused"))},

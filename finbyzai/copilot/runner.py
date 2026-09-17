@@ -85,6 +85,16 @@ def _release(run: str):
     frappe.cache.delete(_claim_key(run))
 
 
+def is_claimed(run: str) -> bool:
+    """Whether a worker currently holds this run's execution claim.
+
+    The only reliable way to know a "Running" row is actually being worked on right
+    now, rather than left behind by a worker that died — recover_conversation reads
+    this before ever failing a run out from under it.
+    """
+    return bool(frappe.cache.get(_claim_key(run)))
+
+
 def _claim_key(run: str) -> str:
     """Namespaced by site, because `cache.set`/`cache.delete` are the raw redis client
     (only they can set a key exclusively) and those do not add the site prefix that
