@@ -174,6 +174,12 @@ export async function startRun(body, onEvent, signal) {
 		conversation: body.session || null,
 		model: body.model || null,
 		attachments: files && files.length ? files : null,
+		// The store only sets these on the first turn of a chat, and start_run applies
+		// them when it creates the conversation. Dropping them here meant a chosen
+		// agent or knowledge base was silently ignored and every conversation got the
+		// defaults instead.
+		agent: body.agent || null,
+		knowledge_base: body.knowledge_base || null,
 	});
 	if (!res || !res.run) throw new Error(__("Could not start the run."));
 
