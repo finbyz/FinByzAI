@@ -118,7 +118,10 @@ async function loadInitial() {
 		agents.value = a;
 		models.value = m;
 		knowledgeBases.value = k || [];
-		selectedAgent.value = a[0]?.name ?? null;
+		// Copilot Settings decides which agent the picker opens on; `a[0]` is only a
+		// fallback for a site that has not set one. Falling straight to a[0] meant the
+		// alphabetically first agent won, along with whatever provider it uses.
+		selectedAgent.value = (a.find((x) => x.is_default) ?? a[0])?.name ?? null;
 		loadToolApproval(selectedAgent.value);
 		loaded.value = true;
 		focusTick.value++;
