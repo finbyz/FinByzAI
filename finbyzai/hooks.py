@@ -70,7 +70,7 @@ app_include_css = ["finbyzai_copilot.bundle.css"]
 # ------------
 
 # before_install = "finbyzai.install.before_install"
-after_install = "finbyzai.workflow_builder.setup.after_install"
+after_install = "finbyzai.install.after_install"
 
 after_migrate = "finbyzai.install.after_migrate"
 
