@@ -14,6 +14,7 @@ group_by/measure/agg and builds the dict form itself.
 """
 
 import json
+import re
 
 import frappe
 
@@ -38,6 +39,26 @@ AGG_LIMIT = 200
 # 200-row read should not spend 200 rows of context.
 PREVIEW_ROWS = 20
 AGGREGATIONS = {"sum": "SUM", "count": "COUNT", "avg": "AVG", "min": "MIN", "max": "MAX"}
+
+# v15's query builder has no dict-shaped aggregate field, so the aggregate expression is
+# built as a string — which means a model-supplied fieldname reaches SQL. Only a real
+# field on the doctype gets through.
+_FIELDNAME = re.compile(r"^[a-z_][a-z0-9_]*$")
+_STANDARD_FIELDS = frozenset(
+    {
+        "name", "owner", "creation", "modified", "modified_by",
+        "docstatus", "idx", "parent", "parenttype", "parentfield",
+    }
+)
+
+
+def _safe_fieldname(doctype: str, fieldname: str | None, label: str) -> str:
+    name = str(fieldname or "").strip()
+    if not _FIELDNAME.match(name):
+        raise frappe.ValidationError(f"`{label}` must be a plain fieldname, got {fieldname!r}")
+    if name not in _STANDARD_FIELDS and not frappe.get_meta(doctype).get_field(name):
+        raise frappe.ValidationError(f"{doctype} has no field {name!r} (passed as `{label}`)")
+    return name
 
 
 # ── filters ───────────────────────────────────────────────────────────────────
@@ -293,7 +314,12 @@ def aggregate(
     limit = max(1, min(int(limit or 20), AGG_LIMIT))
     conditions, scope = scope_to_live(doctype, normalize_filters(doctype, filters))
     alias = "value"
-    function = {AGGREGATIONS[agg_key]: "*" if agg_key == "count" else measure, "as": alias}
+    group_by = _safe_fieldname(doctype, group_by, "group_by")
+    if agg_key == "count":
+        function = f"count(name) as {alias}"
+    else:
+        measure = _safe_fieldname(doctype, measure, "measure")
+        function = f"{AGGREGATIONS[agg_key].lower()}({measure}) as {alias}"
 
     rows = frappe.get_list(
         doctype,
