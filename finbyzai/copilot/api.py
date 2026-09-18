@@ -627,8 +627,13 @@ def get_agents():
         order_by="title asc",
         limit=50,
     )
+    # Which one the picker should start on. Without this the panel fell back to the
+    # alphabetically first AI Agent on the site, so a site with its own agents opened
+    # the Copilot on someone else's agent and its provider.
+    default_agent = runner.get_settings().default_agent
     for row in rows:
         row["logo"] = branding.logo_for(row.llm_provider, row.llm)
+        row["is_default"] = 1 if row.name == default_agent else 0
     return rows
 
 
