@@ -2,10 +2,10 @@ import { fileURLToPath, URL } from "node:url";
 import vue from "@vitejs/plugin-vue";
 import { defineConfig } from "vite";
 
-// Builds the AI panel as a single self-contained IIFE bundle + one CSS file,
-// emitted into the app's public dir so the desk can load it directly via
-// `app_include_js` / `app_include_css` (see finbyzai/hooks.py). Real frappe-ui
-// components are pulled from source (`frappe-ui/src/...`) and tree-shaken.
+// Vite emits self-contained Frappe bundle entry points. After this build, run
+// `bench build --app finbyzai` so Frappe creates the content-hashed assets.
+// Real frappe-ui components come from source (`frappe-ui/src/...`) and are
+// tree-shaken.
 export default defineConfig({
 	define: {
 		"process.env.NODE_ENV": JSON.stringify("production"),
@@ -37,10 +37,10 @@ export default defineConfig({
 			entry: fileURLToPath(new URL("./src/main.js", import.meta.url)),
 			formats: ["iife"],
 			name: "FinbyzCopilot",
-			fileName: () => "copilot.js",
+			fileName: () => "finbyzai_copilot.bundle.js",
 		},
 		rollupOptions: {
-			output: { assetFileNames: "copilot.[ext]" },
+			output: { assetFileNames: "finbyzai_copilot.bundle.[ext]" },
 		},
 	},
 });

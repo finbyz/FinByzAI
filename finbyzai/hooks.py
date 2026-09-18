@@ -15,24 +15,10 @@ app_license = "gpl-3.0"
 # app_include_css = "/assets/finbyzai/css/finbyzai.css"
 # app_include_js = "/assets/finbyzai/js/finbyzai.js"
 
-# Vite-built Copilot chat panel (frontend/src -> finbyzai/public/copilot).
-# Served straight from public/, bypassing the desk's esbuild pipeline; run
-# `yarn build` in apps/finbyzai/frontend after changing the panel.
-# Frappe adds no cache-busting query to /assets URLs, so append ?v=<mtime>:
-# the filename stays stable for the hook while a rebuild invalidates the cache.
-
-
-def _copilot_asset(filename: str) -> str:
-	path = os.path.join(os.path.dirname(__file__), "public", "copilot", filename)
-	try:
-		version = int(os.path.getmtime(path))
-	except OSError:
-		version = 0
-	return f"/assets/finbyzai/copilot/{filename}?v={version}"
-
-
-app_include_js = [_copilot_asset("copilot.js")]
-app_include_css = [_copilot_asset("copilot.css")]
+# Vite compiles the Copilot panel into Frappe bundle entry points. Frappe then
+# emits content-hashed assets and resolves these names through assets.json.
+app_include_js = ["finbyzai_copilot.bundle.js"]
+app_include_css = ["finbyzai_copilot.bundle.css"]
 
 # include js, css files in header of web template
 # web_include_css = "/assets/finbyzai/css/finbyzai.css"

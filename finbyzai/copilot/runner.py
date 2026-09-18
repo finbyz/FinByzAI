@@ -66,7 +66,7 @@ def enqueue_run(run: str):
 CLAIM_TTL = JOB_TIMEOUT + 60
 
 
-def _claim(run: str) -> bool:
+def _claim(run: str):
     """Take exclusive ownership of this execution, or report that someone else has it.
 
     Two workers on one run write two sets of messages into the same conversation, and
@@ -75,14 +75,17 @@ def _claim(run: str) -> bool:
     rejects, on that turn and on every turn after it.
 
     RQ alone does not prevent this: a job can be requeued when a worker dies, and a
-    resumed run is enqueued again by design. So the claim is a redis key set only if
-    absent, held for the length of the turn and released in a finally.
+    resumed run is enqueued again by design. The ownership-token lock is acquired only
+    if absent, held for the length of the turn, and released in a finally.
     """
-    return bool(frappe.cache.set(_claim_key(run), "1", nx=True, ex=CLAIM_TTL))
+    claim = frappe.cache.lock(_claim_key(run), timeout=CLAIM_TTL, blocking=False)
+    return claim if claim.acquire(blocking=False) else None
 
 
-def _release(run: str):
-    frappe.cache.delete(_claim_key(run))
+def _release(claim):
+    """Release only the claim represented by this lock's ownership token."""
+    if claim and claim.owned():
+        claim.release()
 
 
 def is_claimed(run: str) -> bool:
@@ -96,9 +99,8 @@ def is_claimed(run: str) -> bool:
 
 
 def _claim_key(run: str) -> str:
-    """Namespaced by site, because `cache.set`/`cache.delete` are the raw redis client
-    (only they can set a key exclusively) and those do not add the site prefix that
-    frappe's own get_value/set_value do."""
+    """Namespace the raw Redis lock because it does not add Frappe's site prefix
+    automatically."""
     return f"{frappe.local.site}|copilot:claim:{run}"
 
 
@@ -110,7 +112,8 @@ def execute_run(run: str):
     event was published, and the panel sat on "Thinking…" with nothing to show.
     """
     doc = None
-    if not _claim(run):
+    claim = _claim(run)
+    if not claim:
         return
     try:
         doc = frappe.get_doc("Copilot Run", run)
@@ -143,7 +146,7 @@ def execute_run(run: str):
         frappe.log_error(f"Copilot run {run} failed", frappe.get_traceback())
     finally:
         # Released even on a failure, so an approval that arrives later can resume.
-        _release(run)
+        _release(claim)
         _shown_blocks.pop(run, None)
 
 
