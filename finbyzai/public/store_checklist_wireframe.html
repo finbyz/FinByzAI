@@ -1,0 +1,2377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sales Associate — Daily Checklist | ERPNext</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ==========================================================================
+       ERPNEXT & FRAPPE V16 DESIGN SYSTEM
+       Pixel-perfect match to user's reference screenshot
+       ========================================================================== */
+    :root {
+      --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+
+      /* Primary & Brand */
+      --primary-blue: #1b64da;
+      --primary-blue-hover: #1551b3;
+      --primary-blue-light: #eaf2fe;
+      --primary-blue-subtle: #f0f6fe;
+
+      /* Neutrals & Surfaces */
+      --bg-desk: #f9fafb;
+      --bg-white: #ffffff;
+      --border-color: #e5e7eb;
+      --border-subtle: #f3f4f6;
+
+      /* Inks */
+      --text-main: #111827;
+      --text-muted: #4b5563;
+      --text-subtle: #6b7280;
+      --text-faint: #9ca3af;
+
+      /* Status Themes */
+      --green-bg: #dcfce7;
+      --green-text: #15803d;
+      --green-bar: #22c55e;
+
+      --orange-bg: #fef3c7;
+      --orange-text: #b45309;
+
+      --red-bg: #fee2e2;
+      --red-text: #dc2626;
+
+      --purple-bg: #f3e8ff;
+      --purple-text: #7c3aed;
+      --purple-border: #d8b4fe;
+
+      --radius-sm: 6px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+      --radius-full: 9999px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background-color: var(--bg-desk);
+      color: var(--text-main);
+      font-size: 13px;
+      line-height: 1.45;
+      -webkit-font-smoothing: antialiased;
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ==========================================================================
+       LEFT SIDEBAR NAVIGATION
+       ========================================================================== */
+    .sidebar {
+      width: 224px;
+      min-width: 224px;
+      background: var(--bg-white);
+      border-right: 1px solid var(--border-color);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      height: 100vh;
+      user-select: none;
+      z-index: 20;
+    }
+
+    .sidebar-top {
+      padding: 14px 16px;
+    }
+
+    .sidebar-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .brand-logo-sq {
+      width: 30px;
+      height: 30px;
+      background: var(--primary-blue);
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: 700;
+      font-size: 17px;
+    }
+
+    .brand-text {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text-main);
+      letter-spacing: -0.01em;
+    }
+
+    .sidebar-search-btn {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #f8fafc;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 7px 10px;
+      font-size: 12px;
+      color: var(--text-subtle);
+      cursor: pointer;
+      margin-bottom: 18px;
+      transition: all 0.15s;
+    }
+
+    .sidebar-search-btn:hover {
+      background: #f1f5f9;
+      border-color: #cbd5e1;
+    }
+
+    .sidebar-search-btn kbd {
+      background: white;
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 10px;
+      color: var(--text-subtle);
+    }
+
+    .nav-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 7px 10px;
+      border-radius: var(--radius-md);
+      color: var(--text-muted);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.12s;
+    }
+
+    .nav-item:hover {
+      background: #f3f4f6;
+      color: var(--text-main);
+    }
+
+    .nav-item.active {
+      background: var(--primary-blue-light);
+      color: var(--primary-blue);
+      font-weight: 600;
+    }
+
+    .nav-item svg {
+      width: 17px;
+      height: 17px;
+      flex-shrink: 0;
+    }
+
+    .sidebar-bottom {
+      border-top: 1px solid var(--border-color);
+      padding: 12px 14px;
+    }
+
+    .collapse-btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-subtle);
+      font-size: 12px;
+      cursor: pointer;
+      padding: 6px 8px;
+      border-radius: var(--radius-sm);
+      margin-bottom: 12px;
+    }
+
+    .collapse-btn:hover {
+      background: #f3f4f6;
+      color: var(--text-main);
+    }
+
+    .user-profile-strip {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+      padding: 4px 6px;
+      border-radius: var(--radius-md);
+    }
+
+    .user-profile-strip:hover {
+      background: #f3f4f6;
+    }
+
+    .user-avatar-circle {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: #bfdbfe;
+      color: #1e40af;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .user-name-title {
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--text-main);
+      line-height: 1.2;
+    }
+
+    .user-email-sub {
+      font-size: 11px;
+      color: var(--text-subtle);
+    }
+
+    /* ==========================================================================
+       MAIN VIEWPORT & TOPBAR
+       ========================================================================== */
+    .viewport {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+      background: var(--bg-desk);
+    }
+
+    .topbar {
+      height: 52px;
+      background: var(--bg-white);
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      z-index: 10;
+    }
+
+    .topbar-center-search {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 380px;
+    }
+
+    .global-search-input {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #f3f4f6;
+      border: 1px solid transparent;
+      border-radius: var(--radius-full);
+      padding: 6px 14px;
+      font-size: 12.5px;
+      color: var(--text-subtle);
+      cursor: text;
+      transition: all 0.15s;
+    }
+
+    .global-search-input:hover {
+      background: #eceef2;
+    }
+
+    .topbar-right-actions {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-left: auto;
+    }
+
+    .top-icon-btn {
+      color: var(--text-subtle);
+      background: none;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 6px;
+      border-radius: 50%;
+      position: relative;
+    }
+
+    .top-icon-btn:hover {
+      background: #f3f4f6;
+      color: var(--text-main);
+    }
+
+    .badge-dot-alert {
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      width: 6px;
+      height: 6px;
+      background: var(--red-text);
+      border-radius: 50%;
+    }
+
+    /* ==========================================================================
+       MAIN CONTENT SCROLLABLE AREA
+       ========================================================================== */
+    .content-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px 32px 64px 32px;
+    }
+
+    .page-breadcrumb {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-subtle);
+      margin-bottom: 8px;
+    }
+
+    .page-breadcrumb svg {
+      width: 13px;
+      height: 13px;
+    }
+
+    .page-title-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+
+    .page-title {
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--text-main);
+      letter-spacing: -0.02em;
+    }
+
+    .page-subtitle {
+      font-size: 13px;
+      color: var(--text-subtle);
+      margin-top: 3px;
+    }
+
+    .page-top-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .dropdown-pill-btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--bg-white);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 7px 12px;
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--text-main);
+      cursor: pointer;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+      transition: all 0.12s;
+    }
+
+    .dropdown-pill-btn:hover {
+      background: #f9fafb;
+      border-color: #d1d5db;
+    }
+
+    .settings-btn-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+    }
+
+    .settings-caption {
+      font-size: 10.5px;
+      color: var(--text-faint);
+      margin-top: 3px;
+    }
+
+    /* ==========================================================================
+       TABS & FILTER BAR
+       ========================================================================== */
+    .filter-tabs-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-color);
+      margin-bottom: 20px;
+      padding-bottom: 0px;
+    }
+
+    .tabs-group {
+      display: flex;
+      gap: 20px;
+    }
+
+    .tab-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 0;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-subtle);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      transition: all 0.12s;
+    }
+
+    .tab-item:hover {
+      color: var(--text-main);
+    }
+
+    .tab-item.active {
+      color: var(--primary-blue);
+      font-weight: 600;
+      border-bottom-color: var(--primary-blue);
+    }
+
+    .tab-pill {
+      background: #f3f4f6;
+      color: var(--text-muted);
+      border-radius: var(--radius-full);
+      padding: 1px 7px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .tab-item.active .tab-pill {
+      background: var(--primary-blue-light);
+      color: var(--primary-blue);
+    }
+
+    .tab-right-tools {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding-bottom: 8px;
+    }
+
+    .ai-pill-action {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--purple-bg);
+      border: 1px solid var(--purple-border);
+      color: var(--purple-text);
+      font-size: 12px;
+      font-weight: 600;
+      padding: 5px 12px;
+      border-radius: var(--radius-full);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .ai-pill-action:hover {
+      background: #ede9fe;
+    }
+
+    .ai-counter-circle {
+      background: var(--purple-text);
+      color: white;
+      border-radius: 50%;
+      width: 16px;
+      height: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+    }
+
+    .icon-tool-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--bg-white);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 5px 10px;
+      font-size: 12px;
+      color: var(--text-muted);
+      cursor: pointer;
+    }
+
+    .icon-tool-btn:hover {
+      background: #f9fafb;
+      color: var(--text-main);
+    }
+
+    .progress-wrap-outer {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text-subtle);
+    }
+
+    .progress-bar-track {
+      width: 90px;
+      height: 6px;
+      background: #e5e7eb;
+      border-radius: var(--radius-full);
+      overflow: hidden;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      background: var(--green-bar);
+      border-radius: var(--radius-full);
+      transition: width 0.3s ease;
+    }
+
+    /* ==========================================================================
+       CARDS & CHECKLIST SECTIONS
+       ========================================================================== */
+    .checklist-card {
+      background: var(--bg-white);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-lg);
+      margin-bottom: 20px;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+      overflow: hidden;
+    }
+
+    .card-header-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .card-title-combo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .section-icon-box {
+      width: 32px;
+      height: 32px;
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .icon-box-blue {
+      background: #eff6ff;
+      color: var(--primary-blue);
+    }
+
+    .icon-box-purple {
+      background: var(--purple-bg);
+      color: var(--purple-text);
+    }
+
+    .section-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .section-subtitle {
+      font-size: 12px;
+      color: var(--text-subtle);
+      margin-top: 1px;
+    }
+
+    .section-badge-right {
+      background: #f3f4f6;
+      color: var(--text-muted);
+      border-radius: var(--radius-full);
+      padding: 3px 10px;
+      font-size: 11.5px;
+      font-weight: 500;
+    }
+
+    .btn-add-task-blue {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      background: var(--primary-blue);
+      color: white;
+      border: none;
+      border-radius: var(--radius-md);
+      padding: 6px 14px;
+      font-size: 12.5px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+
+    .btn-add-task-blue:hover {
+      background: var(--primary-blue-hover);
+    }
+
+    /* Table styles */
+    .task-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .task-table th {
+      padding: 10px 20px;
+      text-align: left;
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-subtle);
+      background: #f9fafb;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .task-table td {
+      padding: 12px 20px;
+      border-bottom: 1px solid #f3f4f6;
+      vertical-align: middle;
+      color: var(--text-muted);
+    }
+
+    .task-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .task-table tr:hover td {
+      background: #fafbfc;
+    }
+
+    /* Checkbox (Frappe rounded style) */
+    .checkbox-custom {
+      width: 16px;
+      height: 16px;
+      border: 1.5px solid #d1d5db;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.12s;
+      background: white;
+    }
+
+    .checkbox-custom.checked {
+      background: var(--primary-blue);
+      border-color: var(--primary-blue);
+      color: white;
+    }
+
+    .task-title-cell {
+      font-size: 13px;
+      color: var(--text-main);
+      font-weight: 400;
+    }
+
+    .task-title-cell.completed {
+      color: var(--text-subtle);
+    }
+
+    .task-title-cell strong {
+      font-weight: 600;
+    }
+
+    /* Badges */
+    .badge-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px;
+      border-radius: var(--radius-full);
+      font-size: 11px;
+      font-weight: 500;
+      line-height: 1.2;
+    }
+
+    .badge-source-scheduled {
+      background: #eff6ff;
+      color: var(--primary-blue);
+    }
+
+    .badge-source-manual {
+      background: #f3f4f6;
+      color: var(--text-muted);
+    }
+
+    .badge-ref-doc {
+      background: #eff6ff;
+      color: var(--primary-blue);
+      text-decoration: none;
+      cursor: pointer;
+      font-weight: 600;
+      border: 1px solid #dbeafe;
+    }
+
+    .badge-ref-doc:hover {
+      background: #dbeafe;
+    }
+
+    .badge-ref-purple {
+      background: var(--purple-bg);
+      color: var(--purple-text);
+      border: 1px solid var(--purple-border);
+    }
+
+    .badge-priority-low {
+      background: #f3f4f6;
+      color: var(--text-muted);
+    }
+
+    .badge-priority-medium {
+      background: var(--orange-bg);
+      color: var(--orange-text);
+    }
+
+    .badge-priority-high {
+      background: var(--red-bg);
+      color: var(--red-text);
+    }
+
+    .badge-status-completed {
+      background: var(--green-bg);
+      color: var(--green-text);
+      font-weight: 500;
+    }
+
+    .badge-status-pending {
+      background: #f3f4f6;
+      color: var(--text-muted);
+    }
+
+    .badge-status-hold {
+      background: var(--orange-bg);
+      color: var(--orange-text);
+      font-weight: 600;
+    }
+
+    .action-dots-btn {
+      background: none;
+      border: none;
+      color: var(--text-faint);
+      cursor: pointer;
+      font-size: 16px;
+      padding: 4px 8px;
+      border-radius: var(--radius-sm);
+    }
+
+    .action-dots-btn:hover {
+      background: #f3f4f6;
+      color: var(--text-main);
+    }
+
+    /* Action Popover Menu */
+    .action-menu-dropdown {
+      position: absolute;
+      background: white;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
+      z-index: 50;
+      width: 170px;
+      display: none;
+      flex-direction: column;
+      padding: 4px;
+    }
+
+    .action-menu-dropdown.show {
+      display: flex;
+    }
+
+    .action-menu-item {
+      padding: 7px 10px;
+      font-size: 12px;
+      color: var(--text-muted);
+      cursor: pointer;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .action-menu-item:hover {
+      background: #f3f4f6;
+      color: var(--text-main);
+    }
+
+    .action-menu-item.danger:hover {
+      background: #fef2f2;
+      color: var(--red-text);
+    }
+
+    /* ==========================================================================
+       RIGHT PANEL: FINBYZ AI COPILOT
+       Exact match to right panel in user screenshot
+       ========================================================================== */
+    .copilot-panel {
+      width: 380px;
+      min-width: 380px;
+      background: var(--bg-white);
+      border-left: 1px solid var(--border-color);
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      z-index: 20;
+    }
+
+    .copilot-header {
+      height: 52px;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+    }
+
+    .copilot-header-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .copilot-header-btns {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .copilot-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* Chat user message */
+    .chat-user-row {
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    .chat-user-bubble {
+      background: #eaf2fe;
+      color: #1e3a8a;
+      border-radius: 16px 16px 4px 16px;
+      padding: 10px 14px;
+      font-size: 13px;
+      line-height: 1.45;
+      max-width: 90%;
+    }
+
+    /* Chat assistant message */
+    .chat-assistant-row {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+    }
+
+    .assistant-avatar-sq {
+      width: 28px;
+      height: 28px;
+      border-radius: var(--radius-md);
+      background: #faf5ff;
+      color: var(--purple-text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    .assistant-bubble-content {
+      flex: 1;
+      font-size: 12.8px;
+      color: var(--text-main);
+      line-height: 1.5;
+    }
+
+    .assistant-bubble-content p {
+      margin-bottom: 10px;
+    }
+
+    .assistant-bubble-content ul {
+      margin: 8px 0 12px 18px;
+    }
+
+    .assistant-bubble-content li {
+      margin-bottom: 6px;
+    }
+
+    .chat-action-footer {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 10px;
+      color: var(--text-faint);
+      font-size: 11px;
+    }
+
+    .chat-action-footer svg {
+      cursor: pointer;
+      width: 14px;
+      height: 14px;
+    }
+
+    .chat-action-footer svg:hover {
+      color: var(--text-muted);
+    }
+
+    /* Suggested Next Actions Chips */
+    .suggested-chips-container {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 6px;
+    }
+
+    .copilot-suggestion-chip {
+      background: var(--bg-white);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-full);
+      padding: 8px 14px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--primary-blue);
+      cursor: pointer;
+      text-align: left;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+      transition: all 0.12s;
+    }
+
+    .copilot-suggestion-chip:hover {
+      background: #f8fafc;
+      border-color: #bfdbfe;
+    }
+
+    .copilot-footer {
+      padding: 14px 16px;
+      border-top: 1px solid var(--border-color);
+      background: var(--bg-white);
+    }
+
+    .copilot-input-box {
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-lg);
+      padding: 8px 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #ffffff;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    .copilot-input-box:focus-within {
+      border-color: var(--primary-blue);
+      box-shadow: 0 0 0 3px rgba(27, 100, 218, 0.12);
+    }
+
+    .copilot-input-box input {
+      flex: 1;
+      border: none;
+      outline: none;
+      font-size: 13px;
+      color: var(--text-main);
+      font-family: inherit;
+    }
+
+    .copilot-input-box input::placeholder {
+      color: var(--text-faint);
+    }
+
+    .copilot-send-btn {
+      width: 28px;
+      height: 28px;
+      border-radius: var(--radius-md);
+      background: #f3f4f6;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .copilot-send-btn.active {
+      background: var(--primary-blue);
+      color: white;
+    }
+
+    .copilot-disclaimer {
+      font-size: 11px;
+      color: var(--text-faint);
+      text-align: center;
+      margin-top: 8px;
+    }
+
+    /* ==========================================================================
+       MODAL DIALOGS
+       ========================================================================== */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.45);
+      backdrop-filter: blur(2px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      opacity: 0;
+      visibility: hidden;
+      transition: all 0.2s;
+    }
+
+    .modal-overlay.open {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .modal-card {
+      background: var(--bg-white);
+      border-radius: var(--radius-lg);
+      width: 100%;
+      max-width: 500px;
+      box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);
+      border: 1px solid var(--border-color);
+      overflow: hidden;
+      transform: scale(0.96);
+      transition: transform 0.2s;
+    }
+
+    .modal-overlay.open .modal-card {
+      transform: scale(1);
+    }
+
+    .modal-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .modal-header h3 {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .modal-body {
+      padding: 20px;
+    }
+
+    .modal-footer {
+      padding: 12px 20px;
+      background: #f9fafb;
+      border-top: 1px solid var(--border-color);
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    .form-group {
+      margin-bottom: 14px;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 5px;
+    }
+
+    .form-input, .form-select, .form-textarea {
+      width: 100%;
+      padding: 8px 10px;
+      font-size: 13px;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      outline: none;
+      font-family: inherit;
+    }
+
+    .form-input:focus, .form-select:focus, .form-textarea:focus {
+      border-color: var(--primary-blue);
+      box-shadow: 0 0 0 3px rgba(27, 100, 218, 0.1);
+    }
+
+    .btn-secondary {
+      background: white;
+      border: 1px solid var(--border-color);
+      padding: 7px 14px;
+      font-size: 12.5px;
+      font-weight: 500;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+    }
+
+    .btn-secondary:hover {
+      background: #f9fafb;
+    }
+
+    .btn-primary {
+      background: var(--primary-blue);
+      color: white;
+      border: none;
+      padding: 7px 14px;
+      font-size: 12.5px;
+      font-weight: 500;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+    }
+
+    .btn-primary:hover {
+      background: var(--primary-blue-hover);
+    }
+
+    /* Toast Notification */
+    .toast-box {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(50px);
+      background: #1e293b;
+      color: white;
+      padding: 10px 18px;
+      border-radius: var(--radius-md);
+      font-size: 13px;
+      font-weight: 500;
+      box-shadow: 0 10px 15px -3px rgba(0,0,0,0.2);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      opacity: 0;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 200;
+    }
+
+    .toast-box.show {
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ==========================================================================
+       LEFT SIDEBAR NAVIGATION
+       ========================================================================== -->
+  <aside class="sidebar">
+    <div class="sidebar-top">
+      <!-- Logo -->
+      <div class="sidebar-brand">
+        <div class="brand-logo-sq">E</div>
+        <span class="brand-text">ERPNext</span>
+      </div>
+
+      <!-- Search button -->
+      <div class="sidebar-search-btn" onclick="focusTopSearch()">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <span>Search</span>
+        </div>
+        <kbd>Ctrl+K</kbd>
+      </div>
+
+      <!-- Navigation links -->
+      <ul class="nav-list">
+        <li class="nav-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+          <span>Home</span>
+        </li>
+        <li class="nav-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"></path><path d="M18 9l-5 5-4-4-3 3"></path></svg>
+          <span>Dashboard</span>
+        </li>
+        <li class="nav-item active">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="12" y1="8" x2="12" y2="16"></line><line x1="8" y1="12" x2="16" y2="12"></line></svg>
+          <span>Daily Checklist</span>
+        </li>
+        <li class="nav-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+          <span>Sales Order</span>
+        </li>
+        <li class="nav-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"></path><rect x="9" y="3" width="6" height="4" rx="1"></rect><path d="M9 14l2 2 4-4"></path></svg>
+          <span>Purchase Order</span>
+        </li>
+        <li class="nav-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+          <span>Customers</span>
+        </li>
+        <li class="nav-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path></svg>
+          <span>Items & Pricing</span>
+        </li>
+        <li class="nav-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
+          <span>Stock</span>
+        </li>
+        <li class="nav-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+          <span>Reports</span>
+        </li>
+        <li class="nav-item" onclick="openSettingsModal()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+          <span>Settings</span>
+        </li>
+      </ul>
+    </div>
+
+    <div class="sidebar-bottom">
+      <div class="collapse-btn" onclick="showToast('Sidebar collapsed view toggled')">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line></svg>
+        <span>Collapse</span>
+      </div>
+
+      <div class="user-profile-strip" onclick="switchUserRole()">
+        <div class="user-avatar-circle">SA</div>
+        <div>
+          <div class="user-name-title">Sales Associate</div>
+          <div class="user-email-sub">sales.associate@example.com</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ==========================================================================
+       MAIN VIEWPORT
+       ========================================================================== -->
+  <div class="viewport">
+
+    <!-- Topbar -->
+    <header class="topbar">
+      <div></div>
+
+      <!-- Center Search -->
+      <div class="topbar-center-search">
+        <div class="global-search-input" onclick="focusTopSearch()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <span>Search or type a command (Ctrl + K)</span>
+        </div>
+      </div>
+
+      <!-- Right actions -->
+      <div class="topbar-right-actions">
+        <button class="top-icon-btn" title="Notifications" onclick="showToast('You have 2 pending supervisor notifications')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+          <span class="badge-dot-alert"></span>
+        </button>
+
+        <button class="top-icon-btn" title="Help & Documentation" onclick="showToast('Documentation: ERPNext Store Operations Guide')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+        </button>
+
+        <div class="user-avatar-circle" style="width: 28px; height: 28px; font-size: 11px; cursor: pointer;" onclick="toggleCopilot()">SA</div>
+      </div>
+    </header>
+
+    <!-- Scrollable Workspace -->
+    <main class="content-area">
+
+      <!-- Breadcrumb -->
+      <div class="page-breadcrumb">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+        <span>/</span>
+        <span>Sales</span>
+        <span>/</span>
+        <span style="color: var(--text-main); font-weight: 500;">Daily Checklist</span>
+      </div>
+
+      <!-- Page Title & Top Controls -->
+      <div class="page-title-row">
+        <div>
+          <h1 class="page-title">Sales Associate — Daily Checklist</h1>
+          <p class="page-subtitle">Stay on top of your daily responsibilities and close the day with confidence.</p>
+        </div>
+
+        <div class="page-top-controls">
+          <!-- Date selector -->
+          <div class="dropdown-pill-btn" onclick="changeDateFilter()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+            <span id="dateDisplayLabel">Today · September 15, 2026</span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </div>
+
+          <!-- Settings button -->
+          <div class="settings-btn-wrap">
+            <button class="dropdown-pill-btn" onclick="openSettingsModal()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+              <span>Settings</span>
+            </button>
+            <span class="settings-caption">Admins can define recurring tasks by role</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Filter / View Tabs Bar -->
+      <div class="filter-tabs-bar">
+        <div class="tabs-group">
+          <div class="tab-item active" id="tabMyTasks" onclick="switchFilter('all', this)">
+            <span>My Tasks</span>
+            <span class="tab-pill" id="badgeAllCount">12</span>
+          </div>
+          <div class="tab-item" id="tabCompleted" onclick="switchFilter('completed', this)">
+            <span>Completed</span>
+            <span class="tab-pill" id="badgeCompletedCount">8</span>
+          </div>
+          <div class="tab-item" id="tabOnHold" onclick="switchFilter('hold', this)">
+            <span>On Hold</span>
+            <span class="tab-pill" id="badgeHoldCount">1</span>
+          </div>
+        </div>
+
+        <div class="tab-right-tools">
+          <button class="ai-pill-action" onclick="scrollToAISuggestions()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5z"/></svg>
+            <span>AI Suggestions</span>
+            <span class="ai-counter-circle">3</span>
+          </button>
+
+          <button class="icon-tool-btn" onclick="toggleQuickFilter()">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
+            <span>Filter</span>
+          </button>
+
+          <button class="icon-tool-btn" onclick="refreshChecklist()" title="Refresh from ERPNext">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+          </button>
+
+          <div class="progress-wrap-outer">
+            <span id="progressSummaryLabel">8 of 12 completed</span>
+            <div class="progress-bar-track">
+              <div class="progress-bar-fill" id="checklistProgressBar" style="width: 67%;"></div>
+            </div>
+            <span style="font-weight: 600; color: var(--text-main);" id="progressPercentLabel">67%</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ====================================================================
+           SECTION 1: DAILY STORE TASKS
+           ==================================================================== -->
+      <div class="checklist-card" id="cardDailyStoreTasks">
+        <div class="card-header-row">
+          <div class="card-title-combo">
+            <div class="section-icon-box icon-box-blue">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+            </div>
+            <div>
+              <div class="section-title">Daily Store Tasks</div>
+              <div class="section-subtitle">Recurring tasks assigned from settings</div>
+            </div>
+          </div>
+          <span class="section-badge-right" id="dailyTasksBadge">7 tasks</span>
+        </div>
+
+        <table class="task-table">
+          <thead>
+            <tr>
+              <th style="width: 40px;"></th>
+              <th>Task</th>
+              <th style="width: 140px;">Source</th>
+              <th style="width: 120px;">Priority</th>
+              <th style="width: 120px;">Status</th>
+              <th style="width: 60px; text-align: right;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="dailyStoreTasksTbody">
+            <!-- Rendered by JS -->
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ====================================================================
+           SECTION 2: SALES & OPERATIONS — AI SUGGESTED
+           ==================================================================== -->
+      <div class="checklist-card" id="cardAITasks">
+        <div class="card-header-row">
+          <div class="card-title-combo">
+            <div class="section-icon-box icon-box-purple">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5z"/></svg>
+            </div>
+            <div>
+              <div class="section-title">Sales & Operations — AI Suggested</div>
+              <div class="section-subtitle">Suggested by AI from Sales Orders & Purchase Orders</div>
+            </div>
+          </div>
+          <span class="section-badge-right" id="aiTasksBadge">3 tasks</span>
+        </div>
+
+        <table class="task-table">
+          <thead>
+            <tr>
+              <th style="width: 40px;"></th>
+              <th>Task</th>
+              <th style="width: 150px;">Source / Reference</th>
+              <th style="width: 120px;">Priority</th>
+              <th style="width: 120px;">Status</th>
+              <th style="width: 60px; text-align: right;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="aiTasksTbody">
+            <!-- Rendered by JS -->
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ====================================================================
+           SECTION 3: MY ADDED TASKS
+           ==================================================================== -->
+      <div class="checklist-card" id="cardMyAddedTasks">
+        <div class="card-header-row">
+          <div class="card-title-combo">
+            <div class="section-icon-box icon-box-blue">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            </div>
+            <div>
+              <div class="section-title">My Added Tasks</div>
+              <div class="section-subtitle">Add your own tasks for today</div>
+            </div>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <span class="section-badge-right" id="myAddedBadge">2 tasks</span>
+            <button class="btn-add-task-blue" onclick="openAddTaskModal()">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+              <span>Add Task</span>
+            </button>
+          </div>
+        </div>
+
+        <table class="task-table">
+          <thead>
+            <tr>
+              <th style="width: 40px;"></th>
+              <th>Task</th>
+              <th style="width: 140px;">Source</th>
+              <th style="width: 120px;">Priority</th>
+              <th style="width: 120px;">Status</th>
+              <th style="width: 60px; text-align: right;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="myAddedTasksTbody">
+            <!-- Rendered by JS -->
+          </tbody>
+        </table>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- ==========================================================================
+       RIGHT PANEL: FINBYZ AI COPILOT
+       ========================================================================== -->
+  <aside class="copilot-panel" id="copilotSidePanel">
+    <div class="copilot-header">
+      <div class="copilot-header-title">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--text-subtle);"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line></svg>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="color: var(--primary-blue);"><path d="M12 2.5l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5z"/></svg>
+        <span>Copilot</span>
+      </div>
+
+      <div class="copilot-header-btns">
+        <button class="top-icon-btn" onclick="toggleCopilot()" title="Close Copilot">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="copilot-body" id="copilotChatBody">
+      <!-- User message bubble -->
+      <div class="chat-user-row">
+        <div class="chat-user-bubble">
+          Which sales orders need my attention today?
+        </div>
+      </div>
+
+      <!-- Assistant response turn -->
+      <div class="chat-assistant-row">
+        <div class="assistant-avatar-sq">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5z"/></svg>
+        </div>
+        <div class="assistant-bubble-content">
+          <p>Here are the sales orders that need your attention today:</p>
+
+          <p style="margin-bottom: 2px;">• <strong>SO-00482</strong></p>
+          <p style="margin-left: 12px; margin-bottom: 8px; color: var(--text-muted);">Due today. Please confirm the order is submitted and ready for processing.</p>
+
+          <p style="margin-bottom: 2px;">• <strong>SO-00491</strong></p>
+          <p style="margin-left: 12px; margin-bottom: 8px; color: var(--text-muted);">Delivery is overdue. Follow up with the logistics team and customer before closing.</p>
+
+          <p>You may also want to check related purchase orders and stock availability to avoid further delays.</p>
+
+          <p style="font-weight: 600; margin-top: 10px; margin-bottom: 4px;">Suggested next actions:</p>
+          <ul style="margin-top: 4px; margin-bottom: 8px;">
+            <li>Contact the customer for <strong style="color: var(--primary-blue); cursor: pointer;" onclick="openDocPreview('SO-00491')">SO-00491</strong></li>
+            <li>Verify stock availability for <strong style="color: var(--primary-blue); cursor: pointer;" onclick="openDocPreview('SO-00482')">SO-00482</strong></li>
+            <li>Update order status in ERPNext</li>
+          </ul>
+
+          <div class="chat-action-footer">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" title="Copy response" onclick="showToast('Copied to clipboard')"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" title="Helpful" onclick="showToast('Thank you for your feedback!')"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" title="Not helpful" onclick="showToast('Feedback noted.')"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"></path></svg>
+            <span style="margin-left: auto;">10:24 AM</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Suggested Next Actions Chips -->
+      <div class="suggested-chips-container">
+        <button class="copilot-suggestion-chip" onclick="askCopilot('What should I prioritize before closing?')">
+          <span>What should I prioritize before closing?</span>
+          <span style="font-size: 14px;">&rarr;</span>
+        </button>
+        <button class="copilot-suggestion-chip" onclick="askCopilot('Show me overdue purchase orders')">
+          <span>Show me overdue purchase orders</span>
+          <span style="font-size: 14px;">&rarr;</span>
+        </button>
+        <button class="copilot-suggestion-chip" onclick="askCopilot('Summarize today\'s open deliveries')">
+          <span>Summarize today's open deliveries</span>
+          <span style="font-size: 14px;">&rarr;</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Copilot composer footer -->
+    <div class="copilot-footer">
+      <div class="copilot-input-box">
+        <input type="text" id="copilotComposerInput" placeholder="Ask anything about your data..." onkeydown="handleCopilotKey(event)" />
+        <button class="top-icon-btn" title="Attach file" onclick="showToast('Upload attachment ready in ERPNext')">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+        </button>
+        <button class="copilot-send-btn" id="copilotSendBtn" onclick="sendCopilotTurn()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="7" y1="17" x2="17" y2="7"></line><polyline points="7 7 17 7 17 17"></polyline></svg>
+        </button>
+      </div>
+      <div class="copilot-disclaimer">
+        Copilot can make mistakes. Please verify important information.
+      </div>
+    </div>
+  </aside>
+
+  <!-- ==========================================================================
+       ACTION DROPDOWN MENU
+       ========================================================================== -->
+  <div class="action-menu-dropdown" id="actionMenuDropdown">
+    <div class="action-menu-item" onclick="triggerMenuAction('toggle')">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+      <span>Toggle Completed</span>
+    </div>
+    <div class="action-menu-item" onclick="triggerMenuAction('hold')">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="10" y1="15" x2="10" y2="9"></line><line x1="14" y1="15" x2="14" y2="9"></line></svg>
+      <span>Put On Hold / Issue</span>
+    </div>
+    <div class="action-menu-item" onclick="triggerMenuAction('viewDoc')">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+      <span>View Reference</span>
+    </div>
+    <div class="action-menu-item danger" onclick="triggerMenuAction('delete')">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+      <span>Delete Task</span>
+    </div>
+  </div>
+
+  <!-- ==========================================================================
+       HOLD / ISSUE REASON MODAL (Sarah Jenkins Escalation)
+       ========================================================================== -->
+  <div class="modal-overlay" id="holdModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="holdModalTitle">Put Task On Hold</h3>
+        <button class="top-icon-btn" onclick="closeHoldModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 12.5px; color: var(--text-subtle); margin-bottom: 14px;" id="holdModalDesc">
+          State the reason this task cannot be completed. An alert will be routed to your supervisor.
+        </p>
+
+        <div class="form-group">
+          <label class="form-label">Issue Category</label>
+          <select id="holdCategorySelect" class="form-select" onchange="suggestHoldReason(this.value)">
+            <option value="equipment">Equipment Breakdown / Machine Not Working</option>
+            <option value="supplies">Missing Supplies or Stock Out</option>
+            <option value="safety">Safety Hazard / Area Blocked</option>
+            <option value="approval">Pending Supervisor Authorization</option>
+            <option value="other">Other Operational Exception</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Explanation / Reason *</label>
+          <textarea id="holdReasonNotes" class="form-textarea" rows="3" placeholder="E.g. Vacuum machine motor is smoking and not running; cannot clean floor stands."></textarea>
+        </div>
+
+        <div style="background: var(--orange-bg); border-radius: var(--radius-md); padding: 10px 12px; font-size: 12px; color: var(--orange-text); display: flex; gap: 8px; align-items: center;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+          <div><strong>Escalation Target:</strong> Sarah Jenkins (Store Operations Supervisor) via Employee <code>reports_to</code> hierarchy.</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeHoldModal()">Cancel</button>
+        <button class="btn-primary" style="background: var(--orange-text);" onclick="submitHoldReason()">Confirm Hold & Escalate</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Task Modal -->
+  <div class="modal-overlay" id="addTaskModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Add New Task</h3>
+        <button class="top-icon-btn" onclick="closeAddTaskModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Task Description *</label>
+          <input type="text" id="newTaskTitleInput" class="form-input" placeholder="E.g. Follow up with supplier regarding delayed boot shipment" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Section</label>
+          <select id="newTaskSectionSelect" class="form-select">
+            <option value="myAdded">My Added Tasks</option>
+            <option value="daily">Daily Store Tasks</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Priority</label>
+          <select id="newTaskPrioritySelect" class="form-select">
+            <option value="Low">Low</option>
+            <option value="Medium" selected>Medium</option>
+            <option value="High">High</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeAddTaskModal()">Cancel</button>
+        <button class="btn-primary" onclick="submitAddTask()">Save Task</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div class="modal-overlay" id="settingsModal">
+    <div class="modal-card" style="max-width: 580px;">
+      <div class="modal-header">
+        <h3>Store Checklist & AI Settings</h3>
+        <button class="top-icon-btn" onclick="closeSettingsModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Target Role</label>
+          <select class="form-select">
+            <option>Sales Associate</option>
+            <option>Store Cashier</option>
+            <option>Store Supervisor</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Finbyz AI Monitoring DocTypes</label>
+          <div style="display: flex; gap: 16px; margin-top: 4px;">
+            <label style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+              <input type="checkbox" checked /> Sales Order
+            </label>
+            <label style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+              <input type="checkbox" checked /> Purchase Order
+            </label>
+            <label style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+              <input type="checkbox" /> Delivery Note
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">AI Overdue Trigger Threshold</label>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <input type="number" class="form-input" style="width: 80px;" value="2" />
+            <span style="font-size: 12px; color: var(--text-muted);">days beyond due date</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Supervisor Escalation Routing</label>
+          <select class="form-select">
+            <option>Use Employee Profile 'reports_to' (Sarah Jenkins)</option>
+            <option>Direct to Store Operations Manager Role</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeSettingsModal()">Close</button>
+        <button class="btn-primary" onclick="showToast('Settings saved to ERPNext'); closeSettingsModal();">Save Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Document Preview Modal -->
+  <div class="modal-overlay" id="docPreviewModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="docPreviewTitle">Document Preview</h3>
+        <button class="top-icon-btn" onclick="closeDocPreview()">✕</button>
+      </div>
+      <div class="modal-body" id="docPreviewContent">
+        <!-- Rendered by JS -->
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeDocPreview()">Close</button>
+        <button class="btn-primary" onclick="showToast('Opened in ERPNext Desk View'); closeDocPreview();">Open in ERPNext</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Box -->
+  <div class="toast-box" id="toastMessage">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+    <span id="toastText">Task updated successfully</span>
+  </div>
+
+  <!-- ==========================================================================
+       CLIENT-SIDE JAVASCRIPT STATE & INTERACTIONS
+       ========================================================================== -->
+  <script>
+    // Initial State strictly mirroring user's image screenshot
+    const INITIAL_DAILY_TASKS = [
+      { id: 101, title: "Turn on all necessary lights", source: "Scheduled", priority: "Low", status: "Completed", completed: true },
+      { id: 102, title: "Check POS system", source: "Scheduled", priority: "Medium", status: "Completed", completed: true },
+      { id: 103, title: "Check float and cash", source: "Scheduled", priority: "High", status: "Pending", completed: false, isBold: true },
+      { id: 104, title: "Clean and vacuum store", source: "Scheduled", priority: "Medium", status: "Completed", completed: true },
+      { id: 105, title: "Clean glass and displays", source: "Scheduled", priority: "Medium", status: "Pending", completed: false },
+      { id: 106, title: "Refill merchandise", source: "Scheduled", priority: "Low", status: "Pending", completed: false },
+      { id: 107, title: "Washrooms — clean per schedule", source: "Scheduled", priority: "Medium", status: "Pending", completed: false }
+    ];
+
+    const INITIAL_AI_TASKS = [
+      {
+        id: 201,
+        title: "Sales Order <strong>SO-00482</strong> is due today — confirm order is submitted and ready",
+        docRef: "SO-00482",
+        docType: "Sales Order",
+        refType: "blue",
+        priority: "High",
+        status: "Pending",
+        completed: false
+      },
+      {
+        id: 202,
+        title: "Purchase Order <strong>PO-00217</strong> is 2 days overdue — verify supplier status",
+        docRef: "PO-00217",
+        docType: "Purchase Order",
+        refType: "purple",
+        priority: "High",
+        status: "Pending",
+        completed: false
+      },
+      {
+        id: 203,
+        title: "Delivery for <strong>SO-00491</strong> is overdue — follow up before closing",
+        docRef: "SO-00491",
+        docType: "Sales Order",
+        refType: "blue",
+        priority: "Medium",
+        status: "Pending",
+        completed: false
+      }
+    ];
+
+    const INITIAL_MY_ADDED = [
+      { id: 301, title: "Follow up with customer for pending payment", source: "Manual", priority: "Medium", status: "Pending", completed: false },
+      { id: 302, title: "Prepare shoe box display for weekend promotional launch", source: "Manual", priority: "Low", status: "Completed", completed: true }
+    ];
+
+    let dailyTasks = [];
+    let aiTasks = [];
+    let myAddedTasks = [];
+    let activeFilter = 'all';
+    let currentSelectedTaskId = null;
+
+    function init() {
+      // Load saved state or defaults
+      const savedDaily = localStorage.getItem('erpnext_daily_tasks');
+      const savedAI = localStorage.getItem('erpnext_ai_tasks');
+      const savedMy = localStorage.getItem('erpnext_my_added_tasks');
+
+      dailyTasks = savedDaily ? JSON.parse(savedDaily) : JSON.parse(JSON.stringify(INITIAL_DAILY_TASKS));
+      aiTasks = savedAI ? JSON.parse(savedAI) : JSON.parse(JSON.stringify(INITIAL_AI_TASKS));
+      myAddedTasks = savedMy ? JSON.parse(savedMy) : JSON.parse(JSON.stringify(INITIAL_MY_ADDED));
+
+      renderAllTables();
+      updateMetrics();
+    }
+
+    function persistState() {
+      localStorage.setItem('erpnext_daily_tasks', JSON.stringify(dailyTasks));
+      localStorage.setItem('erpnext_ai_tasks', JSON.stringify(aiTasks));
+      localStorage.setItem('erpnext_my_added_tasks', JSON.stringify(myAddedTasks));
+      renderAllTables();
+      updateMetrics();
+    }
+
+    // Render Daily Store Tasks Table
+    function renderDailyTasks() {
+      const tbody = document.getElementById('dailyStoreTasksTbody');
+      tbody.innerHTML = '';
+
+      const filtered = filterList(dailyTasks);
+      document.getElementById('dailyTasksBadge').textContent = `${filtered.length} tasks`;
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding: 20px; color: var(--text-faint);">No tasks matching current view.</td></tr>`;
+        return;
+      }
+
+      filtered.forEach(task => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>
+            <div class="checkbox-custom ${task.completed ? 'checked' : ''}" onclick="toggleTaskCompletion(${task.id}, 'daily')">
+              ${task.completed ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><polyline points="20 6 9 17 4 12"></polyline></svg>' : ''}
+            </div>
+          </td>
+          <td class="task-title-cell ${task.completed ? 'completed' : ''}">
+            ${task.isBold ? `<strong>${escapeHtml(task.title)}</strong>` : escapeHtml(task.title)}
+          </td>
+          <td>
+            <span class="badge-pill badge-source-scheduled">${task.source}</span>
+          </td>
+          <td>
+            <span class="badge-pill ${getPriorityBadgeClass(task.priority)}">${task.priority}</span>
+          </td>
+          <td>
+            <span class="badge-pill ${getStatusBadgeClass(task.status)}">${task.status}</span>
+          </td>
+          <td style="text-align: right;">
+            <button class="action-dots-btn" onclick="openActionMenu(event, ${task.id}, 'daily')">•••</button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    // Render AI Tasks Table
+    function renderAITasks() {
+      const tbody = document.getElementById('aiTasksTbody');
+      tbody.innerHTML = '';
+
+      const filtered = filterList(aiTasks);
+      document.getElementById('aiTasksBadge').textContent = `${filtered.length} tasks`;
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding: 20px; color: var(--text-faint);">No AI suggestions matching current view.</td></tr>`;
+        return;
+      }
+
+      filtered.forEach(task => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>
+            <div class="checkbox-custom ${task.completed ? 'checked' : ''}" onclick="toggleTaskCompletion(${task.id}, 'ai')">
+              ${task.completed ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><polyline points="20 6 9 17 4 12"></polyline></svg>' : ''}
+            </div>
+          </td>
+          <td class="task-title-cell ${task.completed ? 'completed' : ''}">
+            ${escapeHtml(task.title)}
+          </td>
+          <td>
+            <span class="badge-pill badge-ref-doc ${task.refType === 'purple' ? 'badge-ref-purple' : ''}" onclick="openDocPreview('${task.docRef}')">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+              ${task.docRef}
+            </span>
+          </td>
+          <td>
+            <span class="badge-pill ${getPriorityBadgeClass(task.priority)}">${task.priority}</span>
+          </td>
+          <td>
+            <span class="badge-pill ${getStatusBadgeClass(task.status)}">${task.status}</span>
+          </td>
+          <td style="text-align: right;">
+            <button class="action-dots-btn" onclick="openActionMenu(event, ${task.id}, 'ai')">•••</button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    // Render My Added Tasks Table
+    function renderMyAddedTasks() {
+      const tbody = document.getElementById('myAddedTasksTbody');
+      tbody.innerHTML = '';
+
+      const filtered = filterList(myAddedTasks);
+      document.getElementById('myAddedBadge').textContent = `${filtered.length} tasks`;
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding: 20px; color: var(--text-faint);">No custom tasks added for today.</td></tr>`;
+        return;
+      }
+
+      filtered.forEach(task => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>
+            <div class="checkbox-custom ${task.completed ? 'checked' : ''}" onclick="toggleTaskCompletion(${task.id}, 'my')">
+              ${task.completed ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><polyline points="20 6 9 17 4 12"></polyline></svg>' : ''}
+            </div>
+          </td>
+          <td class="task-title-cell ${task.completed ? 'completed' : ''}">
+            ${escapeHtml(task.title)}
+          </td>
+          <td>
+            <span class="badge-pill badge-source-manual">${task.source}</span>
+          </td>
+          <td>
+            <span class="badge-pill ${getPriorityBadgeClass(task.priority)}">${task.priority}</span>
+          </td>
+          <td>
+            <span class="badge-pill ${getStatusBadgeClass(task.status)}">${task.status}</span>
+          </td>
+          <td style="text-align: right;">
+            <button class="action-dots-btn" onclick="openActionMenu(event, ${task.id}, 'my')">•••</button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function renderAllTables() {
+      renderDailyTasks();
+      renderAITasks();
+      renderMyAddedTasks();
+    }
+
+    function filterList(list) {
+      if (activeFilter === 'completed') {
+        return list.filter(t => t.completed || t.status === 'Completed');
+      } else if (activeFilter === 'hold') {
+        return list.filter(t => t.status === 'On Hold');
+      }
+      return list;
+    }
+
+    function getPriorityBadgeClass(priority) {
+      if (priority === 'High') return 'badge-priority-high';
+      if (priority === 'Medium') return 'badge-priority-medium';
+      return 'badge-priority-low';
+    }
+
+    function getStatusBadgeClass(status) {
+      if (status === 'Completed') return 'badge-status-completed';
+      if (status === 'On Hold') return 'badge-status-hold';
+      return 'badge-status-pending';
+    }
+
+    // Toggle Task completion
+    function toggleTaskCompletion(id, section) {
+      let task = findTask(id);
+      if (task) {
+        task.completed = !task.completed;
+        task.status = task.completed ? 'Completed' : 'Pending';
+        showToast(`Task "${stripTags(task.title).substring(0, 25)}..." marked ${task.status.toLowerCase()}`);
+        persistState();
+      }
+    }
+
+    function findTask(id) {
+      return dailyTasks.find(t => t.id === id) || aiTasks.find(t => t.id === id) || myAddedTasks.find(t => t.id === id);
+    }
+
+    // Update Progress and Tab Badges
+    function updateMetrics() {
+      const all = [...dailyTasks, ...aiTasks, ...myAddedTasks];
+      const total = all.length;
+      const completed = all.filter(t => t.completed || t.status === 'Completed').length;
+      const hold = all.filter(t => t.status === 'On Hold').length;
+
+      document.getElementById('badgeAllCount').textContent = total;
+      document.getElementById('badgeCompletedCount').textContent = completed;
+      document.getElementById('badgeHoldCount').textContent = hold;
+
+      const pct = total ? Math.round((completed / total) * 100) : 0;
+      document.getElementById('progressSummaryLabel').textContent = `${completed} of ${total} completed`;
+      document.getElementById('checklistProgressBar').style.width = `${pct}%`;
+      document.getElementById('progressPercentLabel').textContent = `${pct}%`;
+    }
+
+    // Tab Switching
+    function switchFilter(type, el) {
+      activeFilter = type;
+      document.querySelectorAll('.tab-item').forEach(item => item.classList.remove('active'));
+      el.classList.add('active');
+      renderAllTables();
+    }
+
+    function scrollToAISuggestions() {
+      document.getElementById('cardAITasks').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      showToast('Viewing Finbyz AI Suggested Orders');
+    }
+
+    // Actions Dropdown Menu
+    function openActionMenu(e, id, section) {
+      e.stopPropagation();
+      currentSelectedTaskId = id;
+      const menu = document.getElementById('actionMenuDropdown');
+      menu.classList.add('show');
+
+      const rect = e.target.getBoundingClientRect();
+      menu.style.top = `${rect.bottom + window.scrollY + 4}px`;
+      menu.style.left = `${rect.right - 170 + window.scrollX}px`;
+    }
+
+    window.addEventListener('click', () => {
+      document.getElementById('actionMenuDropdown').classList.remove('show');
+    });
+
+    function triggerMenuAction(action) {
+      if (!currentSelectedTaskId) return;
+      const task = findTask(currentSelectedTaskId);
+      if (!task) return;
+
+      if (action === 'toggle') {
+        task.completed = !task.completed;
+        task.status = task.completed ? 'Completed' : 'Pending';
+        showToast(`Task marked ${task.status.toLowerCase()}`);
+        persistState();
+      } else if (action === 'hold') {
+        openHoldModal(task);
+      } else if (action === 'viewDoc') {
+        if (task.docRef) {
+          openDocPreview(task.docRef);
+        } else {
+          showToast(`Viewing details for: ${stripTags(task.title)}`);
+        }
+      } else if (action === 'delete') {
+        dailyTasks = dailyTasks.filter(t => t.id !== currentSelectedTaskId);
+        aiTasks = aiTasks.filter(t => t.id !== currentSelectedTaskId);
+        myAddedTasks = myAddedTasks.filter(t => t.id !== currentSelectedTaskId);
+        showToast('Task removed from checklist');
+        persistState();
+      }
+    }
+
+    // Hold Reason Modal (Equipment failure like vacuum machine)
+    function openHoldModal(task) {
+      document.getElementById('holdModalTitle').textContent = `Put "${stripTags(task.title).substring(0, 30)}..." On Hold`;
+      document.getElementById('holdReasonNotes').value = task.holdReason || (task.title.toLowerCase().includes('vacuum') ? 'Vacuum cleaner motor is smoking and stopped spinning. Machine is non-operational.' : '');
+      document.getElementById('holdModal').classList.add('open');
+    }
+
+    function closeHoldModal() {
+      document.getElementById('holdModal').classList.remove('open');
+    }
+
+    function suggestHoldReason(cat) {
+      const notes = document.getElementById('holdReasonNotes');
+      if (cat === 'equipment') {
+        notes.value = "Equipment/machine broke down during shift. Motor stopped running or smoking.";
+      } else if (cat === 'supplies') {
+        notes.value = "Required cleaning supplies and packaging materials are out of stock.";
+      } else if (cat === 'approval') {
+        notes.value = "Requires supervisor override and sign-off before proceeding.";
+      }
+    }
+
+    function submitHoldReason() {
+      const reason = document.getElementById('holdReasonNotes').value.trim();
+      if (!reason) {
+        alert('Please specify the reason for the hold.');
+        return;
+      }
+      const task = findTask(currentSelectedTaskId);
+      if (task) {
+        task.status = 'On Hold';
+        task.completed = false;
+        task.holdReason = reason;
+        closeHoldModal();
+        showToast(`Task placed On Hold. Escalated to Supervisor Sarah Jenkins.`);
+        persistState();
+      }
+    }
+
+    // Add Task Modal
+    function openAddTaskModal() {
+      document.getElementById('addTaskModal').classList.add('open');
+      document.getElementById('newTaskTitleInput').focus();
+    }
+
+    function closeAddTaskModal() {
+      document.getElementById('addTaskModal').classList.remove('open');
+      document.getElementById('newTaskTitleInput').value = '';
+    }
+
+    function submitAddTask() {
+      const title = document.getElementById('newTaskTitleInput').value.trim();
+      if (!title) return;
+      const section = document.getElementById('newTaskSectionSelect').value;
+      const priority = document.getElementById('newTaskPrioritySelect').value;
+
+      const newTask = {
+        id: Date.now(),
+        title: title,
+        source: section === 'daily' ? 'Scheduled' : 'Manual',
+        priority: priority,
+        status: 'Pending',
+        completed: false
+      };
+
+      if (section === 'daily') {
+        dailyTasks.push(newTask);
+      } else {
+        myAddedTasks.push(newTask);
+      }
+
+      closeAddTaskModal();
+      showToast(`Task "${title}" added successfully`);
+      persistState();
+    }
+
+    // Document Preview Modal
+    function openDocPreview(ref) {
+      const titleEl = document.getElementById('docPreviewTitle');
+      const contentEl = document.getElementById('docPreviewContent');
+      titleEl.textContent = `ERPNext Document Preview — ${ref}`;
+
+      if (ref === 'SO-00482') {
+        contentEl.innerHTML = `
+          <div style="display:flex; justify-content:space-between; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid #e5e7eb;">
+            <div><span style="font-size:11px; color:#6b7280;">CUSTOMER</span><br><strong>Sharkeez Footwear Inc.</strong></div>
+            <div style="text-align:right;"><span style="font-size:11px; color:#6b7280;">GRAND TOTAL</span><br><strong style="color:var(--primary-blue); font-size:15px;">$10,999.95</strong></div>
+          </div>
+          <div style="background:#f8fafc; padding:10px; border-radius:6px; margin-bottom:12px;">
+            <strong>Items:</strong> 50x Pro Runner Shoes (Size 9-11)<br>
+            <strong>Due Date:</strong> Today &middot; September 15, 2026<br>
+            <strong>Status:</strong> <span class="badge-pill badge-priority-medium">To Deliver and Bill</span>
+          </div>
+          <p style="font-size:12px; color:#4b5563;">Stock is verified present in Backroom Bin B-04. Delivery Note is pending submission.</p>
+        `;
+      } else if (ref === 'PO-00217') {
+        contentEl.innerHTML = `
+          <div style="display:flex; justify-content:space-between; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid #e5e7eb;">
+            <div><span style="font-size:11px; color:#6b7280;">SUPPLIER</span><br><strong>Apex Shoe Supplies Co.</strong></div>
+            <div style="text-align:right;"><span style="font-size:11px; color:#6b7280;">TOTAL</span><br><strong style="color:var(--purple-text); font-size:15px;">$1,850.00</strong></div>
+          </div>
+          <div style="background:#faf5ff; padding:10px; border-radius:6px; margin-bottom:12px;">
+            <strong>Items:</strong> 100x Shoe Insoles & Soles<br>
+            <strong>Overdue:</strong> 2 days overdue (Expected Sept 13, 2026)<br>
+            <strong>Status:</strong> <span class="badge-pill badge-priority-high">To Receive</span>
+          </div>
+          <p style="font-size:12px; color:#4b5563;">Supplier dispatch contact: <strong>+1-800-555-0199</strong>. Re-order threshold reached.</p>
+        `;
+      } else {
+        contentEl.innerHTML = `
+          <div style="display:flex; justify-content:space-between; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid #e5e7eb;">
+            <div><span style="font-size:11px; color:#6b7280;">CUSTOMER</span><br><strong>Subashree Retailers</strong></div>
+            <div style="text-align:right;"><span style="font-size:11px; color:#6b7280;">GRAND TOTAL</span><br><strong style="color:var(--primary-blue); font-size:15px;">$425.00</strong></div>
+          </div>
+          <div style="background:#f8fafc; padding:10px; border-radius:6px; margin-bottom:12px;">
+            <strong>Items:</strong> 25x Classic Leather Loafers<br>
+            <strong>Delivery Overdue:</strong> Follow up with logistics team before store closing.
+          </div>
+        `;
+      }
+
+      document.getElementById('docPreviewModal').classList.add('open');
+    }
+
+    function closeDocPreview() {
+      document.getElementById('docPreviewModal').classList.remove('open');
+    }
+
+    // Settings Modal
+    function openSettingsModal() {
+      document.getElementById('settingsModal').classList.add('open');
+    }
+
+    function closeSettingsModal() {
+      document.getElementById('settingsModal').classList.remove('open');
+    }
+
+    // Copilot Drawer Interactions
+    function toggleCopilot() {
+      const panel = document.getElementById('copilotSidePanel');
+      if (panel.style.display === 'none') {
+        panel.style.display = 'flex';
+      } else {
+        panel.style.display = panel.style.display === '' ? 'none' : '';
+      }
+    }
+
+    function handleCopilotKey(e) {
+      if (e.key === 'Enter') sendCopilotTurn();
+    }
+
+    function sendCopilotTurn() {
+      const input = document.getElementById('copilotComposerInput');
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = '';
+      appendUserTurn(text);
+
+      setTimeout(() => {
+        respondCopilot(text);
+      }, 500);
+    }
+
+    function askCopilot(question) {
+      appendUserTurn(question);
+      setTimeout(() => {
+        respondCopilot(question);
+      }, 500);
+    }
+
+    function appendUserTurn(text) {
+      const chatBody = document.getElementById('copilotChatBody');
+      const row = document.createElement('div');
+      row.className = 'chat-user-row';
+      row.innerHTML = `<div class="chat-user-bubble">${escapeHtml(text)}</div>`;
+      chatBody.appendChild(row);
+      chatBody.scrollTop = chatBody.scrollHeight;
+    }
+
+    function respondCopilot(query) {
+      const chatBody = document.getElementById('copilotChatBody');
+      const q = query.toLowerCase();
+
+      let replyHtml = '';
+      if (q.includes('prioritize') || q.includes('closing')) {
+        replyHtml = `
+          <p>Before closing the store today at 8:00 PM, prioritize:</p>
+          <p>1. <strong>Cash Float & Till Deposit:</strong> Ensure $250.00 float remains in register and excess cash is placed in the safe money bag.</p>
+          <p>2. <strong>Delivery for SO-00491:</strong> Ensure courier handoff is confirmed before 6:30 PM.</p>
+          <p>3. <strong>Checklist Sign-off:</strong> Submit shift checklist to Supervisor Sarah Jenkins.</p>
+        `;
+      } else if (q.includes('overdue') || q.includes('purchase')) {
+        replyHtml = `
+          <p><strong>Overdue Purchase Orders:</strong></p>
+          <p>• <strong style="color:var(--purple-text); cursor:pointer;" onclick="openDocPreview('PO-00217')">PO-00217</strong> (Apex Shoe Supplies Co) is <strong>2 days overdue</strong> for 100x Shoe Insoles ($1,850.00). Stock is near reorder point.</p>
+          <p>Action: Log a supplier call or request supervisor authorization to reassign vendor.</p>
+        `;
+      } else if (q.includes('vacuum') || q.includes('broken')) {
+        replyHtml = `
+          <p><strong>Equipment Malfunction Procedure:</strong></p>
+          <p>1. Unplug the vacuum machine immediately.</p>
+          <p>2. In your Daily Checklist, click <strong>•••</strong> next to <em>"Clean and vacuum store"</em> and select <strong>Put On Hold / Issue</strong>.</p>
+          <p>3. Submit the malfunction notes. This will notify Supervisor <strong>Sarah Jenkins</strong> to dispatch authorized maintenance.</p>
+        `;
+      } else {
+        replyHtml = `
+          <p>I reviewed your store operational data in ERPNext:</p>
+          <p>• You have <strong>${dailyTasks.filter(t => !t.completed).length + aiTasks.filter(t => !t.completed).length} open tasks</strong> remaining across your shifts.</p>
+          <p>• 1 task is currently <strong>On Hold</strong> pending supervisor sign-off.</p>
+          <p>How else can I assist you with orders or checklist items?</p>
+        `;
+      }
+
+      const row = document.createElement('div');
+      row.className = 'chat-assistant-row';
+      row.innerHTML = `
+        <div class="assistant-avatar-sq">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9L12 2.5z"/></svg>
+        </div>
+        <div class="assistant-bubble-content">
+          ${replyHtml}
+          <div class="chat-action-footer">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" title="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" title="Helpful"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>
+            <span style="margin-left: auto;">Just now</span>
+          </div>
+        </div>
+      `;
+      chatBody.appendChild(row);
+      chatBody.scrollTop = chatBody.scrollHeight;
+    }
+
+    // Helper utilities
+    function showToast(msg) {
+      const box = document.getElementById('toastMessage');
+      document.getElementById('toastText').textContent = msg;
+      box.classList.add('show');
+      setTimeout(() => box.classList.remove('show'), 3500);
+    }
+
+    function refreshChecklist() {
+      showToast('Synchronized live checklist with ERPNext backend');
+      renderAllTables();
+      updateMetrics();
+    }
+
+    function changeDateFilter() {
+      const d = prompt("Enter Shift Date (YYYY-MM-DD):", "2026-09-15");
+      if (d) {
+        document.getElementById('dateDisplayLabel').textContent = `Today · ${d}`;
+        showToast(`Loaded checklist for ${d}`);
+      }
+    }
+
+    function focusTopSearch() {
+      const q = prompt("Search ERPNext tasks, Sales Orders, or settings:");
+      if (q) showToast(`Showing search results for "${q}"`);
+    }
+
+    function switchUserRole() {
+      showToast('Current User: Alex Morgan (Role: Sales Associate)');
+    }
+
+    function toggleQuickFilter() {
+      const filter = prompt("Filter by priority (High, Medium, Low) or 'all':", "High");
+      if (filter && filter.toLowerCase() !== 'all') {
+        const p = filter.charAt(0).toUpperCase() + filter.slice(1).toLowerCase();
+        showToast(`Filtered tasks by priority: ${p}`);
+      } else {
+        showToast("Showing all tasks");
+      }
+    }
+
+    function stripTags(html) {
+      const tmp = document.createElement("DIV");
+      tmp.innerHTML = html;
+      return tmp.textContent || tmp.innerText || "";
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/[&<>"']/g, function(m) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[m];
+      });
+    }
+
+    // Launch
+    window.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>

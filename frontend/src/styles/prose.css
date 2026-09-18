@@ -1,0 +1,111 @@
+/* The assistant's markdown. Injected with v-html, so its elements can't carry
+   utility classes and the rhythm has to be declared here. Scoped to
+   #copilot-root at build time, like everything else the panel authors.
+
+   Sizes come from frappe-ui's scale (the `text-p-*` paragraph twins, which carry
+   the looser line-height prose wants) and every colour is a token, so the panel
+   follows the desk's theme instead of freezing one. */
+.copilot-prose {
+	@apply text-p-base text-ink-gray-8;
+	word-break: break-word;
+}
+.copilot-prose > :first-child {
+	margin-top: 0;
+}
+.copilot-prose > :last-child {
+	margin-bottom: 0;
+}
+.copilot-prose p {
+	margin: 0 0 0.5rem;
+}
+
+/* Headings step down in size but share one weight and colour: the model writes
+   far more headings than a page needs, and six visual tiers would shred a
+   770px column. */
+.copilot-prose :is(h1, h2, h3, h4, h5, h6) {
+	@apply font-semibold text-ink-gray-9;
+	margin: 0.875rem 0 0.375rem;
+	line-height: 1.35;
+}
+.copilot-prose h1 {
+	@apply text-p-lg;
+}
+.copilot-prose :is(h2, h3) {
+	@apply text-p-base;
+}
+.copilot-prose :is(h4, h5, h6) {
+	@apply text-p-sm text-ink-gray-7;
+}
+
+.copilot-prose :is(ul, ol) {
+	margin: 0.25rem 0;
+	padding-inline-start: 1.25rem;
+}
+.copilot-prose ul {
+	list-style: disc;
+}
+.copilot-prose ol {
+	list-style: decimal;
+}
+.copilot-prose li {
+	margin: 0.125rem 0;
+}
+.copilot-prose li::marker {
+	@apply text-ink-gray-4;
+}
+
+.copilot-prose strong {
+	@apply font-medium text-ink-gray-9;
+}
+.copilot-prose a {
+	@apply text-ink-blue-3 underline decoration-transparent underline-offset-2 transition-colors;
+}
+.copilot-prose a:hover {
+	@apply decoration-current;
+}
+.copilot-prose blockquote {
+	@apply border-l-2 border-outline-gray-2 text-ink-gray-7;
+	margin: 0.5rem 0;
+	padding: 0.125rem 0.75rem;
+}
+.copilot-prose hr {
+	@apply border-0 border-t border-outline-gray-1;
+	margin: 0.875rem 0;
+}
+
+.copilot-prose code {
+	@apply rounded bg-surface-gray-2 font-mono text-xs text-ink-gray-8;
+	padding: 0.0625rem 0.25rem;
+}
+.copilot-prose pre {
+	@apply overflow-x-auto rounded-lg bg-surface-gray-2 font-mono text-xs leading-relaxed text-ink-gray-8;
+	margin: 0.5rem 0;
+	padding: 0.625rem 0.75rem;
+}
+.copilot-prose pre code {
+	@apply bg-transparent p-0 text-xs;
+}
+
+/* A table wider than the column scrolls inside its own box. */
+.copilot-prose .prose-scroll {
+	@apply max-w-full overflow-x-auto rounded-lg border border-outline-gray-2;
+	margin: 0.5rem 0;
+}
+.copilot-prose table {
+	@apply text-p-xs;
+	min-width: 100%;
+	border-collapse: collapse;
+}
+.copilot-prose :is(th, td) {
+	@apply border-b border-outline-gray-1 px-2 py-1.5 text-left align-top;
+}
+.copilot-prose tr:last-child :is(th, td) {
+	@apply border-b-0;
+}
+.copilot-prose th {
+	@apply bg-surface-gray-2 font-medium text-ink-gray-6;
+}
+/* Numbers align on their digits, so a money column can be read down. */
+.copilot-prose td {
+	@apply tabular-nums;
+}

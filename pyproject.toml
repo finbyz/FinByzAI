@@ -4,7 +4,7 @@ authors = [
     { name = "Finbyz Tech Pvt Ltd", email = "info@finbyz.tech" }
 ]
 description = "AI-Powered Agents, Tools, and Knowledge Base Platform"
-requires-python = ">=3.14"
+requires-python = ">=3.14,<3.15"
 readme = "README.md"
 dynamic = ["version"]
 

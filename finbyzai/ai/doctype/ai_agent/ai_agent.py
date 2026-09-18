@@ -47,13 +47,20 @@ class AIAgent(Document):
     
     @staticmethod
     def _format_response(response):
-        """Safely format an agent response into a serializable value."""
+        """Normalize an agent response into a serializable value."""
+        if response is None:
+            return ""
         if isinstance(response, str):
             return response
         if hasattr(response, "model_dump"):
-            return response.model_dump()
+            try:
+                return response.model_dump()
+            except Exception:
+                pass
+        if hasattr(response, "content"):
+            return response.content
         if isinstance(response, dict):
-            return response
+            return response.get("output", response)
         return str(response)
     
     @frappe.whitelist()

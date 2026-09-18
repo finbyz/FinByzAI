@@ -8,3 +8,4 @@ node_modules/
 finbyzai/public/node_modules
 finbyzai/public/workflow
 finbyzai/www/workflow.html
+finbyzai/public/dist/

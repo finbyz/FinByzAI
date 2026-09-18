@@ -1,0 +1,93 @@
+@import "./styles/prose.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Authored rules are scoped to #copilot-root by postcss-prefix-selector at build. */
+
+/* frappe-ui forces `font-family: InterVar`, a face the desk doesn't load (it
+   ships "Inter"/"InterVariable"), so it falls back to the system font. Point
+   the panel at the desk's real fonts. */
+.copilot-panel {
+	font-family: "Inter", "InterVariable", ui-sans-serif, system-ui, sans-serif;
+	font-weight: 400;
+}
+
+/* One assistant turn stacks its text, activity lines and blocks. A single gap
+   reads evenly enough; the previous rules subtracted the text's own half-leading
+   with hand-tuned em fractions, which had to be re-tuned on every type change. */
+.copilot-parts > * + * {
+	margin-top: 0.625rem;
+}
+
+/* Sweeps a highlight across a label while its activity is live. */
+.copilot-shimmer-text {
+	background: linear-gradient(
+		90deg,
+		var(--ink-gray-4) 0%,
+		var(--ink-gray-4) 35%,
+		var(--ink-gray-8) 50%,
+		var(--ink-gray-4) 65%,
+		var(--ink-gray-4) 100%
+	);
+	background-size: 200% 100%;
+	-webkit-background-clip: text;
+	background-clip: text;
+	color: transparent;
+	animation: copilot-shimmer-text 1.6s linear infinite;
+}
+@keyframes copilot-shimmer-text {
+	to {
+		background-position: -200% 0;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.copilot-shimmer-text {
+		animation: none;
+	}
+}
+
+/* The desk's forms plugin puts a blue ring on every focused field. Every field in
+   the panel draws its own focus state, so suppress it once here rather than
+   per-component — the rule this replaces named a class that no longer existed. */
+.copilot-panel :is(input, textarea, select):focus {
+	outline: none;
+	box-shadow: none;
+}
+
+/* Anything that appears or leaves without moving: the jump-to-latest button. */
+.copilot-fade-enter-active,
+.copilot-fade-leave-active {
+	transition: opacity 0.15s ease;
+}
+.copilot-fade-enter-from,
+.copilot-fade-leave-to {
+	opacity: 0;
+}
+.copilot-scrollbar {
+	scrollbar-width: thin;
+	scrollbar-color: var(--surface-gray-4) transparent;
+}
+.copilot-scrollbar::-webkit-scrollbar {
+	width: 8px;
+	height: 8px;
+}
+.copilot-scrollbar::-webkit-scrollbar-thumb {
+	background: var(--surface-gray-4);
+	border-radius: 999px;
+}
+.copilot-scrollbar::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+/* Provider marks are single-colour SVGs (simple-icons). Tint them to the panel's ink
+   so they sit with the text instead of shouting, and invert in dark mode. */
+.copilot-logo {
+	opacity: 0.85;
+}
+:root[data-theme="dark"] .copilot-logo,
+#copilot-root[data-theme="dark"] .copilot-logo {
+	filter: invert(1);
+	opacity: 0.9;
+}

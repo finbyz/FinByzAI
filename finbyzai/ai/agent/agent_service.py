@@ -27,15 +27,16 @@ import warnings
 import os
 
 
-def _configure_langsmith():
-    """Configure LangSmith tracing from site_config or env vars (lazy, safe at import time)."""
-    try:
-        key = frappe.get_conf().get("langsmith_api_key") or os.getenv("LANGSMITH_API_KEY")
-        if key:
-            os.environ["LANGSMITH_API_KEY"] = key
-            os.environ["LANGSMITH_TRACING"] = "true"
-    except Exception:
-        pass  # Frappe may not be fully booted at import time
+def configure_tracing():
+    """Configure site-authorized LangSmith tracing for this worker."""
+    api_key = frappe.conf.get("langsmith_api_key")
+    enabled = bool(frappe.conf.get("langsmith_tracing") and api_key)
+    os.environ["LANGSMITH_TRACING"] = "true" if enabled else "false"
+    if enabled:
+        os.environ["LANGSMITH_API_KEY"] = api_key
+    else:
+        os.environ.pop("LANGSMITH_API_KEY", None)
+    return enabled
 
 
 class AgentTypes(Enum):
@@ -68,7 +69,7 @@ class AgentService:
         self._memory = None
         self._conversation_id = None
         self._is_basic_chain = False
-        _configure_langsmith()
+        configure_tracing()
         try:
             # Accept both name and Document
             if isinstance(agent, str):

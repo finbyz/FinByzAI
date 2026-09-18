@@ -1,0 +1,84 @@
+{
+ "actions": [],
+ "creation": "2026-09-10 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "enabled",
+  "default_agent",
+  "default_model",
+  "max_iterations",
+  "auto_approve",
+  "enable_external_search",
+  "system_prompt"
+ ],
+ "fields": [
+  {
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled",
+   "default": "1"
+  },
+  {
+   "fieldname": "default_agent",
+   "fieldtype": "Link",
+   "label": "Default Agent",
+   "options": "AI Agent",
+   "description": "The AI Agent whose LLM, tools, knowledge base and memory the Copilot uses."
+  },
+  {
+   "fieldname": "default_model",
+   "fieldtype": "Link",
+   "label": "Default Model",
+   "options": "LLM",
+   "reqd": 0,
+   "description": "Fallback when the agent has no LLM set."
+  },
+  {
+   "fieldname": "max_iterations",
+   "fieldtype": "Int",
+   "label": "Max Iterations",
+   "default": "25",
+   "description": "Fallback when the agent has no max iterations set."
+  },
+  {
+   "fieldname": "auto_approve",
+   "fieldtype": "Check",
+   "label": "Auto Approve",
+   "default": "0",
+   "description": "Skip the Approve/Reject card for write tools. Development only."
+  },
+  {
+   "fieldname": "enable_external_search",
+   "fieldtype": "Check",
+   "label": "Enable External Search",
+   "default": "0",
+   "description": "Lets the agent search the open web (through this site's own OpenRouter key) for anything outside this ERP. Off by default: each search sends the query to a third party and costs a small real amount. Turning this on is a deliberate decision, not a per-search approval — the agent will call it without asking each time once enabled."
+  },
+  {
+   "fieldname": "system_prompt",
+   "fieldtype": "Long Text",
+   "label": "System Prompt",
+   "description": "Prepended to every turn. The agent's own knowledge base and tools are added automatically."
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-09-10 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Copilot",
+ "name": "Copilot Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "issingle": 1
+}

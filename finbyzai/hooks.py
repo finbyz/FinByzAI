@@ -17,6 +17,11 @@ on_session_creation = "finbyzai.workflow_builder.integrations.capture_customer_p
 # app_include_css = "/assets/finbyzai/css/finbyzai.css"
 # app_include_js = "/assets/finbyzai/js/finbyzai.js"
 
+# Frappe resolves these bundle names to content-hashed assets.
+app_include_js = ["finbyzai_copilot.bundle.js"]
+app_include_css = ["finbyzai_copilot.bundle.css"]
+
+
 # include js, css files in header of web template
 # web_include_css = "/assets/finbyzai/css/finbyzai.css"
 # web_include_js = "/assets/finbyzai/js/finbyzai.js"
@@ -69,7 +74,7 @@ on_session_creation = "finbyzai.workflow_builder.integrations.capture_customer_p
 # before_install = "finbyzai.install.before_install"
 after_install = "finbyzai.workflow_builder.setup.after_install"
 
-after_migrate = "finbyzai.install.after_migrate"
+after_migrate = ["finbyzai.install.after_migrate", "finbyzai.copilot.setup.ensure_defaults"]
 
 # Uninstallation
 # ------------

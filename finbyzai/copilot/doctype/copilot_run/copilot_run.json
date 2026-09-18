@@ -1,0 +1,133 @@
+{
+ "actions": [],
+ "creation": "2026-09-10 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "conversation",
+  "status",
+  "agent",
+  "model",
+  "input",
+  "output",
+  "error",
+  "iterations",
+  "duration",
+  "attachments",
+  "pending_call",
+  "decision",
+  "usage"
+ ],
+ "fields": [
+  {
+   "fieldname": "conversation",
+   "fieldtype": "Link",
+   "label": "Conversation",
+   "options": "Copilot Conversation",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Running\nPaused\nCompleted\nFailed\nStopped",
+   "default": "Running",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "agent",
+   "fieldtype": "Link",
+   "label": "Agent",
+   "options": "AI Agent"
+  },
+  {
+   "fieldname": "model",
+   "fieldtype": "Link",
+   "label": "Model",
+   "options": "LLM"
+  },
+  {
+   "fieldname": "input",
+   "fieldtype": "Long Text",
+   "label": "Input",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "output",
+   "fieldtype": "Long Text",
+   "label": "Output"
+  },
+  {
+   "fieldname": "error",
+   "fieldtype": "Long Text",
+   "label": "Error"
+  },
+  {
+   "fieldname": "iterations",
+   "fieldtype": "Int",
+   "label": "Iterations",
+   "default": "0"
+  },
+  {
+   "fieldname": "duration",
+   "fieldtype": "Float",
+   "label": "Duration (s)",
+   "precision": "1",
+   "read_only": 1
+  },
+  {
+   "fieldname": "attachments",
+   "fieldtype": "JSON",
+   "label": "Attachments",
+   "description": "File names passed with this turn."
+  },
+  {
+   "fieldname": "pending_call",
+   "fieldtype": "JSON",
+   "label": "Pending Call",
+   "description": "The tool call waiting for the user's approval."
+  },
+  {
+   "fieldname": "decision",
+   "fieldtype": "JSON",
+   "label": "Decision",
+   "description": "The user's answer to pending_call."
+  },
+  {
+   "fieldname": "usage",
+   "fieldtype": "JSON",
+   "label": "Usage"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-09-10 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Copilot",
+ "name": "Copilot Run",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "report": 1,
+   "export": 1
+  },
+  {
+   "role": "All",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "if_owner": 1
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "autoname": "hash",
+ "track_changes": 0
+}

@@ -9,7 +9,8 @@
   "disabled",
   "provider",
   "api_key",
-  "api_base"
+  "api_base",
+  "logo"
  ],
  "fields": [
   {
@@ -38,6 +39,12 @@
    "fieldname": "api_base",
    "fieldtype": "Data",
    "label": "API Base URL"
+  },
+  {
+   "description": "Shown in the Copilot model picker. Leave empty to use the bundled provider logo.",
+   "fieldname": "logo",
+   "fieldtype": "Attach Image",
+   "label": "Logo"
   }
  ],
  "grid_page_length": 50,
