@@ -28,7 +28,7 @@ def permitted_count(doctype: str, filters: dict) -> int:
     through `frappe.get_list` (same rule as the module docstring) with an aggregate
     field instead of loading rows.
     """
-    rows = frappe.get_list(doctype, filters=filters, fields=[{"COUNT": "*", "as": "total"}], limit_page_length=0)
+    rows = frappe.get_list(doctype, filters=filters, fields=["count(name) as total"], limit_page_length=0)
     return rows[0].total if rows else 0
 
 

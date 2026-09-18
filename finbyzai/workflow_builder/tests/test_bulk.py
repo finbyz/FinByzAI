@@ -2,7 +2,7 @@ from datetime import datetime
 from unittest.mock import patch
 
 import frappe
-from frappe.tests import IntegrationTestCase
+from frappe.tests.utils import FrappeTestCase
 from frappe.utils import add_to_date, now_datetime
 
 from finbyzai.workflow_builder import bulk, engine
@@ -16,7 +16,7 @@ from finbyzai.workflow_builder.authoring import (
 from finbyzai.workflow_builder.errors import AutomationConflictError, AutomationError
 
 
-class TestAutomationBulkOperations(IntegrationTestCase):
+class TestAutomationBulkOperations(FrappeTestCase):
 	def setUp(self):
 		super().setUp()
 		frappe.set_user("Administrator")

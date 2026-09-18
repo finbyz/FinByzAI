@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import frappe
-from frappe.tests import IntegrationTestCase
+from frappe.tests.utils import FrappeTestCase
 
 from finbyzai.workflow_builder.ai_support import (
 	_assert_provider_circuit_closed,
@@ -23,7 +23,7 @@ from finbyzai.workflow_builder.principal import execution_principal
 from finbyzai.workflow_builder.schema import empty_graph, validate_graph
 
 
-class TestWorkflowAISupport(IntegrationTestCase):
+class TestWorkflowAISupport(FrappeTestCase):
 	def _ai_graph(self, *, node_type="action.ai_generate", handles=None):
 		graph = empty_graph("Issue", "trigger.manual")
 		config = {

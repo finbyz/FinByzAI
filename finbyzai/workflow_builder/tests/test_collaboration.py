@@ -1,11 +1,11 @@
 import frappe
-from frappe.tests import IntegrationTestCase
+from frappe.tests.utils import FrappeTestCase
 
 from finbyzai.workflow_builder import collaboration
 from finbyzai.workflow_builder.authoring import create_workflow_record, save_workflow_draft
 
 
-class TestAutomationCollaboration(IntegrationTestCase):
+class TestAutomationCollaboration(FrappeTestCase):
 	def setUp(self):
 		super().setUp()
 		frappe.set_user("Administrator")

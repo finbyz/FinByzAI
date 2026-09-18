@@ -447,7 +447,7 @@ def unsubscribe_workflow_email(doctype: str, name: str, email: str) -> None:
 	"""
 	from frappe.utils.verified_command import verify_request
 
-	if not frappe.in_test and not verify_request():
+	if not frappe.flags.in_test and not verify_request():
 		return
 	record_doctype = str(doctype or "").strip()
 	record_name = str(name or "").strip()

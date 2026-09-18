@@ -2,7 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import frappe
-from frappe.tests import IntegrationTestCase
+from frappe.tests.utils import FrappeTestCase
 
 from finbyzai.workflow_builder import api, configuration, engine, observability
 from finbyzai.workflow_builder.api import create_workflow_from_template
@@ -19,7 +19,7 @@ from finbyzai.workflow_builder.schema import empty_graph
 from finbyzai.workflow_builder.template import parse_template_package
 
 
-class TestAutomationProductionSafety(IntegrationTestCase):
+class TestAutomationProductionSafety(FrappeTestCase):
 	def setUp(self):
 		super().setUp()
 		frappe.set_user("Administrator")

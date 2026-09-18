@@ -810,7 +810,7 @@ def list_workflow_records(
 		"Automation Workflow",
 		filters=count_filters,
 		or_filters=or_filters,
-		fields=["status", {"COUNT": "name", "as": "count"}],
+		fields=["status", "count(name) as count"],
 		group_by="status",
 		limit=0,
 	)

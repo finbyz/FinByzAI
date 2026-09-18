@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import frappe
-from frappe.tests import IntegrationTestCase
+from frappe.tests.utils import FrappeTestCase
 
 from finbyzai.workflow_builder.errors import AutomationError
 from finbyzai.workflow_builder import webhooks
@@ -13,7 +13,7 @@ from finbyzai.workflow_builder.authoring import create_workflow_record, publish_
 from finbyzai.workflow_builder.webhooks import _authenticate, _payload_value, _validate_identity
 
 
-class TestAutomationInboundWebhooks(IntegrationTestCase):
+class TestAutomationInboundWebhooks(FrappeTestCase):
 	def test_nested_payload_paths_are_exact(self):
 		payload = {"record": {"identity": "LEAD-1"}, "event_id": "event-1"}
 		self.assertEqual(_payload_value(payload, "record.identity"), "LEAD-1")

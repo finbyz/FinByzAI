@@ -1152,7 +1152,11 @@ def _execute_action(run, token, node, record, value_record, outputs: dict[str, A
 			raise AutomationError(_("More than one canonical Contact matches; resolve ambiguity before merging."))
 		canonical = matches[0]
 		check_execution_permission(frappe.get_doc("Contact", canonical), "write")
-		frappe.rename_doc("Contact", record.name, canonical, merge=True, ignore_permissions=True)
+		# v15's `frappe.rename_doc` wrapper drops `ignore_permissions`; the model-level
+		# function it delegates to still accepts it. Permission was already checked above.
+		from frappe.model.rename_doc import rename_doc
+
+		rename_doc("Contact", record.name, canonical, merge=True, ignore_permissions=True)
 		result = {"canonical_contact": canonical, "merged_contact": record.name, "matched_fields": [next(iter(item)) for item in predicates], "deleted": True}
 	elif node_type == "action.unassign_record":
 		check_execution_permission(record, "write")
@@ -1291,7 +1295,7 @@ def _claim_external_effect_delivery(ledger_name: str, token_name: str):
 	# now observe PROCESSING and must return without contacting the provider.
 	# Frappe integration tests own their wrapping transaction and must remain
 	# rollback-isolated; production workers require the explicit durability point.
-	if not frappe.in_test:
+	if not frappe.flags.in_test:
 		frappe.db.commit()
 	return ledger
 
@@ -3007,7 +3011,7 @@ def list_run_records(
 	count_rows = frappe.get_list(
 		"Automation Run",
 		filters=filters,
-		fields=[{"COUNT": "name", "as": "count"}],
+		fields=["count(name) as count"],
 		limit=1,
 	)
 	return {

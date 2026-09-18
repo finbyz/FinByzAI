@@ -33,7 +33,7 @@ _CURRENT_PRINCIPAL: ContextVar[AutomationPrincipal | None] = ContextVar(
 
 
 def _assert_worker_execution() -> None:
-	if not frappe.in_test and not getattr(frappe.local, "job", None):
+	if not frappe.flags.in_test and not getattr(frappe.local, "job", None):
 		raise AutomationError(_("Automation actions can only execute inside an isolated background worker."))
 
 

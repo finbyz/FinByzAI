@@ -4,7 +4,7 @@ import frappe
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from frappe.tests import IntegrationTestCase
+from frappe.tests.utils import FrappeTestCase
 
 from finbyzai.workflow_builder.ai_authoring import (
 	CONFIGURED_VALUE_SENTINEL,
@@ -37,7 +37,7 @@ def _model():
 	return SimpleNamespace(name="Authoring Model", provider="Provider")
 
 
-class TestWorkflowAIAuthoring(IntegrationTestCase):
+class TestWorkflowAIAuthoring(FrappeTestCase):
 	def setUp(self):
 		super().setUp()
 		self.workflow = SimpleNamespace(

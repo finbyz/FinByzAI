@@ -34,17 +34,20 @@ import json
 
 import frappe
 import RestrictedPython.Guards
-from frappe.utils.inplacevar import protected_inplacevar
 from frappe.utils.safe_exec import (
-    SAFE_DATA_UTILS,
-    SAFE_EXCEPTIONS,
     NamespaceDict,
-    _compile_code,
     _getattr_for_safe_exec,
     _getitem,
     _write,
     get_python_builtins,
     safe_exec_flags,
+)
+
+from finbyzai.copilot._restricted import (
+    SAFE_DATA_UTILS,
+    SAFE_EXCEPTIONS,
+    compile_code,
+    protected_inplacevar,
 )
 from RestrictedPython import safe_globals
 from RestrictedPython.PrintCollector import PrintCollector
@@ -63,7 +66,7 @@ def execute_code(code: str) -> dict:
     exec_locals = {}
 
     with safe_exec_flags():
-        exec(_compile_code(code, filename=SCRIPT_FILENAME), exec_globals, exec_locals)
+        exec(compile_code(code, filename=SCRIPT_FILENAME), exec_globals, exec_locals)
 
     result = exec_locals.get("result", exec_globals.get("result"))
     return {"result": _clip(result), "output": _printed(exec_locals, exec_globals)}
@@ -168,7 +171,7 @@ def _gated_count(doctype: str, filters=None) -> int:
     if not frappe.has_permission(doctype, "read"):
         raise frappe.PermissionError(f"No permission to read {doctype}")
     rows = frappe.get_list(
-        doctype, filters=filters or {}, fields=[{"COUNT": "*", "as": "total"}], limit_page_length=0
+        doctype, filters=filters or {}, fields=["count(name) as total"], limit_page_length=0
     )
     return rows[0].total if rows else 0
 

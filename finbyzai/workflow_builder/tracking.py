@@ -6,7 +6,6 @@ from urllib.parse import urlsplit
 import frappe
 from bs4 import BeautifulSoup
 from frappe import _
-from frappe.database.utils import commit_after_response
 from frappe.utils import get_url, now_datetime
 from frappe.utils.verified_command import get_signed_params, verify_request
 
@@ -23,6 +22,29 @@ _SKIPPED_LINK_MARKERS = (
 	"unsubscribe",
 	"/view_email",
 )
+
+
+def commit_after_response(fn) -> None:
+	"""Run `fn` after the response is flushed, then commit.
+
+	v15 has no `frappe.database.utils.commit_after_response`; the framework defers this
+	kind of work through `frappe.request.after_response` instead — see Frappe's own
+	`mark_email_as_seen`. Outside a request (a background job or a patch) there is
+	nothing to defer to, so the work runs inline.
+	"""
+	after_response = getattr(getattr(frappe.local, "request", None), "after_response", None)
+	if after_response is None:
+		_run_and_commit(fn)
+		return
+	after_response.add(lambda: _run_and_commit(fn))
+
+
+def _run_and_commit(fn) -> None:
+	try:
+		fn()
+	except Exception:
+		frappe.log_error("Workflow email tracking failed")
+	frappe.db.commit()  # nosemgrep: after_response requires explicit commit
 
 
 def ensure_workflow_open_tracking(html: str) -> str:
@@ -158,7 +180,7 @@ def track_workflow_email_click(communication=None, link_id=None, url=None):
 	if not _is_trackable_url(target):
 		frappe.local.response["http_status_code"] = 400
 		return _("Invalid URL")
-	if not frappe.in_test and not verify_request():
+	if not frappe.flags.in_test and not verify_request():
 		frappe.local.response["http_status_code"] = 403
 		return _("Invalid tracking signature")
 

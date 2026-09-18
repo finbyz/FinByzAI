@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import frappe
-from frappe.tests import IntegrationTestCase
+from frappe.tests.utils import FrappeTestCase
 
 from finbyzai.workflow_builder.approvals import create_approval, expire_due_approvals, resolve_approval
 from finbyzai.workflow_builder.engine import _finish_or_continue, simulate_graph
@@ -41,7 +41,7 @@ class FakeDoc(frappe._dict):
 		self[fieldname] = value
 
 
-class TestHumanApproval(IntegrationTestCase):
+class TestHumanApproval(FrappeTestCase):
 	def test_publish_requires_both_explicit_approval_paths(self):
 		valid = validate_graph(approval_graph(), primary_doctype="Lead", publish=True)
 		self.assertTrue(valid["valid"], valid["issues"])

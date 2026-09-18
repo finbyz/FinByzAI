@@ -2,9 +2,9 @@ from datetime import date, datetime
 from pathlib import Path
 
 import frappe
-from frappe.tests import IntegrationTestCase
+from frappe.tests.utils import FrappeTestCase
 
-from finbyzai.patches.v16_0.install_workflow_builder_schema import WORKFLOW_DOCTYPES
+from finbyzai.patches.v15_0.install_workflow_builder_schema import WORKFLOW_DOCTYPES
 from finbyzai.workflow_builder.api import get_doctypes, get_fields
 from finbyzai.workflow_builder.constants import MAX_CONDITION_DEPTH
 from finbyzai.workflow_builder.engine import (
@@ -44,7 +44,7 @@ def predicate(field, operator, value=None):
 	return {"kind": "predicate", "field": field, "operator": operator, "value": value}
 
 
-class TestAutomationSchema(IntegrationTestCase):
+class TestAutomationSchema(FrappeTestCase):
 	def test_abandoned_cart_threshold_supports_hours_days_and_safe_limits(self):
 		self.assertEqual(abandoned_cart_threshold_hours({}), 24)
 		self.assertEqual(

@@ -3,7 +3,7 @@ from unittest.mock import Mock, patch
 
 import frappe
 import requests
-from frappe.tests import IntegrationTestCase
+from frappe.tests.utils import FrappeTestCase
 
 from finbyzai.workflow_builder.errors import AutomationError, AutomationTransientError
 from finbyzai.workflow_builder.external import (
@@ -28,7 +28,7 @@ from finbyzai.workflow_builder.engine import _claim_effect
 from finbyzai.workflow_builder.schema import canonical_json
 
 
-class TestAutomationExternalSafety(IntegrationTestCase):
+class TestAutomationExternalSafety(FrappeTestCase):
 	def test_workflow_email_creates_frappe_automated_message_for_record_timeline(self):
 		run = SimpleNamespace(record_doctype="Lead", record_name="LEAD-1")
 		communication = Mock()

@@ -7,7 +7,7 @@ from zoneinfo import available_timezones
 import frappe
 from frappe import _
 from frappe.email.email_body import get_formatted_html
-from frappe.query_builder.functions import Count, JSONValue
+from frappe.query_builder.functions import Cast_, Count
 from frappe.utils import cint, validate_email_address
 
 from . import authoring, bulk, collaboration, emailing, engine, events, external, observability, registry, webhooks
@@ -20,6 +20,22 @@ from .configuration import (
 from .errors import AutomationError, AutomationPermissionError, AutomationConflictError
 from .principal import preview_principal
 from .schema import parse_object, validate_graph
+
+
+def JSONValue(field, path: str):
+	"""Extract a top-level JSON key as text.
+
+	v15's query builder has no `JSONValue`. Only the `$.key` form is supported, which
+	is all this module needs.
+	"""
+	from pypika.terms import Function
+
+	key = path[2:] if path.startswith("$.") else path
+	if "." in key or "[" in key:
+		raise ValueError(f"only top-level JSON keys are supported, got {path!r}")
+	if frappe.db.db_type == "postgres":
+		return Function("jsonb_extract_path_text", Cast_(field, "jsonb"), key)
+	return Function("JSON_UNQUOTE", Function("JSON_EXTRACT", field, path))
 
 
 def _object(value: Any, label: str = "payload") -> dict:

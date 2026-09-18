@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import frappe
+import frappe.share  # v15 does not attach `share` to the frappe namespace on import
 from frappe import _
 
 from .constants import (

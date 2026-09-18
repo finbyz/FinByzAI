@@ -112,7 +112,7 @@ def _count_candidates(doctype: str, filters: list, execution_user: str) -> int:
 	rows = frappe.get_list(
 		doctype,
 		filters=filters,
-		fields=[{"COUNT": "name", "as": "count"}],
+		fields=["count(name) as count"],
 		limit=1,
 		user=execution_user,
 	)

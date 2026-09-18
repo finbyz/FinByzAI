@@ -2,14 +2,14 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import frappe
-from frappe.tests import IntegrationTestCase
+from frappe.tests.utils import FrappeTestCase
 
 from finbyzai.workflow_builder.api import list_email_senders, send_workflow_test_email
 from finbyzai.workflow_builder.emailing import get_email_template, resolve_email_content
 from finbyzai.workflow_builder.errors import AutomationError
 
 
-class TestWorkflowEmailAuthoring(IntegrationTestCase):
+class TestWorkflowEmailAuthoring(FrappeTestCase):
 	def test_sender_catalog_exposes_only_enabled_account_email_identities(self):
 		accounts = [
 			frappe._dict(name="Primary account", email_id="sales@example.com", default_outgoing=1),

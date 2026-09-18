@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import frappe
-from frappe.tests import IntegrationTestCase
+from frappe.tests.utils import FrappeTestCase
 from frappe.utils import now_datetime
 
 from finbyzai.workflow_builder import engine, events, integrations
@@ -17,7 +17,7 @@ from finbyzai.workflow_builder.authoring import (
 from finbyzai.workflow_builder.errors import AutomationTransientError
 
 
-class TestAutomationEvents(IntegrationTestCase):
+class TestAutomationEvents(FrappeTestCase):
 	def setUp(self):
 		super().setUp()
 		frappe.set_user("Administrator")

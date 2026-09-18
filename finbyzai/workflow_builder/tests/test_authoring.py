@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import frappe
-from frappe.tests import IntegrationTestCase
+from frappe.tests.utils import FrappeTestCase
 
 from finbyzai.workflow_builder import engine, maintenance
 from finbyzai.workflow_builder.api import get_canvas_metrics, simulate
@@ -55,7 +55,7 @@ from finbyzai.workflow_builder.setup import (
 )
 
 
-class TestAutomationAuthoring(IntegrationTestCase):
+class TestAutomationAuthoring(FrappeTestCase):
 	def setUp(self):
 		super().setUp()
 		frappe.set_user("Administrator")

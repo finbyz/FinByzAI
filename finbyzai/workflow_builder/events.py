@@ -938,7 +938,7 @@ def _policy_evaluation_snapshot() -> dict:
 		return {"counts": counts, "recent": []}
 	for row in frappe.get_list(
 		"Automation Policy Evaluation",
-		fields=["outcome", {"COUNT": "name", "as": "count"}],
+		fields=["outcome", "count(name) as count"],
 		group_by="outcome",
 		ignore_permissions=True,
 		limit=0,
@@ -977,7 +977,7 @@ def runtime_health(workflow_id: str | None = None) -> dict:
 	counts = {"PENDING": 0, "PROCESSING": 0, "PROCESSED": 0, "FAILED": 0, "DEAD": 0}
 	for row in frappe.get_list(
 		"Automation Outbox Event",
-		fields=["status", {"COUNT": "name", "as": "count"}],
+		fields=["status", "count(name) as count"],
 		group_by="status",
 		ignore_permissions=True,
 		limit=0,

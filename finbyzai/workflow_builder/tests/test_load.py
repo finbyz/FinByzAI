@@ -1,14 +1,14 @@
 from unittest.mock import patch
 
 import frappe
-from frappe.tests import IntegrationTestCase
+from frappe.tests.utils import FrappeTestCase
 from frappe.utils import add_to_date, now_datetime
 
 from finbyzai.workflow_builder import engine, events
 from finbyzai.workflow_builder.authoring import create_workflow_record, publish_workflow
 
 
-class TestLoadAndRecovery(IntegrationTestCase):
+class TestLoadAndRecovery(FrappeTestCase):
 	def setUp(self):
 		super().setUp()
 		frappe.set_user("Administrator")

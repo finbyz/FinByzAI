@@ -2,12 +2,12 @@ from unittest.mock import patch
 
 import frappe
 from bs4 import BeautifulSoup
-from frappe.tests import IntegrationTestCase
+from frappe.tests.utils import FrappeTestCase
 
 from finbyzai.workflow_builder import tracking
 
 
-class TestWorkflowEmailTracking(IntegrationTestCase):
+class TestWorkflowEmailTracking(FrappeTestCase):
 	def setUp(self):
 		super().setUp()
 		frappe.local.response = frappe._dict()

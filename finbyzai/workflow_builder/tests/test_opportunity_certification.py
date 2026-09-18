@@ -4,7 +4,7 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import frappe
-from frappe.tests import IntegrationTestCase
+from frappe.tests.utils import FrappeTestCase
 from frappe.utils import nowdate
 
 from finbyzai.workflow_builder import bulk, engine, events
@@ -36,7 +36,7 @@ def _edge(source: str, target: str, handle: str = "default") -> dict:
 	}
 
 
-class TestOpportunityWorkflowCertification(IntegrationTestCase):
+class TestOpportunityWorkflowCertification(FrappeTestCase):
 	"""Exercise workflow behavior against persisted ERPNext Opportunity records."""
 
 	def setUp(self):
