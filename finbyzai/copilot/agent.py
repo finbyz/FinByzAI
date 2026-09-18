@@ -26,6 +26,8 @@ doctypes.
 
 import frappe
 
+from finbyzai.copilot import access
+
 WINDOW_TURNS = 6
 SUMMARY_TRIGGER = 24
 SUMMARY_KEEP = 8
@@ -35,8 +37,7 @@ def load(agent_name: str | None):
     """The AI Agent doc, or None to run on Copilot Settings alone."""
     if not agent_name:
         return None
-    if not frappe.db.exists("AI Agent", agent_name):
-        return None
+    agent_name = access.require_read("AI Agent", agent_name, label="agent")
     return frappe.get_cached_doc("AI Agent", agent_name)
 
 
@@ -55,11 +56,7 @@ def model(agent, settings, override: str | None = None):
         frappe.throw(
             "No model configured. Set an LLM on the AI Agent, or default_model in Copilot Settings."
         )
-    if not frappe.db.exists("LLM", name):
-        frappe.throw(
-            f"Model {name!r} no longer exists. Pick another one in the Copilot's model picker."
-        )
-    llm = frappe.get_doc("LLM", name).llm
+    llm = frappe.get_doc("LLM", access.require_read("LLM", name, label="model")).llm
 
     # AI Agent's generation limits, when the underlying client accepts them.
     options = {}
@@ -94,7 +91,8 @@ def tools(agent, knowledge_base=None):
 
     for row in agent.tools or []:
         try:
-            tool = frappe.get_doc("AI Tool", row.tool).get_tool()
+            tool_name = access.require_read("AI Tool", row.tool, label="tool")
+            tool = frappe.get_doc("AI Tool", tool_name).get_tool()
         except Exception:
             frappe.log_error(f"Copilot: AI Tool {row.tool} failed to load", frappe.get_traceback())
             continue
@@ -136,6 +134,7 @@ def knowledge_tool(agent, knowledge_base=None):
     if not name:
         return None
     try:
+        name = access.require_read("Knowledge Base", name, label="knowledge base")
         store = frappe.get_doc("Knowledge Base", name).get_vector_store()
         return store.as_tool()
     except Exception:
@@ -173,7 +172,7 @@ def instructions(agent, settings, knowledge_base=None):
     parts.append(_site_context())
 
     active_kb = knowledge_base or (agent.knowledge_base if agent else None)
-    if active_kb:
+    if active_kb and access.can_read("Knowledge Base", active_kb):
         parts.append(
             f'A knowledge base named "{active_kb}" is attached. Search it before answering '
             "questions about processes, policies or documents rather than guessing, and use "

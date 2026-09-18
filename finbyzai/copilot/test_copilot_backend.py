@@ -3,20 +3,21 @@
 
 """Regression coverage for the 2026-09-17 review findings (see reviews/).
 
-Findings 3 and 6 are pure concurrency bugs in the run lifecycle and are tested
-end-to-end here with no external data dependency. Findings 4's permission bypass
+Findings 3 and 6 are concurrency bugs in the run lifecycle and exercise the Redis
+ownership boundaries here. Findings 4's permission bypass
 is proven against this site's own `sandeep.ambala@finbyz.tech` / Employee
 HR-EMP-00002 restriction (see access.py-style tools) and skips itself if that
 fixture is ever removed, rather than fabricate ERPNext master data a test run
 should not be creating.
 """
 
+from unittest.mock import patch
+
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
-from finbyzai.copilot import api, runner, setup
+from finbyzai.copilot import access, api, runner, sandbox, setup
 from finbyzai.copilot.tools.data import permitted_count
-from finbyzai.copilot import sandbox
 
 
 class TestCopilotSetup(FrappeTestCase):
@@ -41,13 +42,15 @@ class TestCopilotConcurrency(FrappeTestCase):
 
 	def tearDown(self):
 		frappe.delete_doc("Copilot Conversation", self.conversation.name, ignore_permissions=True, force=1)
-		frappe.cache.delete(api._start_lock_key(self.conversation.name))
 
-	def test_concurrent_start_is_serialised(self):
-		"""Finding 6: two requests racing start_run must not both create a Run."""
-		api._block_while_running(self.conversation.name)  # first request: check passes, lock held
-		with self.assertRaises(Exception):
-			api._block_while_running(self.conversation.name)  # second, racing request
+	def test_start_guard_rejects_a_competing_request(self):
+		"""Finding 6: only one request can cross the check-and-insert boundary."""
+		lock = api._acquire_start_lock(self.conversation.name)
+		try:
+			with self.assertRaises(Exception):
+				api._acquire_start_lock(self.conversation.name)
+		finally:
+			api._release_lock(lock)
 
 	def test_recover_leaves_a_claimed_run_alone(self):
 		"""Finding 3: a run whose worker is still alive must never be failed out
@@ -63,12 +66,12 @@ class TestCopilotConcurrency(FrappeTestCase):
 			frappe.utils.add_to_date(frappe.utils.now_datetime(), seconds=-3600),
 			update_modified=False,
 		)
-		runner._claim(run.name)
+		claim = runner._claim(run.name)
 		try:
 			api.recover_conversation(self.conversation.name)
 			self.assertEqual(frappe.db.get_value("Copilot Run", run.name, "status"), "Running")
 		finally:
-			runner._release(run.name)
+			runner._release(claim)
 
 	def test_recover_reaps_a_genuinely_stale_run(self):
 		"""A run nobody holds and that has had time to be picked up should still
@@ -86,6 +89,30 @@ class TestCopilotConcurrency(FrappeTestCase):
 		api.recover_conversation(self.conversation.name)
 		self.assertEqual(frappe.db.get_value("Copilot Run", run.name, "status"), "Failed")
 
+	def test_recovery_holds_the_worker_claim_while_marking_failed(self):
+		run = frappe.get_doc(
+			{"doctype": "Copilot Run", "conversation": self.conversation.name, "status": "Running"}
+		).insert(ignore_permissions=True)
+		frappe.db.set_value(
+			"Copilot Run",
+			run.name,
+			"modified",
+			frappe.utils.add_to_date(frappe.utils.now_datetime(), seconds=-120),
+			update_modified=False,
+		)
+		real_set_value = frappe.db.set_value
+
+		def assert_claimed(*args, **kwargs):
+			if args[:2] == ("Copilot Run", run.name):
+				self.assertTrue(runner.is_claimed(run.name))
+			return real_set_value(*args, **kwargs)
+
+		with patch.object(frappe.db, "set_value", side_effect=assert_claimed):
+			api.recover_conversation(self.conversation.name)
+		self.assertTrue(runner.is_claimed(run.name))
+		frappe.db.after_rollback.run()
+		self.assertFalse(runner.is_claimed(run.name))
+
 	def test_recover_gives_a_fresh_unclaimed_run_a_grace_window(self):
 		"""A run enqueued moments ago and not yet claimed by a worker must survive —
 		only genuinely old, unclaimed runs are stale."""
@@ -94,6 +121,21 @@ class TestCopilotConcurrency(FrappeTestCase):
 		).insert(ignore_permissions=True)
 		api.recover_conversation(self.conversation.name)
 		self.assertEqual(frappe.db.get_value("Copilot Run", run.name, "status"), "Running")
+
+
+class TestCopilotResourcePermissions(FrappeTestCase):
+	def test_require_read_rejects_non_string_names(self):
+		with self.assertRaises(frappe.ValidationError):
+			access.require_read("Knowledge Base", ["!=", ""])
+
+	def test_require_read_rejects_an_unreadable_record(self):
+		doc = frappe._dict(name="Private KB")
+		with (
+			patch("frappe.get_doc", return_value=doc),
+			patch("frappe.has_permission", return_value=False),
+			self.assertRaises(frappe.PermissionError),
+		):
+			access.require_read("Knowledge Base", doc.name)
 
 
 class TestCopilotPermissionScopedCount(FrappeTestCase):

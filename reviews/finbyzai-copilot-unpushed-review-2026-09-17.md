@@ -149,8 +149,32 @@ The test does not cover the backend permission, migration, recovery, or concurre
 
 No Copilot backend test files exist in this change set. Add regression tests for findings 3 through 6.
 
-## Review result
+## Remediation revalidation
 
-Do not push or merge this branch until the critical findings are fixed.
+Date: 2026-09-18
 
-Remove the mode-only changes before preparing the final commit series.
+All eight findings are fixed in the current worktree.
+
+1. `pyproject.toml` now requires Python 3.14, which matches Frappe v16.
+2. Git no longer tracks `frontend/node_modules` as an absolute symbolic link.
+3. Recovery now claims a stale run before it changes the status. It holds the claim until the transaction ends.
+4. Count and existence tools now use permission-aware queries.
+5. Migration setup enables Copilot only when it creates the settings record.
+6. Run creation now holds an ownership-token lock through the database commit or rollback.
+7. The wireframe escapes the custom task title before it inserts the title into HTML.
+8. The repository has no tracked executable files or pending mode-only changes.
+
+The revalidation also found and fixed a separate resource authorization issue.
+Copilot now checks read permission for agents, models, tools, and knowledge bases before use.
+
+The Python source compiles. The frontend tests and production build pass.
+The picker endpoints also pass site smoke tests.
+
+Backend integration tests were not run because this bench has no disposable test site.
+The new regression tests cover the lock and resource-permission paths.
+
+## Current review result
+
+The original findings no longer block this branch.
+
+Run the backend regression tests on a disposable test site before merge.

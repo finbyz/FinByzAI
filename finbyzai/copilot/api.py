@@ -14,7 +14,7 @@ import re
 import frappe
 from frappe import _
 
-from finbyzai.copilot import runner
+from finbyzai.copilot import access, runner
 
 TITLE_LENGTH = 60
 HISTORY_LIMIT = 500
@@ -38,26 +38,37 @@ def start_run(input, conversation=None, agent=None, model=None, attachments=None
         if conversation
         else _new_conversation(text, model, agent, knowledge_base)
     )
-    if model and model != conversation_doc.model:
-        conversation_doc.db_set("model", model, update_modified=False)
+    selected_model = access.require_read("LLM", model, label="model") if model else None
+    if selected_model and selected_model != conversation_doc.model:
+        conversation_doc.db_set("model", selected_model, update_modified=False)
 
-    _block_while_running(conversation_doc.name)
+    start_lock = _acquire_start_lock(conversation_doc.name)
+    try:
+        _block_while_running(conversation_doc.name)
+        run = frappe.get_doc(
+            {
+                "doctype": "Copilot Run",
+                "conversation": conversation_doc.name,
+                "status": "Running",
+                "agent": conversation_doc.agent,
+                "model": selected_model or conversation_doc.model,
+                "input": text,
+                "attachments": json.dumps(files) if files else None,
+            }
+        ).insert(ignore_permissions=True)
 
-    run = frappe.get_doc(
-        {
-            "doctype": "Copilot Run",
-            "conversation": conversation_doc.name,
-            "status": "Running",
-            "agent": conversation_doc.agent,
-            "model": model or conversation_doc.model,
-            "input": text,
-            "attachments": json.dumps(files) if files else None,
-        }
-    ).insert(ignore_permissions=True)
-
-    runner._append_message(conversation_doc.name, "user", content=_with_attachments(text, files), run=run.name)
-    runner.enqueue_run(run.name)
-
+        runner._append_message(
+            conversation_doc.name,
+            "user",
+            content=_with_attachments(text, files),
+            run=run.name,
+        )
+        runner.enqueue_run(run.name)
+    except Exception:
+        _release_lock(start_lock)
+        raise
+    else:
+        _release_lock_after_transaction(start_lock)
     return {"run": run.name, "conversation": conversation_doc.name}
 
 
@@ -223,21 +234,36 @@ def recover_conversation(conversation):
         fields=["name", "modified"],
     )
     now = frappe.utils.now_datetime()
-    stale = [
-        row.name
-        for row in candidates
-        if not runner.is_claimed(row.name)
-        and frappe.utils.time_diff_in_seconds(now, row.modified) > RECOVER_GRACE
-    ]
-    for name in stale:
-        frappe.db.set_value(
-            "Copilot Run",
-            name,
-            {"status": "Failed", "error": "Abandoned: the run stopped without finishing."},
-            update_modified=False,
-        )
-    return {"recovered": len(stale)}
+    recovered = 0
+    for row in candidates:
+        if frappe.utils.time_diff_in_seconds(now, row.modified) <= RECOVER_GRACE:
+            continue
 
+        claim = runner._claim(row.name)
+        if not claim:
+            continue
+        hold_until_transaction_end = False
+        try:
+            current = frappe.db.get_value(
+                "Copilot Run", row.name, ["status", "modified"], as_dict=True
+            )
+            if not current or current.status != "Running":
+                continue
+            if frappe.utils.time_diff_in_seconds(now, current.modified) <= RECOVER_GRACE:
+                continue
+            frappe.db.set_value(
+                "Copilot Run",
+                row.name,
+                {"status": "Failed", "error": "Abandoned: the run stopped without finishing."},
+                update_modified=False,
+            )
+            recovered += 1
+            _release_lock_after_transaction(claim)
+            hold_until_transaction_end = True
+        finally:
+            if not hold_until_transaction_end:
+                runner._release(claim)
+    return {"recovered": recovered}
 
 
 def _labelled(calls):
@@ -345,7 +371,7 @@ def delete_conversation(conversation):
 @frappe.whitelist()
 def get_knowledge_bases():
     """Knowledge base picker contents — finbyzai's own Knowledge Base records."""
-    return frappe.get_all(
+    return frappe.get_list(
         "Knowledge Base",
         fields=["name", "title", "vector_store", "status", "embeding_model"],
         order_by="modified desc",
@@ -379,8 +405,7 @@ def test_model(model=None, agent=None):
             "error": _("No model configured."),
             "hint": _("Pick a model here, or set one on the agent."),
         }
-    if not frappe.db.exists("LLM", name):
-        return {"ok": False, "model": name, "error": _("This model no longer exists.")}
+    name = access.require_read("LLM", name, label="model")
 
     provider = frappe.db.get_value("LLM", name, "provider")
     started = time.monotonic()
@@ -450,6 +475,7 @@ def get_tools(agent=None, knowledge_base=None):
 
     settings = runner.get_settings()
     doc = agent_config.load(agent or settings.default_agent)
+    selected_kb = access.require_read("Knowledge Base", knowledge_base) if knowledge_base else None
 
     registry.load_tools()
     builtin = [
@@ -468,6 +494,8 @@ def get_tools(agent=None, knowledge_base=None):
 
     custom = []
     for row in (doc.tools if doc else None) or []:
+        if not access.can_read("AI Tool", row.tool):
+            continue
         tool = frappe.db.get_value(
             "AI Tool", row.tool, ["name", "description", "requires_confirmation"], as_dict=True
         )
@@ -484,7 +512,9 @@ def get_tools(agent=None, knowledge_base=None):
                 }
             )
 
-    active_kb = knowledge_base or (doc.knowledge_base if doc else None)
+    active_kb = selected_kb or (doc.knowledge_base if doc else None)
+    if active_kb and not access.can_read("Knowledge Base", active_kb):
+        active_kb = None
     if active_kb:
         custom.append(
             {
@@ -532,6 +562,13 @@ def get_settings():
         # silently missing every improvement since. This site's own override sat
         # untouched since the prompt was a third shorter than it is now.
         out["system_prompt_default"] = runner.DEFAULT_SYSTEM_PROMPT
+    else:
+        agent_names = {row.name for row in out["agents"]}
+        model_names = {row.name for row in out["models"]}
+        if out["system"]["default_agent"] not in agent_names:
+            out["system"]["default_agent"] = None
+        if out["system"]["default_model"] not in model_names:
+            out["system"]["default_model"] = None
     return out
 
 
@@ -565,9 +602,15 @@ def save_settings(system=None, conversation=None):
     values = _parse(conversation) or {}
     if values.get("name"):
         doc = _own_conversation(values["name"])
-        for key in ("agent", "model", "knowledge_base"):
+        selections = {
+            "agent": ("AI Agent", "agent"),
+            "model": ("LLM", "model"),
+            "knowledge_base": ("Knowledge Base", "knowledge base"),
+        }
+        for key, (doctype, label) in selections.items():
             if key in values:
-                doc.db_set(key, values[key] or None, update_modified=False)
+                value = access.require_read(doctype, values[key], label=label)
+                doc.db_set(key, value, update_modified=False)
         saved["conversation"] = doc.name
 
     return saved
@@ -578,7 +621,7 @@ def get_agents():
     """Agent picker contents — finbyzai's own AI Agent records."""
     from finbyzai.copilot import branding
 
-    rows = frappe.get_all(
+    rows = frappe.get_list(
         "AI Agent",
         fields=["name", "title", "llm", "llm_provider", "knowledge_base"],
         order_by="title asc",
@@ -595,7 +638,7 @@ def get_models():
     provider's logo so the picker can show who serves it."""
     from finbyzai.copilot import branding
 
-    rows = frappe.get_all(
+    rows = frappe.get_list(
         "LLM",
         filters={"enabled": 1, "is_embedding_model": 0},
         fields=["name", "title", "provider", "supports_vision", "is_reasoning", "size"],
@@ -628,18 +671,24 @@ def _assert_owner(doc):
 
 def _new_conversation(text, model=None, agent=None, knowledge_base=None):
     settings = runner.get_settings()
-    chosen = agent if agent and frappe.db.exists("AI Agent", agent) else settings.default_agent
+    chosen = access.require_read("AI Agent", agent or settings.default_agent, label="agent")
+    selected_model = access.require_read("LLM", model, label="model") if model else None
+    selected_kb = (
+        access.require_read("Knowledge Base", knowledge_base, label="knowledge base")
+        if knowledge_base
+        else None
+    )
     return frappe.get_doc(
         {
             "doctype": "Copilot Conversation",
             "title": text[:TITLE_LENGTH],
             "user": frappe.session.user,
             "agent": chosen,
-            "knowledge_base": knowledge_base or None,
+            "knowledge_base": selected_kb,
             # Left empty unless the user actually picked one. Stamping the fallback here
             # would make every new chat look like it had chosen a model, and that choice
             # would then outrank the agent's own LLM.
-            "model": model or None,
+            "model": selected_model,
         }
     ).insert(ignore_permissions=True)
 
@@ -648,21 +697,44 @@ def _start_lock_key(conversation):
     return f"{frappe.local.site}|copilot:start:{conversation}"
 
 
+def _acquire_start_lock(conversation):
+    lock = frappe.cache.lock(_start_lock_key(conversation), timeout=60, blocking=False)
+    if lock.acquire(blocking=False):
+        return lock
+    frappe.throw(
+        _("This conversation has a turn in progress. Answer it or stop it first."),
+        title=_("Still working"),
+    )
+
+
+def _release_lock(lock):
+    if lock and lock.owned():
+        lock.release()
+
+
+def _release_lock_after_transaction(lock):
+    released = False
+
+    def release():
+        nonlocal released
+        if not released:
+            _release_lock(lock)
+            released = True
+
+    frappe.db.after_commit.add(release)
+    frappe.db.after_rollback.add(release)
+
+
 def _block_while_running(conversation):
     """One turn at a time per conversation — two loops writing the same message list
     would interleave tool calls and confuse the model.
 
     The check and the caller's insert of the new Running row are two separate steps;
     without a lock between them, two requests arriving together can both see no
-    active run and both proceed to insert one. The redis claim is held just long
-    enough to cover that gap — once the new row exists, its own "Running" status is
-    what every later request actually checks against.
+    active run and both proceed to insert one. The Redis lock stays held until commit
+    or rollback; after commit, the new row's "Running" status becomes the durable
+    guard for later requests.
     """
-    if not frappe.cache.set(_start_lock_key(conversation), "1", nx=True, ex=5):
-        frappe.throw(
-            _("This conversation has a turn in progress. Answer it or stop it first."),
-            title=_("Still working"),
-        )
     active = frappe.get_all(
         "Copilot Run",
         filters={"conversation": conversation, "status": ("in", ("Running", "Paused"))},

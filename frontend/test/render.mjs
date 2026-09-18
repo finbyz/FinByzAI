@@ -12,7 +12,7 @@ import { JSDOM, VirtualConsole } from "jsdom";
 import fs from "fs";
 
 const js = fs.readFileSync(
-	new URL("../../finbyzai/public/copilot/copilot.js", import.meta.url),
+	new URL("../../finbyzai/public/copilot/finbyzai_copilot.bundle.js", import.meta.url),
 	"utf8"
 );
 
