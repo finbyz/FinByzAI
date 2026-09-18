@@ -32,6 +32,53 @@ BLOCK_ROWS = 500
 NUMERIC_FIELDTYPES = {"Currency", "Float", "Int", "Percent"}
 
 
+def _allowed_role_map() -> dict:
+    """{report: allowed roles} for every role-restricted Report.
+
+    Mirrors `Report.is_permitted()` — including a Custom Role, which *replaces* the
+    report's own `Has Role` rows — but in two queries instead of loading every Report
+    document. 302 of this site's 325 reports are role-restricted, so skipping this
+    check makes `list_reports` offer reports the user cannot actually run.
+    """
+    allowed: dict = {}
+    for row in frappe.get_all(
+        "Has Role", filters={"parenttype": "Report"}, fields=["parent", "role"], limit_page_length=0
+    ):
+        allowed.setdefault(row.parent, set()).add(row.role)
+
+    custom = {
+        row.name: row.report
+        for row in frappe.get_all(
+            "Custom Role", filters={"report": ("is", "set")}, fields=["name", "report"], limit_page_length=0
+        )
+    }
+    if custom:
+        override: dict = {}
+        for row in frappe.get_all(
+            "Has Role",
+            filters={"parenttype": "Custom Role", "parent": ("in", list(custom))},
+            fields=["parent", "role"],
+            limit_page_length=0,
+        ):
+            override.setdefault(custom[row.parent], set()).add(row.role)
+        allowed.update(override)
+    return allowed
+
+
+def _report_permitted(name: str, ref_doctype: str | None, allowed: dict, user_roles: set) -> bool:
+    """Both gates Frappe applies when a report is actually run."""
+    if ref_doctype:
+        try:
+            if not frappe.has_permission(ref_doctype, "report"):
+                return False
+        except Exception:
+            # The report points at a DocType that no longer exists (this site has one:
+            # "Price Graph" -> "Purchase Price"). Unusable, and it must not abort the list.
+            return False
+    roles = allowed.get(name)
+    return not roles or bool(roles & user_roles)
+
+
 @tool(
     "list_reports",
     """Find existing reports. ALWAYS try this before writing your own query: this site
@@ -64,9 +111,12 @@ def list_reports(
     )
     rows.sort(key=lambda r: len(r.name or ""))
 
+    allowed = _allowed_role_map()
+    user_roles = set(frappe.get_roles())
+
     out = []
     for row in rows:
-        if row.ref_doctype and not frappe.has_permission(row.ref_doctype, "report"):
+        if not _report_permitted(row.name, row.ref_doctype, allowed, user_roles):
             continue
         out.append(
             {
@@ -94,6 +144,8 @@ def describe_report(report: str) -> dict:
     doc = frappe.get_doc("Report", report)
     if doc.ref_doctype and not frappe.has_permission(doc.ref_doctype, "report"):
         raise frappe.PermissionError(f"No report permission for {doc.ref_doctype}")
+    if not doc.is_permitted():
+        raise frappe.PermissionError(f"Your roles do not allow the report {doc.name}")
 
     filters, source = _report_filters(doc)
     return {
@@ -231,15 +283,21 @@ def _totals(rows: list, columns: list) -> dict:
 # Report Filter rows first (only 1 of 222 reports on this site uses them), then the
 # report's JavaScript, which is where every standard Script Report keeps its filters.
 
-_FILTER_ARRAY = re.compile(r"filters\s*:\s*\[", re.S)
-_FIELDNAME = re.compile(r"""fieldname\s*:\s*["']([^"']+)["']""")
-_LABEL = re.compile(r"""label\s*:\s*(?:__\(\s*)?["']([^"']+)["']""")
-_FIELDTYPE = re.compile(r"""fieldtype\s*:\s*["']([^"']+)["']""")
-_OPTIONS = re.compile(r"""options\s*:\s*["']([^"']+)["']""")
-_REQD = re.compile(r"reqd\s*:\s*(1|true)")
-_DEFAULT_LITERAL = re.compile(r"""default\s*:\s*["']([^"']*)["']""")
-_DEFAULT_NUMBER = re.compile(r"default\s*:\s*(-?\d+(?:\.\d+)?)\s*[,}]")
-_DEFAULT_DYNAMIC = re.compile(r"default\s*:")
+# Report JS may quote its keys (`"filters": [`) or not (`filters: [`). ERPNext's own
+# reports leave them bare; several of this site's do not, and an unquoted-only pattern
+# silently reported "no filters" for 16 of 18 Productivity Next reports — which makes
+# the model guess filter names instead of reading them.
+_K = lambda key: r"""["']?""" + key + r"""["']?\s*:\s*"""
+
+_FILTER_ARRAY = re.compile(_K("filters") + r"\[", re.S)
+_FIELDNAME = re.compile(_K("fieldname") + r"""["']([^"']+)["']""")
+_LABEL = re.compile(_K("label") + r"""(?:__\(\s*)?["']([^"']+)["']""")
+_FIELDTYPE = re.compile(_K("fieldtype") + r"""["']([^"']+)["']""")
+_OPTIONS = re.compile(_K("options") + r"""["']([^"']+)["']""")
+_REQD = re.compile(_K("reqd") + r"(1|true)")
+_DEFAULT_LITERAL = re.compile(_K("default") + r"""["']([^"']*)["']""")
+_DEFAULT_NUMBER = re.compile(_K("default") + r"(-?\d+(?:\.\d+)?)\s*[,}]")
+_DEFAULT_DYNAMIC = re.compile(_K("default"))
 
 
 def _report_filters(doc) -> tuple:
