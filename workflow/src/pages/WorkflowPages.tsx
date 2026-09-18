@@ -47,6 +47,7 @@ import { Inspector } from '../components/Inspector'
 import { HelpTooltip } from '../components/HelpTooltip'
 import { PolicyConditionEditor } from '../components/InspectorHelpers'
 import { AsyncCombobox, type ComboboxOption } from '../components/AsyncCombobox'
+import { AiWorkflowAssistant } from '../components/AiWorkflowAssistant'
 import { useConfirmDialog } from '../components/useConfirmDialog'
 import { NodeCatalog } from '../components/NodeCatalog'
 import { SimulationOutcome } from '../components/SimulationOutcome'
@@ -227,6 +228,233 @@ function CreateDialog({ close, created }: { close(): void; created(id: string): 
   )
 }
 
+interface CreateAiForm {
+  title: string
+  primary_doctype: string
+  folder: string
+  prompt: string
+}
+
+const AI_STARTERS = [
+  {
+    label: 'Lead SLA & Routing',
+    doctype: 'Lead',
+    title: 'Lead SLA & Escalation',
+    prompt: 'When a new Lead is created with high priority, wait 2 hours. If still unassigned, send an alert email to the Sales Manager and reassign to the on-call team.',
+  },
+  {
+    label: 'Overdue Invoice Reminder',
+    doctype: 'Sales Invoice',
+    title: 'Overdue Payment Reminder',
+    prompt: 'When a Sales Invoice is overdue by 7 days and outstanding amount is greater than 500, send a polite payment reminder email with PDF attachment, then wait 5 days.',
+  },
+  {
+    label: 'VIP Customer Onboarding',
+    doctype: 'Customer',
+    title: 'VIP Customer Onboarding',
+    prompt: 'When a Customer is marked as VIP, create a welcome task for the account executive, send a personalized onboarding email, and add a calendar milestone.',
+  },
+]
+
+export function CreateWithAiDialog({ close, created }: { close(): void; created(id: string): void }) {
+  const dialogRef = useDialogA11y(true, close, 'Create workflow with AI')
+  const { register, control, handleSubmit, setValue, watch, formState: { isSubmitting } } = useForm<CreateAiForm>({
+    defaultValues: { title: '', primary_doctype: '', folder: '', prompt: '' },
+  })
+  const [error, setError] = useState('')
+  const promptVal = watch('prompt') || ''
+  const doctypeVal = watch('primary_doctype') || ''
+
+  const loadDoctypes = useCallback(
+    (search: string) =>
+      searchDoctypes('read', search).then((rows) =>
+        rows.map((row) => ({ value: row.name, label: row.label || row.name, description: row.module }))
+      ),
+    []
+  )
+
+  const submit = handleSubmit(async (values) => {
+    if (!values.prompt.trim()) {
+      setError('Please describe what automation you want the AI to create.')
+      return
+    }
+    if (!values.primary_doctype) {
+      setError('Please select a Business DocType for this workflow.')
+      return
+    }
+    setError('')
+    try {
+      const finalTitle = values.title.trim() || `${values.primary_doctype} AI Automation`
+      const result = await call<{ workflow: string }>(
+        'create_workflow',
+        {
+          envelope: {
+            payload: {
+              title: finalTitle,
+              primary_doctype: values.primary_doctype,
+              folder: values.folder || '',
+              trigger_type: 'trigger.any',
+            },
+          },
+        },
+        true
+      )
+      window.sessionStorage.setItem(`finbyz:ai_initial_prompt:${result.workflow}`, values.prompt.trim())
+      created(result.workflow)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Unable to create workflow')
+    }
+  })
+
+  return (
+    <div
+      className="dialog-backdrop fixed inset-0 z-50 grid place-items-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="create-ai-workflow-title"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) close()
+      }}
+    >
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        className="dialog-card w-full max-w-xl overflow-hidden rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] shadow-xl"
+      >
+        <form onSubmit={submit} className="flex flex-col">
+          <div className="border-b border-[var(--border-color)] p-5 sm:p-6">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-[var(--border-color)] bg-[var(--subtle-fg)] text-[var(--heading-color)]">
+                  <WandSparkles size={17} />
+                </span>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 id="create-ai-workflow-title" className="text-heading text-base font-bold tracking-tight">
+                      New with AI
+                    </h2>
+                    <span className="rounded border border-[var(--border-color)] bg-[var(--subtle-fg)] px-1.5 py-0.5 text-[9px] font-medium text-[var(--text-muted)]">
+                      AI Workflow Studio
+                    </span>
+                  </div>
+                  <p className="text-muted mt-0.5 text-xs">
+                    Describe your business requirements. The assistant configures nodes, logic, and triggers automatically.
+                  </p>
+                </div>
+              </div>
+              <button type="button" className="icon-button" onClick={close} aria-label="Close">
+                <X size={17} />
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-4 p-5 sm:p-6">
+            <div>
+              <label className="text-heading block text-xs font-semibold">
+                Business DocType <span className="text-red-500">*</span>
+              </label>
+              <span className="mt-1.5 block">
+                <Controller
+                  control={control}
+                  name="primary_doctype"
+                  rules={{ required: true }}
+                  render={({ field: doctypeField }) => (
+                    <AsyncCombobox
+                      ariaLabel="Business DocType"
+                      value={doctypeField.value}
+                      onChange={doctypeField.onChange}
+                      loadOptions={loadDoctypes}
+                      placeholder="Choose record type (e.g. Sales Invoice, Lead, Customer)…"
+                    />
+                  )}
+                />
+              </span>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between">
+                <label className="text-heading block text-xs font-semibold">
+                  Automation instructions <span className="text-red-500">*</span>
+                </label>
+                <span className="text-light text-[10px]">
+                  {promptVal.length} chars
+                </span>
+              </div>
+              <textarea
+                className={`${field} mt-1.5 min-h-[95px] w-full resize-y rounded-lg leading-relaxed text-xs`}
+                placeholder="e.g. When a Sales Invoice is overdue by 7 days and outstanding amount > 1000, send an email reminder to customer, wait 3 days, and notify accounts manager if unpaid."
+                {...register('prompt', { required: true })}
+              />
+            </div>
+
+            <div>
+              <p className="text-light text-[9.5px] font-bold uppercase tracking-wider mb-1.5">
+                Starter templates:
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {AI_STARTERS.map((s) => (
+                  <button
+                    key={s.label}
+                    type="button"
+                    onClick={() => {
+                      setValue('primary_doctype', s.doctype)
+                      setValue('title', s.title)
+                      setValue('prompt', s.prompt)
+                    }}
+                    className="rounded border border-[var(--border-color)] bg-[var(--subtle-fg)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-color)] transition-colors hover:border-[var(--dark-border-color)] hover:bg-[var(--control-hover-bg)]"
+                  >
+                    ✨ {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2 pt-1">
+              <label className="text-heading block text-xs font-semibold">
+                Workflow title <span className="text-muted font-normal">(optional)</span>
+                <input
+                  className={`${field} mt-1.5`}
+                  placeholder={doctypeVal ? `${doctypeVal} AI Automation` : 'e.g. Overdue Payment Reminder'}
+                  {...register('title')}
+                />
+              </label>
+
+              <label className="text-heading block text-xs font-semibold">
+                Folder <span className="text-muted font-normal">(optional)</span>
+                <input
+                  className={`${field} mt-1.5`}
+                  placeholder="e.g. Operations / Finance"
+                  {...register('folder', { maxLength: 140 })}
+                />
+              </label>
+            </div>
+
+            {error && (
+              <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-500/10 dark:text-red-300">
+                {error}
+              </p>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-2 border-t border-[var(--border-color)] bg-[var(--subtle-fg)]/40 px-5 py-4 sm:px-6">
+            <button type="button" className={secondary} onClick={close}>
+              Cancel
+            </button>
+            <button className={magic} disabled={isSubmitting}>
+              {isSubmitting ? (
+                <LoaderCircle className="animate-spin" size={14} />
+              ) : (
+                <WandSparkles size={14} />
+              )}
+              Create with AI
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 export function DeleteWorkflowDialog({ workflow, close, deleted }: { workflow: WorkflowSummary; close(): void; deleted(): void }) {
   const dialogRef = useDialogA11y(true, close)
   const permanent = hasRole('System Manager') && (Boolean(workflow.latest_version) || workflow.status !== 'DRAFT')
@@ -305,6 +533,7 @@ export function WorkflowListPage() {
   const [rows, setRows] = useState<WorkflowSummary[]>([])
   const [runtime, setRuntime] = useState<RuntimeHealth>()
   const [creating, setCreating] = useState(false)
+  const [creatingAi, setCreatingAi] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [hasMoreWorkflows, setHasMoreWorkflows] = useState(false)
@@ -380,6 +609,7 @@ export function WorkflowListPage() {
           <DeskLink />
           <ThemeToggle />
           {canBuild && <Link className={secondary} to="/templates"><Layers3 size={14} /><span className="hidden sm:inline">Templates</span></Link>}
+          {canBuild && <button className={magic} onClick={() => setCreatingAi(true)} title="Generate workflow from natural language with AI"><Sparkles size={14} /><span className="hidden sm:inline">New with AI</span></button>}
           {canBuild && <button className={primary} onClick={() => setCreating(true)}><Plus size={15} /><span className="hidden sm:inline">Create workflow</span></button>}
         </div>
       </Header>
@@ -420,12 +650,23 @@ export function WorkflowListPage() {
 				{hasMoreWorkflows && <div className="border-t border-[var(--border-color)] p-3 text-center"><button className={secondary} disabled={loadingMore} onClick={() => void load(rows.length, true)}>{loadingMore && <LoaderCircle className="animate-spin" size={13} />}Load more workflows</button></div>}
               </div>
             ) : (
-              <div className="px-6 py-16 text-center"><span className="magic-orb mx-auto"><Sparkles size={20} /></span><h3 className="text-heading mt-4 text-base font-bold">Your first automation starts here</h3><p className="text-muted mx-auto mt-1 max-w-sm text-xs leading-5">Choose a Frappe DocType, define an enrollment trigger, and build the journey visually.</p>{canBuild && <button className={`${primary} mt-5`} onClick={() => setCreating(true)}><Plus size={15} />Create workflow</button>}</div>
+              <div className="px-6 py-16 text-center">
+                <span className="magic-orb mx-auto"><Sparkles size={20} /></span>
+                <h3 className="text-heading mt-4 text-base font-bold">Your first automation starts here</h3>
+                <p className="text-muted mx-auto mt-1 max-w-sm text-xs leading-5">Choose a Frappe DocType, define an enrollment trigger, and build the journey visually or generate it with AI.</p>
+                {canBuild && (
+                  <div className="mt-5 flex items-center justify-center gap-2">
+                    <button className={magic} onClick={() => setCreatingAi(true)}><Sparkles size={15} />New with AI</button>
+                    <button className={primary} onClick={() => setCreating(true)}><Plus size={15} />Create manually</button>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </section>
       </main>
       {creating && <CreateDialog close={() => setCreating(false)} created={(id) => navigate(`/${id}`)} />}
+      {creatingAi && <CreateWithAiDialog close={() => setCreatingAi(false)} created={(id) => navigate(`/${id}`)} />}
       {deleting && <DeleteWorkflowDialog workflow={deleting} close={() => setDeleting(undefined)} deleted={() => { setDeleting(undefined); void load() }} />}
       {moving && <MoveWorkflowDialog workflow={moving} close={() => setMoving(undefined)} moved={async (folder) => { await call('set_workflow_folder', mutationEnvelope(moving.name, { folder }), true); setMoving(undefined); await load() }} />}
       {confirmation.dialog}
@@ -464,6 +705,23 @@ interface WorkflowCommentRow {
   resolved_by?: string
   owner: string
   creation: string
+}
+
+interface HumanApprovalRow {
+  name: string
+  run: string
+  node_id: string
+  record_doctype: string
+  record_name: string
+  reviewer: string
+  status: string
+  allow_edit: number
+  title: string
+  instructions?: string
+  draft_text: string
+  evidence_json?: string
+  created_at: string
+  expires_at?: string
 }
 
 function WorkflowConnectionsButton({ menuItem = false, onActivated }: { menuItem?: boolean; onActivated?(): void }) {
@@ -512,6 +770,37 @@ function WorkflowCommentsButton({ menuItem = false, onActivated }: { menuItem?: 
   return <><button className={menuItem ? 'editor-more-item' : 'btn-core btn-ghost'} onClick={() => { setOpen(true); onActivated?.() }}><MessageSquare size={14} /><span><strong>Comments</strong>{menuItem && <small>Discuss this workflow or selected step</small>}</span>{unresolved ? <span className="status-pill">{unresolved}</span> : null}</button>{open && createPortal(<div className="dialog-backdrop editor-drawer-backdrop fixed inset-x-0 bottom-0 top-[110px] z-50 flex justify-end" role="dialog" aria-modal="true" onClick={(event) => { if (event.target === event.currentTarget) setOpen(false) }}><div className="dialog-card editor-utility-drawer flex h-full w-full max-w-[420px] flex-col overflow-hidden"><header className="flex items-start justify-between border-b border-[var(--border-color)] px-4 py-3.5"><div><p className="text-[8px] font-bold uppercase tracking-wider text-magic-600">Collaboration</p><h2 className="text-heading mt-0.5 text-sm font-bold">Comments</h2><p className="text-muted mt-1 text-[10px]">Adding to {editor.selectedNodeId ? 'the selected step' : 'the whole workflow'}.</p></div><button className="icon-button" onClick={() => setOpen(false)} aria-label="Close workflow comments"><X size={16} /></button></header><div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">{rows.map((row) => <article className={`rounded-lg border p-3 ${row.resolved ? 'border-[var(--border-color)] opacity-60' : 'border-brand-200 dark:border-brand-800'}`} key={row.name}><div className="flex items-center justify-between gap-2"><span className="text-light truncate text-[8px] font-bold">{row.owner} · {formatDate(row.creation)}{row.step_id ? ' · Step comment' : ''}</span><button className={ghost} onClick={() => void resolve(row)}>{row.resolved ? 'Reopen' : 'Resolve'}</button></div><p className="text-heading mt-2 whitespace-pre-wrap text-[11px] leading-4">{row.content}</p></article>)}{!rows.length && <div className="p-8 text-center"><MessageSquare className="mx-auto text-[var(--text-light)]" size={19} /><p className="text-heading mt-2 text-[11px] font-semibold">No comments yet</p><p className="text-muted mt-1 text-[9px]">Start the first discussion below.</p></div>}</div><footer className="space-y-2 border-t border-[var(--border-color)] p-3"><textarea className={`${field} min-h-20 w-full resize-y`} value={content} onChange={(event) => setContent(event.target.value)} placeholder={editor.selectedNodeId ? 'Comment on selected step…' : 'Comment on workflow…'} /><details><summary className="text-muted cursor-pointer text-[9px] font-semibold">Mention teammates</summary><input className={`${field} mt-2 w-full`} value={mentions} onChange={(event) => setMentions(event.target.value)} placeholder="User emails, separated by commas" /></details><div className="flex justify-end"><button className={primary} disabled={busy || !content.trim()} onClick={() => void submit()}><Send size={13} />Comment</button></div></footer></div></div>, document.body)}</>
 }
 
+function WorkflowApprovalsButton({ menuItem = false, onActivated }: { menuItem?: boolean; onActivated?(): void }) {
+  const doc = useWorkflowDocument()
+  const [open, setOpen] = useState(false)
+  const [rows, setRows] = useState<HumanApprovalRow[]>([])
+  const [selected, setSelected] = useState<HumanApprovalRow>()
+  const [finalText, setFinalText] = useState('')
+  const [comment, setComment] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  useDialogA11y(open, () => setOpen(false), 'Human approvals')
+  const load = useCallback(async () => {
+    const value = await call<{ rows: HumanApprovalRow[] }>('list_human_approvals', { workflow_id: doc.workflowId, status: 'PENDING', page_length: 100 })
+    setRows(value.rows)
+    setSelected((current) => current && value.rows.find((row) => row.name === current.name) ? current : value.rows[0])
+  }, [doc.workflowId])
+  useEffect(() => { if (open) void load() }, [load, open])
+  useEffect(() => { setFinalText(selected?.draft_text || ''); setComment(''); setError('') }, [selected])
+  const decide = async (decision: 'APPROVE' | 'EDIT_AND_APPROVE' | 'REJECT') => {
+    if (!selected) return
+    setBusy(true)
+    setError('')
+    try {
+      await call('resolve_human_approval', mutationEnvelope(`approval:${selected.name}:${decision}`, { approval_id: selected.name, decision, final_text: finalText, comment }), true)
+      await load()
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Approval could not be resolved.') }
+    finally { setBusy(false) }
+  }
+  const evidence = (() => { try { return selected?.evidence_json ? JSON.stringify(JSON.parse(selected.evidence_json), null, 2) : '' } catch { return '' } })()
+  return <><button className={menuItem ? 'editor-more-item' : 'btn-core btn-ghost'} onClick={() => { setOpen(true); onActivated?.() }}><ShieldCheck size={14} /><span><strong>Approvals</strong>{menuItem && <small>Review drafts paused by this workflow</small>}</span>{rows.length ? <span className="status-pill">{rows.length}</span> : null}</button>{open && createPortal(<div className="dialog-backdrop editor-drawer-backdrop fixed inset-x-0 bottom-0 top-[110px] z-50 flex justify-end" role="dialog" aria-modal="true" onClick={(event) => { if (event.target === event.currentTarget) setOpen(false) }}><div className="dialog-card editor-utility-drawer flex h-full w-full max-w-[680px] flex-col overflow-hidden"><header className="flex items-start justify-between border-b border-[var(--border-color)] px-4 py-3.5"><div><p className="text-[8px] font-bold uppercase tracking-wider text-brand-600">Human in the loop</p><h2 className="text-heading mt-0.5 text-sm font-bold">Pending approvals</h2><p className="text-muted mt-1 text-[10px]">Review evidence before a workflow can continue.</p></div><button className="icon-button" onClick={() => setOpen(false)} aria-label="Close approvals"><X size={16} /></button></header><div className="grid min-h-0 flex-1 md:grid-cols-[220px_minmax(0,1fr)]"><div className="min-h-0 overflow-y-auto border-r border-[var(--border-color)] p-2">{rows.map((row) => <button type="button" className={`w-full rounded-lg p-3 text-left ${selected?.name === row.name ? 'bg-brand-50 ring-1 ring-brand-200 dark:bg-brand-500/10' : 'hover:bg-[var(--subtle-fg)]'}`} onClick={() => setSelected(row)} key={row.name}><strong className="text-heading block truncate text-[10.5px]">{row.title}</strong><span className="text-muted mt-1 block truncate text-[9px]">{row.record_doctype} · {row.record_name}</span><span className="text-light mt-1 block text-[8.5px]">Expires {formatDate(row.expires_at)}</span></button>)}{!rows.length && <p className="text-muted p-8 text-center text-[10px]">No pending approvals.</p>}</div><div className="min-h-0 overflow-y-auto p-4">{selected ? <div className="space-y-4"><div><div className="flex items-center justify-between gap-2"><h3 className="text-heading text-sm font-bold">{selected.title}</h3><Status value={selected.status} /></div><p className="text-muted mt-1 text-[10px]">Reviewer {selected.reviewer} · <Link className="text-brand-600" to={`/runs/${selected.run}`}>Open run</Link></p>{selected.instructions && <p className="text-body mt-3 rounded-lg bg-[var(--subtle-fg)] p-3 text-[10.5px] leading-4">{selected.instructions}</p>}</div>{evidence && <details><summary className="text-heading cursor-pointer text-[10px] font-bold">Evidence used</summary><pre className="text-muted mt-2 max-h-52 overflow-auto rounded-lg bg-[var(--subtle-fg)] p-3 text-[9px]">{evidence}</pre></details>}<div><label className="text-heading mb-1.5 block text-[10px] font-bold">Approved text</label><textarea className={`${field} min-h-44 w-full resize-y`} readOnly={!selected.allow_edit} value={finalText} onChange={(event) => setFinalText(event.target.value)} /></div><div><label className="text-heading mb-1.5 block text-[10px] font-bold">Decision note (optional)</label><textarea className={`${field} min-h-16 w-full resize-y`} value={comment} onChange={(event) => setComment(event.target.value)} /></div>{error && <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-[10px] text-red-700">{error}</p>}<div className="flex flex-wrap justify-end gap-2"><button className={ghost} disabled={busy} onClick={() => void decide('REJECT')}>Reject</button>{Boolean(selected.allow_edit) && finalText !== selected.draft_text && <button className={secondary} disabled={busy || !finalText.trim()} onClick={() => void decide('EDIT_AND_APPROVE')}>Approve edited text</button>}<button className={primary} disabled={busy || !finalText.trim()} onClick={() => void decide('APPROVE')}>{busy && <LoaderCircle className="animate-spin" size={13} />}Approve</button></div></div> : <div className="grid h-full place-items-center text-center"><div><ShieldCheck className="mx-auto text-[var(--text-light)]" size={24} /><p className="text-muted mt-2 text-[10px]">Choose an approval to review.</p></div></div>}</div></div></div></div>, document.body)}</>
+}
+
 export function EditorMoreMenu() {
   const doc = useWorkflowDocument()
   const actions = useWorkflowActions()
@@ -557,6 +846,7 @@ export function EditorMoreMenu() {
 	  <button className="editor-more-item" onClick={() => { setOpen(false); void actions.validate() }}><FileCheck2 size={14} /><span><strong>Check workflow</strong><small>Validate the saved draft and permissions</small></span></button>
       <WorkflowConnectionsButton menuItem onActivated={() => setOpen(false)} />
       <WorkflowCommentsButton menuItem onActivated={() => setOpen(false)} />
+      <WorkflowApprovalsButton menuItem onActivated={() => setOpen(false)} />
       <button className="editor-more-item" onClick={() => { setOpen(false); actions.toggle('versionsOpen', true) }}><GitCompareArrows size={14} /><span><strong>Version history</strong><small>Compare or restore a published version</small></span></button>
     </div>, document.body)}
   </div>
@@ -593,7 +883,8 @@ function EditorHeader() {
           {publication.has_published_version && <><Link className="btn-core btn-ghost" title={triggerType === 'trigger.manual' ? 'Enroll and view history' : 'Enrollment history'} to={`/${doc.workflowId}/runs`}><History size={14} /><span className="max-xl:hidden">{triggerType === 'trigger.manual' ? 'Enroll & history' : 'History'}</span></Link><Link className="btn-core btn-ghost" title="Workflow performance" to={`/${doc.workflowId}/performance`}><Gauge size={14} /><span className="max-xl:hidden">Performance</span></Link></>}
           <EditorMoreMenu />
         </div>
-        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+		<div className="ml-auto flex shrink-0 items-center gap-1.5">
+		  <AiWorkflowAssistant />
 		  <button className={secondary} aria-pressed={editor.catalogOpen} title="Open the action catalogue" onClick={() => actions.toggle('catalogOpen')}><Plus size={14} /><span className="max-xl:hidden">Add action</span></button>
           <button className="icon-button" disabled={!history.past.length} onClick={actions.undo} aria-label="Undo"><Undo2 size={15} /></button>
           <button className="icon-button" disabled={!history.future.length} onClick={actions.redo} aria-label="Redo"><Redo2 size={15} /></button>
@@ -906,9 +1197,11 @@ interface RunDetail {
   tokens: Array<{ name?: string; node_id: string; occurrence?: number; status: string; attempts: number; error_message?: string }>
   events: Array<Record<string, unknown>>
   attempts: Array<{ name: string; node_id: string; attempt_no: number; status: string; error_code?: string; error_message?: string; started_at?: string; completed_at?: string }>
+  ai_attempts: Array<{ name: string; node_id: string; status: string; profile_version: string; mode: string; provider?: string; model?: string; confidence?: number; citations_json?: string; usage_json?: string; input_tokens?: number; output_tokens?: number; estimated_cost?: number; latency_ms?: number; output_hash?: string; error_code?: string; error_message?: string; started_at?: string; completed_at?: string }>
+  approvals: Array<{ name: string; node_id: string; reviewer: string; status: string; title: string; draft_text?: string; final_text?: string; decision_comment?: string; created_at?: string; expires_at?: string; reviewed_at?: string; reviewed_by?: string }>
   enrollment_decisions: Array<{ name: string; decision: string; reason_code: string; evidence_json?: string; source: string; decided_at: string }>
   policy_evaluations: Array<{ name: string; event_id: string; changed_fields_json?: string; outcome: string; reason_code: string; evaluated_at: string }>
-  trace_has_more?: Partial<Record<'events' | 'attempts' | 'enrollment_decisions' | 'policy_evaluations', boolean>>
+  trace_has_more?: Partial<Record<'events' | 'attempts' | 'ai_attempts' | 'approvals' | 'enrollment_decisions' | 'policy_evaluations', boolean>>
 }
 
 export function RunDetailPage() {
@@ -944,7 +1237,7 @@ export function RunDetailPage() {
       setError(reason instanceof Error ? reason.message : 'Unable to update this run')
     }
   }
-  type TraceSection = 'events' | 'attempts' | 'enrollment_decisions' | 'policy_evaluations'
+  type TraceSection = 'events' | 'attempts' | 'ai_attempts' | 'approvals' | 'enrollment_decisions' | 'policy_evaluations'
   const loadMoreTrace = async (section: TraceSection) => {
     if (!detail.trace_has_more?.[section] || traceLoading) return
     setTraceLoading(section)
@@ -970,6 +1263,8 @@ export function RunDetailPage() {
           <aside className="surface-flat h-fit overflow-hidden rounded-xl"><div className="border-b border-[var(--border-color)] px-5 py-4"><div className="flex items-center gap-2"><Clock3 className="text-magic-500" size={16} /><h2 className="text-heading text-sm font-bold">Event timeline</h2></div><p className="text-muted mt-1 text-[10px]">Authoritative append-only run events.</p></div><ol className="max-h-[680px] space-y-0 overflow-y-auto p-5">{detail.events.map((event, index) => <li className="relative flex gap-3 pb-5 last:pb-0" key={index}>{index < detail.events.length - 1 && <span className="absolute left-[6px] top-4 h-[calc(100%-8px)] w-px bg-[var(--border-color)]" />}<span className="z-10 mt-1 size-[13px] shrink-0 rounded-full border-[3px] border-[var(--fg-color)] bg-magic-500 ring-1 ring-magic-200" /><div><strong className="text-heading block text-[11px]">{String(event.event_type)}</strong><p className="text-muted mt-1 text-[9px] leading-4">{String(event.occurred_at || '')}</p>{Boolean(event.node_id) && <p className="text-light text-[9px]">{String(event.node_id)}</p>}</div></li>)}</ol>{traceMore('events')}</aside>
         </div>
         <div className="mt-5 grid gap-5 lg:grid-cols-2"><section className="surface-flat overflow-hidden rounded-xl"><div className="border-b border-[var(--border-color)] px-5 py-4"><h2 className="text-heading text-sm font-bold">Enrollment evidence</h2><p className="text-muted mt-1 text-[10px]">Why this record entered the pinned version, without storing sensitive document values.</p></div>{detail.enrollment_decisions?.length ? <div className="divide-y divide-[var(--border-color)]">{detail.enrollment_decisions.map((row) => <div className="p-4" key={row.name}><div className="flex items-center justify-between gap-3"><div><strong className="text-heading text-[11px]">{row.reason_code}</strong><p className="text-light mt-0.5 text-[9px]">{row.source} · {formatDate(row.decided_at)}</p></div><Status value={row.decision} /></div>{row.evidence_json && <pre className="text-muted mt-2 overflow-auto rounded-lg bg-[var(--subtle-fg)] p-2 text-[9px]">{safeJsonEvidence(row.evidence_json)}</pre>}</div>)}</div> : <p className="p-8 text-center text-xs text-[var(--text-muted)]">Legacy run: no first-class decision evidence.</p>}{traceMore('enrollment_decisions')}</section><section className="surface-flat overflow-hidden rounded-xl"><div className="border-b border-[var(--border-color)] px-5 py-4"><h2 className="text-heading text-sm font-bold">Node attempts</h2><p className="text-muted mt-1 text-[10px]">Every execution and retry attempt, including permanent and ambiguous failures.</p></div>{detail.attempts?.length ? <div className="divide-y divide-[var(--border-color)]">{detail.attempts.map((row) => <div className="flex items-start justify-between gap-3 p-4" key={row.name}><div><strong className="text-heading block text-[11px]">{row.node_id} · attempt {row.attempt_no}</strong><p className="text-light mt-0.5 text-[9px]">{formatDate(row.started_at)}{row.error_code ? ` · ${row.error_code}` : ''}</p>{row.error_message && <p className="mt-1 text-[10px] text-red-600">{row.error_message}</p>}</div><Status value={row.status} /></div>)}</div> : <p className="p-8 text-center text-xs text-[var(--text-muted)]">No node attempts recorded.</p>}{traceMore('attempts')}</section></div>
+        {detail.ai_attempts?.length ? <section className="surface-flat mt-5 overflow-hidden rounded-xl"><div className="border-b border-[var(--border-color)] px-5 py-4"><div className="flex items-center gap-2"><Sparkles className="text-magic-500" size={16} /><h2 className="text-heading text-sm font-bold">AI execution evidence</h2></div><p className="text-muted mt-1 text-[10px]">Pinned profile, validated outcome, token usage, latency, citations, and output hash. Raw permitted context and model output are not stored here.</p></div><div className="divide-y divide-[var(--border-color)]">{detail.ai_attempts.map((row) => { const citationCount = (() => { try { const value = JSON.parse(row.citations_json || '[]'); return Array.isArray(value) ? value.length : 0 } catch { return 0 } })(); return <div className="flex flex-col justify-between gap-3 p-4 sm:flex-row sm:items-start" key={row.name}><div className="min-w-0"><strong className="text-heading block text-[11px]">{row.node_id} · {row.mode}</strong><p className="text-light mt-0.5 text-[9px]">{row.provider || 'Provider'} · {row.model || 'Model'} · profile {row.profile_version}</p><p className="text-muted mt-1 text-[10px]">{Math.round(Number(row.confidence || 0))}% confidence · {citationCount} citation{citationCount === 1 ? '' : 's'} · {Number(row.input_tokens || 0) + Number(row.output_tokens || 0)} tokens · {Number(row.latency_ms || 0).toLocaleString()} ms</p>{row.output_hash && <p className="text-light mt-1 truncate text-[9px]">Output hash {row.output_hash}</p>}{row.error_message && <p className="mt-1 text-[10px] text-red-600">{row.error_code ? `${row.error_code}: ` : ''}{row.error_message}</p>}</div><Status value={row.status} /></div> })}</div>{traceMore('ai_attempts')}</section> : null}
+        {detail.approvals?.length ? <section className="surface-flat mt-5 overflow-hidden rounded-xl"><div className="border-b border-[var(--border-color)] px-5 py-4"><div className="flex items-center gap-2"><ShieldCheck className="text-brand-500" size={16} /><h2 className="text-heading text-sm font-bold">Human approval evidence</h2></div><p className="text-muted mt-1 text-[10px]">Who reviewed the draft, the decision, and the exact approved output used by later actions.</p></div><div className="divide-y divide-[var(--border-color)]">{detail.approvals.map((row) => <div className="p-4" key={row.name}><div className="flex items-start justify-between gap-3"><div><strong className="text-heading block text-[11px]">{row.title}</strong><p className="text-light mt-0.5 text-[9px]">{row.node_id} · reviewer {row.reviewer}{row.reviewed_by ? ` · decided by ${row.reviewed_by}` : ''}</p></div><Status value={row.status} /></div>{row.final_text && <p className="text-body mt-2 whitespace-pre-wrap rounded-lg bg-[var(--subtle-fg)] p-3 text-[10px] leading-4">{row.final_text}</p>}{row.decision_comment && <p className="text-muted mt-2 text-[9.5px]">{row.decision_comment}</p>}</div>)}</div>{traceMore('approvals')}</section> : null}
         {detail.policy_evaluations?.length ? <section className="surface-flat mt-5 overflow-hidden rounded-xl"><div className="border-b border-[var(--border-color)] px-5 py-4"><div className="flex items-center gap-2"><ShieldCheck className="text-brand-500" size={16} /><h2 className="text-heading text-sm font-bold">Lifecycle reevaluations</h2></div><p className="text-muted mt-1 text-[10px]">Relevant record changes checked against the immutable policy pinned to this run.</p></div><div className="divide-y divide-[var(--border-color)]">{detail.policy_evaluations.map((row) => <div className="flex flex-col justify-between gap-3 p-4 sm:flex-row sm:items-center" key={row.name}><div><strong className="text-heading block text-[11px]">{row.reason_code}</strong><p className="text-light mt-0.5 text-[9px]">{formatDate(row.evaluated_at)} · event {row.event_id}</p>{formatJsonList(row.changed_fields_json) && <p className="text-muted mt-1 text-[10px]">Changed fields: {formatJsonList(row.changed_fields_json)}</p>}</div><Status value={row.outcome} /></div>)}</div>{traceMore('policy_evaluations')}</section> : null}
       </main>
       {confirmation.dialog}

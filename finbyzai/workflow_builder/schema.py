@@ -815,6 +815,56 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 			for key, message in ((("for_user", "Choose a notification recipient"),) if audience == "specific" else ()) + (("subject", "Enter a notification subject"), ("message", "Enter a notification message")):
 				if not str(config.get(key) or "").strip():
 					issues.append(_issue("MISSING_NOTIFICATION_VALUE", message, f"{path}.config.{key}", node_id))
+		if node.get("type") in {"action.ai_generate", "action.ai_support_agent"}:
+			is_inline = node.get("type") == "action.ai_generate" and bool(config.get("prompt_mode") == "inline" or (not config.get("ai_profile") and config.get("model")))
+			if is_inline:
+				if not str(config.get("model") or "").strip():
+					issues.append(_issue("MISSING_AI_MODEL", "Choose an AI Model", f"{path}.config.model", node_id))
+				if not str(config.get("user_prompt") or "").strip() and not str(config.get("instructions") or "").strip() and not str(config.get("system_prompt") or "").strip():
+					issues.append(_issue("MISSING_AI_PROMPT", "Enter a User Prompt or instructions", f"{path}.config.user_prompt", node_id))
+			else:
+				if not str(config.get("ai_profile") or "").strip():
+					issues.append(_issue("MISSING_AI_PROFILE", "Choose an AI Agent", f"{path}.config.ai_profile", node_id))
+				fields = config.get("field_allowlist")
+				if not isinstance(fields, list) or not fields or len(fields) > 50 or any(not str(field or "").strip() for field in fields) or len(set(fields)) != len(fields):
+					issues.append(_issue("INVALID_AI_CONTEXT_FIELDS", "Choose between one and fifty unique context fields", f"{path}.config.field_allowlist", node_id))
+			
+			threshold = config.get("confidence_threshold", 0.75)
+			if isinstance(threshold, bool) or not isinstance(threshold, (int, float)) or threshold < 0 or threshold > 1:
+				issues.append(_issue("INVALID_AI_CONFIDENCE", "Confidence threshold must be between 0 and 1", f"{path}.config.confidence_threshold", node_id))
+			timeout = cint(config.get("timeout_seconds") or 60)
+			if timeout < 10 or timeout > 300:
+				issues.append(_issue("INVALID_AI_TIMEOUT", "AI timeout must be between 10 and 300 seconds", f"{path}.config.timeout_seconds", node_id))
+			max_tokens = cint(config.get("max_tokens") or 0)
+			if max_tokens and (max_tokens < 128 or max_tokens > 8192):
+				issues.append(_issue("INVALID_AI_OUTPUT_LIMIT", "AI output limit must be between 128 and 8192 tokens", f"{path}.config.max_tokens", node_id))
+			if config.get("failure_mode", "branch") not in {"branch", "fail_workflow"}:
+				issues.append(_issue("INVALID_AI_FAILURE_MODE", "Choose a failure branch or fail the workflow", f"{path}.config.failure_mode", node_id))
+			if node.get("type") == "action.ai_generate" and not is_inline and config.get("mode") not in {"summarize", "classify_extract", "draft_reply", "grounded_answer"}:
+				issues.append(_issue("INVALID_AI_MODE", "Choose a supported AI task", f"{path}.config.mode", node_id))
+			if node.get("type") == "action.ai_support_agent":
+				if workflow_doctype and workflow_doctype != "Issue":
+					issues.append(_issue("AI_SUPPORT_REQUIRES_ISSUE", "AI support agent is available only for Issue workflows", path, node_id))
+				if not str(config.get("knowledge_base") or "").strip():
+					issues.append(_issue("MISSING_AI_KNOWLEDGE", "Choose a Knowledge Base", f"{path}.config.knowledge_base", node_id))
+				if config.get("response_policy", "draft_only") not in {"draft_only", "approval_required", "eligible_auto_response"}:
+					issues.append(_issue("INVALID_AI_RESPONSE_POLICY", "Choose a supported response policy", f"{path}.config.response_policy", node_id))
+				turns = cint(config.get("max_automatic_turns") or 3)
+				if turns < 1 or turns > 20:
+					issues.append(_issue("INVALID_AI_TURN_LIMIT", "Maximum automatic turns must be between 1 and 20", f"{path}.config.max_automatic_turns", node_id))
+		if node.get("type") == "action.human_approval":
+			if not str(config.get("reviewer") or "").strip():
+				issues.append(_issue("MISSING_APPROVAL_REVIEWER", "Choose a reviewer", f"{path}.config.reviewer", node_id))
+			if not str(config.get("title") or "").strip():
+				issues.append(_issue("MISSING_APPROVAL_TITLE", "Enter a review title", f"{path}.config.title", node_id))
+			for key in ("draft_text", "evidence", "ai_attempt"):
+				issues.extend(validate_value_spec(config.get(key), f"{path}.config.{key}"))
+			draft_spec = config.get("draft_text")
+			if isinstance(draft_spec, dict) and draft_spec.get("kind") == "literal" and not str(draft_spec.get("value") or "").strip():
+				issues.append(_issue("EMPTY_APPROVAL_DRAFT", "Choose an earlier output or enter a draft to review", f"{path}.config.draft_text", node_id))
+			expires_days = cint(config.get("expires_days") or 7)
+			if expires_days < 1 or expires_days > 30:
+				issues.append(_issue("INVALID_APPROVAL_EXPIRY", "Approval expiry must be between 1 and 30 days", f"{path}.config.expires_days", node_id))
 		if node.get("type") == "transform.associated_record":
 			for key in ("reference_field", "fetch_field"):
 				if not str(config.get(key) or "").strip():
@@ -952,7 +1002,7 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 		source_type = node_map[source].get("type")
 		handle = edge.get("source_handle")
 		handle = handle if isinstance(handle, str) else ""
-		if isinstance(source_type, str) and source_type in {"condition.if_else", "condition.random_split", "condition.switch", "condition.deduplicate", "delay.until_event"}:
+		if isinstance(source_type, str) and source_type in {"condition.if_else", "condition.random_split", "condition.switch", "condition.deduplicate", "delay.until_event", "action.ai_generate", "action.ai_support_agent", "action.human_approval"}:
 			branch_handles.setdefault(source, set()).add(handle)
 			counts = branch_handle_counts.setdefault(source, {})
 			counts[handle] = counts.get(handle, 0) + 1
@@ -967,6 +1017,9 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 			"condition.if_else": {"true", "false"},
 			"condition.deduplicate": {"duplicate", "unique"},
 			"delay.until_event": {"event", "timeout"},
+			"action.ai_generate": {"success", "low_confidence", "failure"},
+			"action.ai_support_agent": {"respond", "handoff", "failure"},
+			"action.human_approval": {"approved", "rejected"},
 		}.get(node_type)
 		if node_type == "delay.until_event" and cint(node.get("type_version") or 1) >= 2:
 			expected = {"event", "timeout"} if cint(config.get("branch_on_timeout")) else {"default"}
@@ -980,6 +1033,41 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 			}
 		if expected is not None and not handles.issubset(expected):
 			issues.append(_issue("INVALID_BRANCH_EDGES", "An edge uses an output that is not available on this branch", node_id=node_id))
+		if publish and node_type in {"action.ai_generate", "action.ai_support_agent"}:
+			# Only demand the paths this configuration can actually take. A
+			# "fail_workflow" node raises instead of branching, and a plain-text
+			# ai_generate never reports low confidence, so requiring those edges
+			# would force the author to draw wiring that can never be reached.
+			if node_type == "action.ai_generate":
+				required_paths = {"success"}
+				# low-confidence is only skipped when the graph proves it cannot
+				# fire. An inline step with no explicit format defaults to text,
+				# but a profile-driven step takes its format from the agent at
+				# run time, so the path stays required there.
+				inline = bool(
+					config.get("prompt_mode") == "inline"
+					or (not config.get("ai_profile") and config.get("model"))
+				)
+				declared_format = str(config.get("output_format") or ("text" if inline else ""))
+				if declared_format != "text":
+					required_paths.add("low_confidence")
+			else:
+				required_paths = {"respond", "handoff"}
+			if str(config.get("failure_mode") or "branch") == "branch":
+				required_paths.add("failure")
+			missing_paths = sorted(required_paths - handles)
+			if missing_paths:
+				issues.append(
+					_issue(
+						"AI_PATHS_INCOMPLETE",
+						_("Connect the {0} path(s) before publishing").format(
+							", ".join(path.replace("_", "-") for path in missing_paths)
+						),
+						node_id=node_id,
+					)
+				)
+		if publish and node_type == "action.human_approval" and not {"approved", "rejected"}.issubset(handles):
+			issues.append(_issue("APPROVAL_PATHS_INCOMPLETE", "Connect approved and rejected paths before publishing", node_id=node_id))
 		if any(count > 1 for count in branch_handle_counts.get(node_id, {}).values()):
 			issues.append(_issue("INVALID_BRANCH_EDGES", "Each branch output can be connected at most once", node_id=node_id))
 	for node_id, node in node_map.items():
@@ -1007,13 +1095,17 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 			issues.append(_issue("INVALID_BRANCH_COUNT", "This event delay has more connections than its configured outputs", node_id=node_id))
 		elif isinstance(node_type, str) and node_type in {"condition.if_else", "condition.deduplicate", "delay.until_event"} and outgoing > 2:
 			issues.append(_issue("INVALID_BRANCH_COUNT", "This branch supports at most two outgoing paths", node_id=node_id))
+		elif isinstance(node_type, str) and node_type in {"action.ai_generate", "action.ai_support_agent"} and outgoing > 3:
+			issues.append(_issue("INVALID_BRANCH_COUNT", "This AI action supports at most three outgoing paths", node_id=node_id))
+		elif node_type == "action.human_approval" and outgoing > 2:
+			issues.append(_issue("INVALID_BRANCH_COUNT", "Human approval supports approved and rejected paths", node_id=node_id))
 		elif node_type == "condition.switch" and outgoing > len((node.get("config") or {}).get("cases") or []) + 1:
 			issues.append(_issue("INVALID_BRANCH_COUNT", "Switch has more connections than available cases", node_id=node_id))
 		elif node_type == "end.complete" and outgoing:
 			issues.append(_issue("END_HAS_EDGE", "End nodes cannot have outgoing edges", node_id=node_id))
 		elif node_type == "action.delete_record" and outgoing:
 			issues.append(_issue("DELETE_HAS_EDGE", "Delete-record nodes cannot have outgoing edges", node_id=node_id))
-		elif (not isinstance(node_type, str) or node_type not in {"condition.if_else", "condition.random_split", "condition.switch", "condition.deduplicate", "delay.until_event", "end.complete", "action.delete_record"}) and outgoing > 1:
+		elif (not isinstance(node_type, str) or node_type not in {"condition.if_else", "condition.random_split", "condition.switch", "condition.deduplicate", "delay.until_event", "action.ai_generate", "action.ai_support_agent", "action.human_approval", "end.complete", "action.delete_record"}) and outgoing > 1:
 			issues.append(_issue("TOO_MANY_OUTGOING", "Node supports at most one outgoing edge", node_id=node_id))
 		if node_id == start_id and incoming[node_id]:
 			issues.append(_issue("START_HAS_INCOMING", "Start node cannot have incoming edges", node_id=node_id))

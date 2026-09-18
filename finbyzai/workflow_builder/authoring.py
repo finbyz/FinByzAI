@@ -20,6 +20,7 @@ from .schema import (
 	execution_graph,
 	execution_graph_hash,
 	empty_graph,
+	graph_hash,
 	parse_object,
 	validate_expression,
 	validate_graph,
@@ -242,6 +243,38 @@ def validate_bindings(graph: dict, execution_user: str, workflow_name: str | Non
 		config = node.get("config")
 		if not isinstance(config, dict):
 			continue
+		if node_type in {"action.ai_generate", "action.ai_support_agent"} and (config.get("ai_profile") or config.get("model")):
+			try:
+				from .ai_support import validate_ai_node_binding
+
+				validate_ai_node_binding(
+					config,
+					node_type=node_type,
+					primary_doctype=primary_doctype,
+					execution_user=execution_user,
+				)
+			except (frappe.PermissionError, AutomationError) as exc:
+				issues.append(
+					{
+						"severity": "error",
+						"code": "AI_PROFILE_UNAVAILABLE",
+						"node_id": node_id,
+						"path": f"nodes.{node_id}.config.ai_profile" if config.get("ai_profile") else f"nodes.{node_id}.config.model",
+						"message": str(exc),
+					}
+				)
+		if node_type == "action.human_approval":
+			reviewer = str(config.get("reviewer") or "").strip()
+			user = frappe.db.get_value("User", reviewer, ["enabled", "user_type"], as_dict=True) if reviewer else None
+			if not user or not cint(user.enabled) or user.user_type != "System User":
+				issues.append({"severity": "error", "code": "APPROVAL_REVIEWER_UNAVAILABLE", "node_id": node_id, "path": f"nodes.{node_id}.config.reviewer", "message": _("Choose an enabled System User as reviewer.")})
+			if not frappe.has_permission("ToDo", ptype="create", user=execution_user):
+				issues.append({"severity": "error", "code": "TODO_PERMISSION", "node_id": node_id, "path": f"nodes.{node_id}.config", "message": _("Execution user cannot create the review assignment.")})
+			for key in ("draft_text", "evidence", "ai_attempt"):
+				try:
+					_validate_value_binding(config.get(key), primary_doctype, execution_user)
+				except frappe.PermissionError as exc:
+					issues.append({"severity": "error", "code": "FIELD_PERMISSION", "node_id": node_id, "path": f"nodes.{node_id}.config.{key}", "message": str(exc)})
 		if node_type == "action.call_subflow":
 			target_name = str(config.get("subflow_id") or "").strip()
 			target = frappe.db.get_value(
@@ -680,8 +713,8 @@ def create_workflow_record(
 			"creation_key": creation_key,
 			"state_version": 0,
 			"latest_version": 0,
-		}
-	)
+					}
+				)
 	if not workflow.title:
 		raise AutomationError(_("Workflow title is required."))
 	try:
@@ -849,11 +882,16 @@ def _delete_workflow_history(workflow) -> dict[str, int]:
 
 	remove("Automation Backfill Job", {"workflow": workflow_name})
 	remove("Automation Schedule", {"workflow": workflow_name})
+	remove("Automation AI Support Session", {"workflow": workflow_name})
+	remove("Automation AI Attempt", {"workflow": workflow_name})
+	remove("Automation Human Approval", {"workflow": workflow_name})
 	remove("Automation Dead Letter", {"workflow": workflow_name})
 	remove("Automation Incident", {"workflow": workflow_name})
 	if run_names:
 		for doctype in (
 			"Automation Action Attempt",
+			"Automation AI Attempt",
+			"Automation Human Approval",
 			"Automation Timer",
 			"Automation Run Token",
 			"Automation Run Event",
@@ -1011,6 +1049,18 @@ def save_workflow_draft(workflow_name: str, draft_revision: int, graph_value: An
 	settings, settings_issues = validate_settings(settings_value if settings_value is not None else draft.settings_json, workflow.primary_doctype, workflow.execution_user)
 	validation["issues"].extend(settings_issues)
 	validation["valid"] = not validation["issues"]
+	# ``placeholder`` means "the AI left this step incomplete". Nothing else ever
+	# cleared it, so a node stayed unpublishable even after the user filled every
+	# field. It is derived state: once a node validates clean, drop the flag.
+	flagged = {issue.get("node_id") for issue in validation["issues"] if issue.get("node_id")}
+	cleared = False
+	for node in graph.get("nodes") or []:
+		if isinstance(node, dict) and node.get("placeholder") and node.get("id") not in flagged:
+			node.pop("placeholder", None)
+			cleared = True
+	if cleared:
+		# The hash was taken before the flags were dropped; keep them in step.
+		validation["graph_hash"] = graph_hash(graph)
 	draft.draft_revision = cint(draft.draft_revision) + 1
 	draft.graph_json = json.dumps(graph)
 	draft.settings_json = json.dumps(settings)
@@ -1097,6 +1147,27 @@ def validate_published_version(workflow_name: str, version_name: str | None = No
 			}
 		)
 	validation["issues"].extend(validate_bindings(validation["graph"], version.execution_user, workflow.name))
+	try:
+		ai_profile_map = parse_object(version.ai_profiles_json or "{}", "pinned AI profiles")
+	except AutomationError as exc:
+		validation["issues"].append({"severity": "error", "code": "AI_PROFILE_MAP_INVALID", "message": str(exc)})
+	else:
+		for node in validation["graph"].get("nodes") or []:
+			if not isinstance(node, dict) or node.get("type") not in {"action.ai_generate", "action.ai_support_agent"}:
+				continue
+			profile_name = str(ai_profile_map.get(str(node.get("id"))) or "")
+			if not profile_name or not frappe.db.exists("Automation AI Profile Version", profile_name):
+				validation["issues"].append({"severity": "error", "code": "AI_PROFILE_VERSION_MISSING", "node_id": node.get("id"), "message": _("The pinned AI profile version is missing.")})
+				continue
+			profile = frappe.get_doc("Automation AI Profile Version", profile_name)
+			try:
+				from .ai_support import canonical_profile_hash
+
+				snapshot = parse_object(profile.snapshot_json or "{}", "AI profile snapshot")
+				if canonical_profile_hash(snapshot) != profile.config_hash:
+					raise AutomationError(_("Pinned AI profile integrity check failed."))
+			except AutomationError as exc:
+				validation["issues"].append({"severity": "error", "code": "AI_PROFILE_VERSION_INVALID", "node_id": node.get("id"), "message": str(exc)})
 	_settings, settings_issues = validate_settings(
 		version.settings_json or "{}", workflow.primary_doctype, version.execution_user
 	)
@@ -1173,6 +1244,10 @@ def publish_workflow(workflow_name: str, draft_revision: int, *, activate: bool 
 			"unchanged": True,
 			"publication": publication,
 		}
+	graph = parse_object(draft.graph_json, "workflow graph")
+	from .ai_support import pin_graph_ai_profiles
+
+	ai_profiles = pin_graph_ai_profiles(graph, execution_user=workflow.execution_user)
 	version = frappe.get_doc(
 		{
 			"doctype": "Automation Workflow Version",
@@ -1181,13 +1256,13 @@ def publish_workflow(workflow_name: str, draft_revision: int, *, activate: bool 
 			"primary_doctype": workflow.primary_doctype,
 			"graph_json": draft.graph_json,
 			"settings_json": json.dumps(settings),
+			"ai_profiles_json": json.dumps(ai_profiles),
 			"graph_hash": validation["graph_hash"],
 			"published_by": frappe.session.user,
 			"published_at": now_datetime(),
 			"execution_user": workflow.execution_user,
 		}
 	).insert(ignore_permissions=True)
-	graph = parse_object(draft.graph_json)
 	trigger = next(node for node in graph["nodes"] if node["id"] == graph["start_node_id"])
 	event_type_by_trigger = {
 		"trigger.manual": "MANUAL",

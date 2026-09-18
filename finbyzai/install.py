@@ -11,6 +11,7 @@ LLM_PROVIDERS = [
     {"provider": "Google", "disabled": 0},
     {"provider": "OpenAI", "disabled": 0},
     {"provider": "Perplexity", "disabled": 0},
+    {"provider": "OpenRouter", "disabled": 0},
     {"provider": "FinbyzChat", "disabled": 0, "api_base": "https://chat.finbyz.com/api/v1"},
 ]
 
@@ -80,6 +81,59 @@ LLMS = [
     {"name": "openai/glm-5.2", "provider": "FinbyzChat", "title": "GLM 5.2", "size": "Large", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
     {"name": "openai/claude-3.5-sonnet", "provider": "FinbyzChat", "title": "Claude 3.5 Sonnet (via FinbyzChat)", "size": "Medium", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
     {"name": "openai/text-embedding-3-small", "provider": "FinbyzChat", "title": "Text Embedding 3 Small (via FinbyzChat)", "size": "Small", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 1, "enabled": 1},
+
+    # ── OpenRouter ──
+    # Free Models (:free)
+    {"name": "openrouter/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "provider": "OpenRouter", "title": "Nemotron 3 Nano Omni Audio/Vision (Free)", "size": "Medium", "is_reasoning": 1, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/nvidia/nemotron-3-super-120b-a12b:free", "provider": "OpenRouter", "title": "Nemotron 3 Super 120B (Free)", "size": "Large", "is_reasoning": 1, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/nvidia/nemotron-3.5-lightning:free", "provider": "OpenRouter", "title": "Nemotron 3.5 Lightning (Free)", "size": "Medium", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free", "provider": "OpenRouter", "title": "Nemotron 3 Ultra (Free)", "size": "Medium", "is_reasoning": 1, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/minimax/minimax-m3:free", "provider": "OpenRouter", "title": "MiniMax M3 Vision (Free)", "size": "Large", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/minimax/minimax-m2.7:free", "provider": "OpenRouter", "title": "MiniMax M2.7 (Free)", "size": "Large", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/google/gemma-4-26b-a4b-it:free", "provider": "OpenRouter", "title": "Google Gemma 4 26B Vision (Free)", "size": "Medium", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/google/gemma-4-31b-it:free", "provider": "OpenRouter", "title": "Google Gemma 4 31B Vision (Free)", "size": "Large", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/z-ai/glm-5.2:free", "provider": "OpenRouter", "title": "GLM 5.2 (Free)", "size": "Large", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/thinkingmachines/inkling:free", "provider": "OpenRouter", "title": "Inkling Audio/Vision (Free)", "size": "Medium", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/thinkingmachines/inkling-small:free", "provider": "OpenRouter", "title": "Inkling Small Audio/Vision (Free)", "size": "Small", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/dots-studio/dots-3-note-preview:free", "provider": "OpenRouter", "title": "Dots3-Note Vision Preview (Free)", "size": "Small", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/cohere/north-mini-code:free", "provider": "OpenRouter", "title": "Cohere North Mini Code (Free)", "size": "Small", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/liquid/lfm-2.5-2.6b:free", "provider": "OpenRouter", "title": "LiquidAI LFM 2.5 2.6B (Free)", "size": "Very Small", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/inclusionai/ling-3.0-flash-fin:free", "provider": "OpenRouter", "title": "Ling 3.0 Flash Fin (Free)", "size": "Small", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+
+    # Ultra-Cheap Fast Vision & Multimodal Text Models
+    {"name": "openrouter/google/gemini-2.5-flash-lite", "provider": "OpenRouter", "title": "Google Gemini 2.5 Flash Lite", "size": "Very Small", "is_reasoning": 1, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/google/gemini-2.5-flash", "provider": "OpenRouter", "title": "Google Gemini 2.5 Flash", "size": "Small", "is_reasoning": 1, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/google/gemini-3.1-flash-lite", "provider": "OpenRouter", "title": "Google Gemini 3.1 Flash Lite", "size": "Very Small", "is_reasoning": 1, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/google/gemini-2.5-pro", "provider": "OpenRouter", "title": "Google Gemini 2.5 Pro", "size": "Medium", "is_reasoning": 1, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/qwen/qwen3.7-flash", "provider": "OpenRouter", "title": "Qwen 3.7 Flash Vision", "size": "Very Small", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/qwen/qwen3.8-flash", "provider": "OpenRouter", "title": "Qwen 3.8 Flash Vision", "size": "Small", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/openai/gpt-4o-mini", "provider": "OpenRouter", "title": "OpenRouter GPT-4o Mini", "size": "Small", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/openai/gpt-4.1-mini", "provider": "OpenRouter", "title": "OpenRouter GPT-4.1 Mini", "size": "Small", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/openai/gpt-4.1-nano", "provider": "OpenRouter", "title": "OpenRouter GPT-4.1 Nano", "size": "Very Small", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/openai/gpt-4o", "provider": "OpenRouter", "title": "OpenRouter GPT-4o", "size": "Medium", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/openai/gpt-4.1", "provider": "OpenRouter", "title": "OpenRouter GPT-4.1", "size": "Medium", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/openai/o4-mini", "provider": "OpenRouter", "title": "OpenRouter o4 Mini", "size": "Small", "is_reasoning": 1, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/deepseek/deepseek-chat", "provider": "OpenRouter", "title": "DeepSeek Chat (V3)", "size": "Large", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/deepseek/deepseek-v4-flash-vision-exp", "provider": "OpenRouter", "title": "DeepSeek V4 Flash Vision", "size": "Medium", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/meta-llama/llama-3.2-1b-instruct", "provider": "OpenRouter", "title": "Meta Llama 3.2 1B Instruct", "size": "Very Small", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/meta-llama/llama-3.2-3b-instruct", "provider": "OpenRouter", "title": "Meta Llama 3.2 3B Instruct", "size": "Very Small", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/meta-llama/llama-3.3-70b-instruct", "provider": "OpenRouter", "title": "Meta Llama 3.3 70B Instruct", "size": "Large", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/qwen/qwen-2.5-72b-instruct", "provider": "OpenRouter", "title": "Qwen 2.5 72B Instruct", "size": "Large", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/qwen/qwen-2.5-coder-32b-instruct", "provider": "OpenRouter", "title": "Qwen 2.5 Coder 32B Instruct", "size": "Medium", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/mistralai/mistral-small-24b-instruct-2501", "provider": "OpenRouter", "title": "Mistral Small 24B Instruct", "size": "Medium", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/anthropic/claude-3-haiku", "provider": "OpenRouter", "title": "Anthropic Claude 3 Haiku", "size": "Small", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+
+    # Audio & Speech Multimodal Models
+    {"name": "openrouter/mistralai/voxtral-small-24b-2507", "provider": "OpenRouter", "title": "Mistral Voxtral Small 24B Audio", "size": "Medium", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/meta/muse-spark-1.3-contributor", "provider": "OpenRouter", "title": "Meta Muse Spark 1.3 Audio/Vision", "size": "Medium", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
+
+    # Image Generation Models
+    {"name": "openrouter/google/gemini-2.5-flash-image", "provider": "OpenRouter", "title": "Google Gemini 2.5 Flash Image", "size": "Medium", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 1, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/google/gemini-3.1-flash-image", "provider": "OpenRouter", "title": "Google Gemini 3.1 Flash Image", "size": "Medium", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 1, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/google/gemini-3-pro-image", "provider": "OpenRouter", "title": "Google Gemini 3 Pro Image", "size": "Large", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 1, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/openai/gpt-5-image-mini", "provider": "OpenRouter", "title": "OpenAI GPT-5 Image Mini", "size": "Small", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 1, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/openai/gpt-5-image", "provider": "OpenRouter", "title": "OpenAI GPT-5 Image", "size": "Large", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 1, "is_embedding_model": 0, "enabled": 1},
+    {"name": "openrouter/openrouter/auto", "provider": "OpenRouter", "title": "OpenRouter Auto Router", "size": "Medium", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 1, "is_embedding_model": 0, "enabled": 1},
 ]
 
 BUILTIN_AI_TOOLS = [

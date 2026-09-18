@@ -225,6 +225,7 @@ class KnowledgeBase(Document):
                         meta = {
                             "kb": self.name,
                             "source_id": source_id,
+                            "row_name": row.name,
                             "doc_type": source_type,
                             "chunk_index": i,
                         }
@@ -269,7 +270,7 @@ class KnowledgeBase(Document):
 
             for note in self.notes or []:
                 if not note.is_processed:
-                    process_item(note, note.content, "note", "notes")
+                    process_item(note, note.note, "note", "notes")
 
         except Exception as e:
             # Fatal error (e.g. bad vector-store config, network unreachable).

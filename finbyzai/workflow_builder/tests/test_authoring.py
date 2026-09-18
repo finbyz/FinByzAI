@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -24,13 +25,10 @@ from finbyzai.workflow_builder.authoring import (
 	validate_workflow_draft,
 )
 from finbyzai.workflow_builder.engine import (
-	_SET_USER_LOCAL_FIELDS,
-	_assert_worker_execution,
 	_business_hours_state,
 	cancel_run_record,
 	_enabled_user_names,
 	_execute_node,
-	_execution_identity,
 	_hold_for_execution_window,
 	_reserve_drip_slot,
 	_round_robin_users,
@@ -41,9 +39,15 @@ from finbyzai.workflow_builder.engine import (
 	release_event_waiters,
 	recover_stale_external_effects,
 )
+from finbyzai.workflow_builder.principal import (
+	_assert_worker_execution,
+	current_automation_context,
+	current_execution_user,
+	execution_principal,
+)
 from finbyzai.workflow_builder.errors import AutomationConflictError, AutomationError, AutomationPermissionError
 from finbyzai.workflow_builder.registry import field_catalog_result
-from finbyzai.workflow_builder.schema import empty_graph
+from finbyzai.workflow_builder.schema import empty_graph, validate_graph
 from finbyzai.workflow_builder.setup import (
 	ensure_automation_roles,
 	ensure_automation_settings_defaults,
@@ -270,6 +274,140 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		self.assertEqual(frappe.db.get_value("Automation Trigger Subscription", {"workflow": created["workflow"], "active": 1}, "workflow_version"), second["version"])
 		self.assertNotEqual(first["version"], second["version"])
 
+	def test_a_created_record_is_linked_back_to_the_enrolled_record(self):
+		"""action.create_todo links its task to the record via add_assignment.
+		action.create_record had no equivalent, so a ToDo it created was
+		orphaned - absent from the source record's timeline and assignments."""
+		from unittest.mock import patch as _patch
+
+		from finbyzai.workflow_builder import engine, events
+
+		lead = frappe.get_doc({
+			"doctype": "Lead", "lead_name": f"Link check {frappe.generate_hash(length=6)}",
+			"company_name": "Link Check Co",
+		}).insert(ignore_permissions=True)
+
+		created = create_workflow_record(
+			f"Create record back-link {frappe.generate_hash(length=6)}", "Lead", trigger_type="trigger.manual"
+		)
+		graph = created["graph"]
+		graph["nodes"].append({
+			"id": "make-todo", "type": "action.create_record", "type_version": 1,
+			"position": {"x": 0, "y": 200},
+			"config": {
+				"target_doctype": "ToDo",
+				"assignments": [{"field": "description", "value": {"kind": "literal", "value": "Follow up"}}],
+			},
+		})
+		graph["edges"] = [{"id": "e1", "source": graph["start_node_id"], "source_handle": "default", "target": "make-todo"}]
+		saved = save_workflow_draft(created["workflow"], 0, graph)
+		published = publish_workflow(created["workflow"], saved["draft_revision"], reenrollment="ALWAYS")
+		self.assertTrue(published)
+
+		run = engine.enroll(created["workflow"], "Lead", lead.name, source="MANUAL", occurrence_key="link-1")
+		with _patch.object(events, "_matching_subscriptions", return_value=[]):
+			while token := frappe.db.get_value(
+				"Automation Run Token", {"run": run, "status": "READY"}, "name", order_by="creation asc"
+			):
+				engine.execute_token(token)
+
+		todo = frappe.get_all(
+			"ToDo", filters={"reference_type": "Lead", "reference_name": lead.name}, pluck="name"
+		)
+		self.assertTrue(todo, "the created ToDo must point back at the Lead that triggered it")
+
+	def test_an_inline_ai_step_can_be_saved(self):
+		"""build_profile_snapshot marks an inline prompt with the sentinel
+		source_agent "inline". That was being written into a Link field, so
+		saving asked Frappe for an AI Agent named "inline" and failed."""
+		created = create_workflow_record("Inline AI save", "Lead", trigger_type="trigger.document_insert")
+		model = frappe.db.get_value("LLM", {"enabled": 1, "is_embedding_model": 0}, "name")
+		if not model:
+			self.skipTest("no enabled LLM on this site")
+		graph = created["graph"]
+		graph["nodes"].append({
+			"id": "ai-1", "type": "action.ai_generate", "type_version": 1,
+			"position": {"x": 360, "y": 160},
+			"config": {
+				"prompt_mode": "inline", "model": model,
+				"user_prompt": "Summarise {{ doc.lead_name }}", "field_allowlist": ["lead_name"],
+				"output_format": "text", "failure_mode": "branch", "mode": "summarize",
+				"confidence_threshold": 0.75, "timeout_seconds": 60,
+			},
+		})
+		graph["edges"] = [{"id": "e0", "source": graph["start_node_id"], "source_handle": "default", "target": "ai-1"}]
+
+		saved = save_workflow_draft(created["workflow"], 0, graph)
+		self.assertTrue(saved["draft_revision"])
+
+	def test_publish_only_demands_ai_paths_that_can_actually_fire(self):
+		"""low-confidence never fires for plain text, and failure never fires when
+		the node is set to fail the workflow. Demanding those edges forced the
+		author to draw wiring the engine can never reach."""
+		created = create_workflow_record("AI path reachability", "Lead", trigger_type="trigger.document_insert")
+
+		def build(output_format, failure_mode, handles):
+			graph = json.loads(json.dumps(created["graph"]))
+			graph["nodes"].append({
+				"id": "ai-1", "type": "action.ai_generate", "type_version": 1,
+				"position": {"x": 360, "y": 160},
+				"config": {
+					"prompt_mode": "inline", "model": "openrouter/openai/gpt-4o",
+					"user_prompt": "Summarise {{ doc.lead_name }}", "field_allowlist": ["lead_name"],
+					"output_format": output_format, "failure_mode": failure_mode,
+					"mode": "summarize", "confidence_threshold": 0.75, "timeout_seconds": 60,
+				},
+			})
+			graph["nodes"].append({
+				"id": "note-1", "type": "action.add_comment", "type_version": 1,
+				"position": {"x": 360, "y": 320}, "config": {"content": "done"},
+			})
+			graph["edges"] = [{"id": "e0", "source": graph["start_node_id"], "source_handle": "default", "target": "ai-1"}]
+			for index, handle in enumerate(handles):
+				graph["edges"].append({"id": f"e{index + 1}", "source": "ai-1", "source_handle": handle, "target": "note-1"})
+			return graph
+
+		def ai_issues(graph):
+			result = validate_graph(graph, primary_doctype="Lead", publish=True)
+			return [i for i in result["issues"] if i.get("code") == "AI_PATHS_INCOMPLETE"]
+
+		# Unreachable paths are not demanded.
+		self.assertFalse(ai_issues(build("text", "fail_workflow", ["success"])))
+		# A reachable failure branch still is.
+		self.assertTrue(ai_issues(build("text", "branch", ["success"])))
+		self.assertFalse(ai_issues(build("text", "branch", ["success", "failure"])))
+		# Structured output can report low confidence, so that one is demanded too.
+		self.assertTrue(ai_issues(build("json", "branch", ["success", "failure"])))
+		self.assertFalse(ai_issues(build("json", "branch", ["success", "failure", "low_confidence"])))
+
+	def test_a_cleanly_validating_node_stops_being_a_placeholder(self):
+		"""``placeholder`` is how the AI marks a step it could not finish. Nothing
+		used to clear it, so the node blocked publishing forever even once the
+		user had filled every field in."""
+		created = create_workflow_record("Placeholder clearing", "Lead", trigger_type="trigger.document_insert")
+		graph = created["graph"]
+		graph["nodes"].append({
+			"id": "comment-1", "type": "action.add_comment", "type_version": 1,
+			"position": {"x": 360, "y": 160},
+			"config": {"content": ""},          # incomplete -> legitimately flagged
+			"placeholder": True,
+		})
+		graph["edges"] = [{"id": "edge-1", "source": graph["start_node_id"], "source_handle": "default", "target": "comment-1"}]
+
+		saved = save_workflow_draft(created["workflow"], 0, graph)
+		stored = get_workflow_draft(created["workflow"])["draft"]["graph"]
+		node = next(n for n in stored["nodes"] if n["id"] == "comment-1")
+		self.assertTrue(node.get("placeholder"), "an incomplete node keeps its flag")
+
+		# The user fills the field in; the stale flag must go with it.
+		stored["nodes"][-1]["config"]["content"] = "Follow up with this lead"
+		save_workflow_draft(created["workflow"], saved["draft_revision"], stored)
+		done = get_workflow_draft(created["workflow"])["draft"]["graph"]
+		self.assertFalse(
+			next(n for n in done["nodes"] if n["id"] == "comment-1").get("placeholder"),
+			"a node that validates clean must not stay unpublishable",
+		)
+
 	def test_mixed_trigger_publication_creates_one_active_subscription_per_or_trigger(self):
 		created = create_workflow_record("Mixed trigger publication", "Lead", trigger_type="trigger.any")
 		graph = created["graph"]
@@ -295,9 +433,10 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		published = publish_workflow(created["workflow"], 0)
 		run = SimpleNamespace(workflow_version=published["version"])
 		node = {"id": frappe.generate_hash(length=10)}
-		first = _reserve_drip_slot(run, node, {"batch_size": 2, "interval_seconds": 3600})
-		second = _reserve_drip_slot(run, node, {"batch_size": 2, "interval_seconds": 3600})
-		third = _reserve_drip_slot(run, node, {"batch_size": 2, "interval_seconds": 3600})
+		with execution_principal("Administrator", {"trace_id": "drip-test"}):
+			first = _reserve_drip_slot(run, node, {"batch_size": 2, "interval_seconds": 3600})
+			second = _reserve_drip_slot(run, node, {"batch_size": 2, "interval_seconds": 3600})
+			third = _reserve_drip_slot(run, node, {"batch_size": 2, "interval_seconds": 3600})
 		self.assertTrue(first["released"])
 		self.assertTrue(second["released"])
 		self.assertFalse(third["released"])
@@ -420,6 +559,18 @@ class TestAutomationAuthoring(IntegrationTestCase):
 				("history_retention_days", 180),
 				("log_cleanup_interval_hours", 24),
 				("log_cleanup_batch_size", 500),
+				("ai_max_context_characters", 50000),
+				("ai_max_thread_messages", 20),
+				("ai_max_output_tokens", 2048),
+				("ai_default_timeout_seconds", 60),
+				("ai_daily_token_budget", 1000000),
+				("ai_max_provider_retries", 2),
+				("ai_authoring_max_output_tokens", 4096),
+				("ai_authoring_daily_request_budget", 200),
+				("ai_circuit_failure_threshold", 5),
+				("ai_circuit_cooldown_minutes", 10),
+				("ai_test_requests_per_10_minutes", 10),
+				("ai_evidence_retention_days", 180),
 			},
 		)
 
@@ -538,31 +689,38 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		self.assertEqual(result["path"], [])
 		self.assertIn("MISSING_EVENT_TOPIC", {issue["code"] for issue in result["issues"]})
 
-	def test_execution_identity_restores_complete_session_and_nested_context(self):
-		local_snapshot = {field: getattr(frappe.local, field, None) for field in _SET_USER_LOCAL_FIELDS}
+	def test_execution_principal_is_task_local_and_never_mutates_session(self):
 		previous_user = frappe.session.user
 		previous_sid = frappe.session.sid
 		previous_data = frappe.session.data
-		previous_context = {"trace_id": "outer-trace", "recursion_depth": 3}
-		frappe.flags.automation_context = previous_context
+		fake_user = "workflow-executor@example.com"
+		original_get_value = frappe.db.get_value
 
-		with self.assertRaisesRegex(RuntimeError, "action failure"):
-			with _execution_identity(
-				"Guest", {"trace_id": "inner-trace", "causation_id": "inner-cause", "recursion_depth": 4}
+		def get_value(doctype, name, fields=None, **kwargs):
+			if doctype == "User" and name == fake_user:
+				return frappe._dict(enabled=1, user_type="System User")
+			return original_get_value(doctype, name, fields, **kwargs)
+
+		with (
+			patch.object(frappe.db, "get_value", side_effect=get_value),
+			patch.object(frappe, "set_user", side_effect=AssertionError("set_user must not be called")),
+			self.assertRaisesRegex(RuntimeError, "action failure"),
+		):
+			with execution_principal(
+				fake_user, {"trace_id": "inner-trace", "causation_id": "inner-cause", "recursion_depth": 4}
 			):
-				self.assertEqual(frappe.session.user, "Guest")
-				self.assertEqual(frappe.flags.automation_context["trace_id"], "inner-trace")
+				self.assertEqual(current_execution_user(), fake_user)
+				self.assertEqual(current_automation_context()["trace_id"], "inner-trace")
+				self.assertEqual(frappe.session.user, previous_user)
 				raise RuntimeError("action failure")
 
 		self.assertEqual(frappe.session.user, previous_user)
 		self.assertEqual(frappe.session.sid, previous_sid)
 		self.assertIs(frappe.session.data, previous_data)
-		self.assertIs(frappe.flags.automation_context, previous_context)
-		for field, value in local_snapshot.items():
-			self.assertIs(getattr(frappe.local, field, None), value)
-		frappe.flags.pop("automation_context", None)
+		self.assertIsNone(current_execution_user(required=False))
+		self.assertEqual(dict(current_automation_context()), {})
 
-	def test_execution_identity_rejects_non_worker_production_calls(self):
+	def test_execution_principal_rejects_non_worker_production_calls(self):
 		previous_job = getattr(frappe.local, "job", None)
 		frappe.local.job = None
 		try:
@@ -760,8 +918,9 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		self.assertEqual(concat["output"]["value"], "0|False")
 		date_field = next(field.fieldname for field in frappe.get_meta("Lead").fields if field.fieldtype in {"Date", "Datetime"})
 		record[date_field] = None
-		with self.assertRaisesRegex(AutomationError, "has no date value"):
-			_execute_node(run, frappe._dict(output_json=None, name="TOKEN"), {"id": "until", "type": "delay.until_date", "config": {"field": date_field}}, record, record, {})
+		with execution_principal("Administrator", {"trace_id": "date-test"}):
+			with self.assertRaisesRegex(AutomationError, "has no date value"):
+				_execute_node(run, frappe._dict(output_json=None, name="TOKEN"), {"id": "until", "type": "delay.until_date", "config": {"field": date_field}}, record, record, {})
 		with patch.object(engine, "get_system_timezone", return_value="UTC"):
 			state = _business_hours_state({"timezone": "Asia/Kolkata", "start_time": "09:00", "end_time": "17:00", "weekdays": [0, 1, 2, 3, 4]}, datetime(2026, 8, 14, 18, 0))
 		self.assertEqual(state, {"released": False, "due_at": "2026-08-17 03:30:00", "timezone": "Asia/Kolkata"})
@@ -863,13 +1022,19 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		record = frappe._dict(doctype="Lead", name="LEAD-TEST", customer="CUST-TEST")
 		linked_record = MagicMock()
 		linked_record.get.return_value = "Acme"
-		with patch.object(frappe, "get_doc", return_value=linked_record):
+		linked_record.doctype = "Customer"
+		linked_record.name = "CUST-TEST"
+		with (
+			execution_principal("Administrator", {"trace_id": "associated-test"}),
+			patch.object(frappe, "get_doc", return_value=linked_record),
+			patch.object(frappe, "has_permission", return_value=True) as has_permission,
+		):
 			result = _execute_node(
 				MagicMock(), MagicMock(),
 				{"id": "associated", "type": "transform.associated_record", "config": {"reference_field": "customer", "fetch_field": "customer_name"}},
 				record, record, {},
 			)
-		linked_record.check_permission.assert_called_once_with("read")
+		has_permission.assert_any_call("Customer", ptype="read", doc=linked_record, user="Administrator")
 		self.assertEqual(result["output"]["value"], "Acme")
 
 	def test_reenrollment_policy_keeps_occurrence_idempotency(self):

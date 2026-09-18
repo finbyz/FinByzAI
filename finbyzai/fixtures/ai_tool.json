@@ -1,0 +1,21 @@
+[
+ {
+  "configuration_schema": null,
+  "cost_sensitive": 0,
+  "description": "Generate an AI image based on a descriptive prompt and return the public URL to insert into an email template image block.",
+  "docstatus": 0,
+  "doctype": "AI Tool",
+  "enabled": 1,
+  "execution_side": "Application",
+  "from_package": "langchain_community.tools",
+  "is_custom": 0,
+  "modified": "2026-09-04 16:23:09.449195",
+  "module": "AI",
+  "name": "Generate Email Image",
+  "provider_mappings": [],
+  "requires_confirmation": 0,
+  "tool_function": "finbyzreach.email_template_builder.image_gen.generate_email_image",
+  "tool_key": null,
+  "tool_type": "Function"
+ }
+]

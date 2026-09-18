@@ -8,7 +8,25 @@
   "rollout_section",
   "enabled",
   "external_actions_enabled",
+  "ai_actions_enabled",
+  "ai_authoring_enabled",
+  "ai_authoring_agent",
+  "ai_authoring_generator_agent",
+  "ai_authoring_editor_agent",
+  "ai_authoring_max_output_tokens",
+  "ai_authoring_daily_request_budget",
   "blocked_doctypes",
+  "ai_safety_section",
+  "ai_max_context_characters",
+  "ai_max_thread_messages",
+  "ai_max_output_tokens",
+  "ai_default_timeout_seconds",
+  "ai_daily_token_budget",
+  "ai_max_provider_retries",
+  "ai_circuit_failure_threshold",
+  "ai_circuit_cooldown_minutes",
+  "ai_test_requests_per_10_minutes",
+  "ai_evidence_retention_days",
   "throughput_section",
   "outbox_batch_size",
   "token_batch_size",
@@ -48,10 +66,141 @@
    "description": "Independent kill switch for email, SMS, and webhook effects. Keep disabled until each provider is configured and verified through a controlled UAT workflow."
   },
   {
+   "fieldname": "ai_actions_enabled",
+   "fieldtype": "Check",
+   "label": "AI Workflow Actions Enabled",
+   "default": "0",
+   "description": "Independent kill switch for AI provider calls. AI authoring and deterministic simulation remain available while disabled."
+  },
+  {
+   "fieldname": "ai_authoring_enabled",
+   "fieldtype": "Check",
+   "label": "AI Workflow Authoring Enabled",
+   "default": "0",
+   "description": "Allow workflow builders to request billable AI-generated draft workflows. Generated drafts are validated and require explicit review and application; they are never published automatically."
+  },
+  {
+   "fieldname": "ai_authoring_agent",
+   "fieldtype": "Link",
+   "label": "AI Workflow Authoring Agent (deprecated)",
+   "options": "AI Agent",
+   "depends_on": "eval:doc.ai_authoring_enabled && doc.ai_authoring_agent",
+   "description": "Deprecated. Superseded by the Generator and Editor agents below, which are the ones actually used. Kept only so older sites keep working; safe to clear once a Generator agent is set."
+  },
+  {
+   "fieldname": "ai_authoring_generator_agent",
+   "fieldtype": "Link",
+   "label": "AI Workflow Generator Agent",
+   "options": "AI Agent",
+   "depends_on": "eval:doc.ai_authoring_enabled",
+   "mandatory_depends_on": "eval:doc.ai_authoring_enabled && !doc.ai_authoring_agent",
+   "description": "Text AI Agent that builds a full workflow draft from a plain-language request. Its Messages table holds the prompt (with {placeholder} variables) and its Structured Output holds the draft schema; nothing is hardcoded in code."
+  },
+  {
+   "fieldname": "ai_authoring_editor_agent",
+   "fieldtype": "Link",
+   "label": "AI Workflow Editor Agent",
+   "options": "AI Agent",
+   "depends_on": "eval:doc.ai_authoring_enabled",
+   "description": "Text AI Agent used for incremental edits to an existing draft. Falls back to the generator agent when unset."
+  },
+  {
+   "fieldname": "ai_authoring_max_output_tokens",
+   "fieldtype": "Int",
+   "label": "AI Authoring Output Tokens",
+   "default": "4096",
+   "depends_on": "eval:doc.ai_authoring_enabled",
+   "description": "Maximum output for one workflow draft proposal. Runtime range: 1024 to 8192 tokens."
+  },
+  {
+   "fieldname": "ai_authoring_daily_request_budget",
+   "fieldtype": "Int",
+   "label": "AI Authoring Requests per Day",
+   "default": "200",
+   "depends_on": "eval:doc.ai_authoring_enabled",
+   "description": "Site-wide UTC-day cap for billable workflow draft requests. Runtime range: 1 to 5000."
+  },
+  {
    "fieldname": "blocked_doctypes",
    "fieldtype": "Small Text",
    "label": "Blocked DocTypes",
    "description": "Additional exact DocType names that workflows must never read, enroll, or modify, one per line. Built-in framework and automation-internal DocTypes are always blocked."
+  },
+  {
+   "fieldname": "ai_safety_section",
+   "fieldtype": "Section Break",
+   "label": "AI Safety and Budgets",
+   "description": "Hard server-side limits applied to every AI workflow action, including tests."
+  },
+  {
+   "fieldname": "ai_max_context_characters",
+   "fieldtype": "Int",
+   "label": "Maximum AI Context Characters",
+   "default": "50000",
+   "description": "Maximum redacted record, conversation, and knowledge text supplied to one AI action. Range: 5000 to 200000."
+  },
+  {
+   "fieldname": "ai_max_thread_messages",
+   "fieldtype": "Int",
+   "label": "Maximum Thread Messages",
+   "default": "20",
+   "description": "Maximum recent linked Communications included in one support action. Range: 1 to 50."
+  },
+  {
+   "fieldname": "ai_max_output_tokens",
+   "fieldtype": "Int",
+   "label": "Maximum AI Output Tokens",
+   "default": "2048",
+   "description": "Site-wide upper bound for a workflow AI response. Range: 128 to 8192."
+  },
+  {
+   "fieldname": "ai_default_timeout_seconds",
+   "fieldtype": "Int",
+   "label": "Default AI Timeout (Seconds)",
+   "default": "60",
+   "description": "Provider timeout when a node does not select a lower value. Range: 10 to 300 seconds."
+  },
+  {
+   "fieldname": "ai_daily_token_budget",
+   "fieldtype": "Int",
+   "label": "Daily AI Token Budget",
+   "default": "1000000",
+   "description": "Maximum recorded input plus output tokens per UTC day. New attempts fail closed after the budget is reached."
+  },
+  {
+   "fieldname": "ai_max_provider_retries",
+   "fieldtype": "Int",
+   "label": "Maximum AI Provider Retries",
+   "default": "2",
+   "description": "Bounded retries handled by the provider client for transient failures. Runtime clamps this value between 0 and 3."
+  },
+  {
+   "fieldname": "ai_circuit_failure_threshold",
+   "fieldtype": "Int",
+   "label": "AI Circuit Failure Threshold",
+   "default": "5",
+   "description": "Pause calls to one provider/model after this many consecutive recorded failures. Runtime range: 2 to 20."
+  },
+  {
+   "fieldname": "ai_circuit_cooldown_minutes",
+   "fieldtype": "Int",
+   "label": "AI Circuit Cooldown (Minutes)",
+   "default": "10",
+   "description": "How long a failed provider/model circuit remains open before one new call may test recovery. Runtime range: 1 to 120 minutes."
+  },
+  {
+   "fieldname": "ai_test_requests_per_10_minutes",
+   "fieldtype": "Int",
+   "label": "AI Test Requests per User / 10 Minutes",
+   "default": "10",
+   "description": "Per-user rate limit for explicitly billable Test AI calls. Runtime range: 1 to 100."
+  },
+  {
+   "fieldname": "ai_evidence_retention_days",
+   "fieldtype": "Int",
+   "label": "AI Evidence Retention (Days)",
+   "default": "180",
+   "description": "Completed AI attempt evidence older than this is deleted by workflow log cleanup. Minimum 30 days; workflow run retention may keep linked evidence longer."
   },
   {
    "fieldname": "throughput_section",

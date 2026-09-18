@@ -135,6 +135,9 @@ has_permission = {
 # will continue to reject deletion when any non-automation business document is
 # linked to the source record.
 ignore_links_on_delete = [
+	"Automation AI Attempt",
+	"Automation AI Support Session",
+	"Automation Human Approval",
 	"Automation Consent Record",
 	"Automation Enrollment Decision",
 	"Automation Enrollment Ledger",
@@ -211,6 +214,7 @@ scheduler_events = {
 		"finbyzai.ai.doctype.knowledge_base.knowledge_base.process_queued_knowledge_bases",
 		"finbyzai.workflow_builder.integrations.capture_abandoned_shopping_carts",
 		"finbyzai.workflow_builder.maintenance.run_scheduled_log_cleanup",
+		"finbyzai.workflow_builder.approvals.expire_due_approvals",
 	],
 }
 
@@ -296,6 +300,16 @@ fixtures = [
         "doctype": "Custom Field",
         "filters": [
             ["module", "=", "FinByz AI"]
+        ]
+    },
+    {
+        # "Generate Email Image" - the only AI Tool in module "AI" - is bound
+        # to the Email Builder Copilot agent's tools table and called directly
+        # by finbyzreach's image_gen.py. It was not previously exported, so a
+        # fresh install had no tool for the AI Agent record to reference.
+        "doctype": "AI Tool",
+        "filters": [
+            ["module", "=", "AI"]
         ]
     }
 ]

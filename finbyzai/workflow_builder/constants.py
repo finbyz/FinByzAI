@@ -150,6 +150,9 @@ NODE_TYPES = {
 	"action.remove_from_workflow",
 	"action.complete_goal",
 	"action.go_to",
+	"action.ai_generate",
+	"action.ai_support_agent",
+	"action.human_approval",
 	"end.complete",
 }
 
@@ -189,6 +192,17 @@ ACTION_NODE_TYPES = {
 	"action.remove_from_workflow",
 	"action.complete_goal",
 	"action.go_to",
+	"action.ai_generate",
+	"action.ai_support_agent",
+	"action.human_approval",
 }
 
-EXTERNAL_ACTION_NODE_TYPES = {"action.send_email", "action.send_sms", "action.webhook", "action.instagram_message", "action.asana"}
+EXTERNAL_ACTION_NODE_TYPES = {
+	"action.send_email",
+	"action.send_sms",
+	"action.webhook",
+	"action.instagram_message",
+	"action.asana",
+	"action.ai_generate",
+	"action.ai_support_agent",
+}

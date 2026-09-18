@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WorkflowGraph, WorkflowPublication } from '../types'
 
@@ -9,7 +9,7 @@ vi.mock('../lib/api', async (importOriginal) => {
   return { ...actual, call: callMock }
 })
 
-import { useWorkflowDocument, WorkflowProvider } from './WorkflowContext'
+import { useWorkflowActions, useWorkflowDocument, useWorkflowEditor, useWorkflowHistory, WorkflowProvider } from './WorkflowContext'
 
 const graph: WorkflowGraph = {
   schema_version: 1,
@@ -17,6 +17,12 @@ const graph: WorkflowGraph = {
   start_node_id: 'trigger',
   nodes: [{ id: 'trigger', type: 'trigger.manual', type_version: 1, position: { x: 0, y: 0 }, config: {} }],
   edges: [],
+}
+
+const copyGraph: WorkflowGraph = {
+  ...graph,
+  nodes: [...graph.nodes, { id: 'source', type: 'action.add_comment', type_version: 1, position: { x: 100, y: 200 }, config: { content: 'Original' } }],
+  edges: [{ id: 'source-edge', source: 'trigger', source_handle: 'default', target: 'source' }],
 }
 
 const publication: WorkflowPublication = {
@@ -34,11 +40,11 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
-function response(title: string) {
+function response(title: string, value = graph) {
   return {
     workflow: { title, status: 'DRAFT' },
     publication,
-    draft: { draft_revision: 0, graph, settings: {}, validation: [] },
+    draft: { draft_revision: 0, graph: structuredClone(value), settings: {}, validation: [] },
   }
 }
 
@@ -47,6 +53,17 @@ function Probe() {
   return <span>{document.workflowId}:{document.title}</span>
 }
 
+function ClipboardProbe() {
+  const document = useWorkflowDocument()
+  const editor = useWorkflowEditor()
+  const history = useWorkflowHistory()
+  const actions = useWorkflowActions()
+  return <div>
+    <span>{editor.clipboard ? `copy:${editor.clipboard.nodes.length}` : 'no-copy'}:{document.graph?.nodes.length}:{history.past.length}</span>
+    <button onClick={() => actions.beginCopy('source', 'action')}>Copy</button>
+    <button onClick={() => actions.pasteAt({ afterNodeId: 'source', sourceHandle: 'default', position: { x: 100, y: 400 } })}>Paste</button>
+  </div>
+}
 describe('WorkflowProvider loading', () => {
   beforeEach(() => {
     callMock.mockReset()
@@ -72,3 +89,23 @@ describe('WorkflowProvider loading', () => {
     expect(screen.queryByText('AWF-NEW:Old workflow')).not.toBeInTheDocument()
   })
 })
+
+  it('stores reactive copy state and pastes as one undoable command', async () => {
+    callMock.mockResolvedValue(response('Clipboard workflow', copyGraph))
+    render(<WorkflowProvider workflowId="AWF-COPY"><ClipboardProbe /></WorkflowProvider>)
+    expect(await screen.findByText('no-copy:2:0')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }))
+    expect(screen.getByText('copy:1:2:0')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Paste' }))
+    expect(screen.getByText('no-copy:3:1')).toBeInTheDocument()
+  })
+
+  it('clears copy mode when navigating to another workflow', async () => {
+    callMock.mockResolvedValue(response('Workflow', copyGraph))
+    const { rerender } = render(<WorkflowProvider workflowId="AWF-COPY"><ClipboardProbe /></WorkflowProvider>)
+    await screen.findByText(/^no-copy:\d+:0$/)
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }))
+    expect(screen.getByText(/^copy:1:\d+:0$/)).toBeInTheDocument()
+    rerender(<WorkflowProvider workflowId="AWF-NEW"><ClipboardProbe /></WorkflowProvider>)
+    expect(await screen.findByText(/^no-copy:\d+:0$/)).toBeInTheDocument()
+  })

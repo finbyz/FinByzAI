@@ -616,31 +616,18 @@ def search_knowledge_base(kb_name: str, query: str, limit: int = 5) -> Dict[str,
 		kb_name = get_kb_name(kb_name)
 		
 		kb = frappe.get_doc("Knowledge Base", kb_name)
-		raw_results = kb.search(query=query, limit=limit)
+		raw_results = kb.get_vector_store().search(query=query, k=min(max(int(limit), 1), 20))
 		
 		# Enhance results with actual text content from database
 		enhanced_results = []
 		for result in raw_results:
-			# Get the row_name from metadata
+			# New indexes persist the child-row identity. Older indexed chunks still
+			# return useful content directly from the vector store.
 			row_name = result.get("metadata", {}).get("row_name")
-			
-			if not row_name:
-				continue
-			
-			# Query the database directly for the document content
-			doc_data = frappe.db.get_value(
-				"Knowledge Document",
-				row_name,
-				["text_content", "file", "parent"],
-				as_dict=True
-			)
-			
-			if not doc_data:
-				continue
-			
-			text_content = doc_data.get("text_content", "")
-			file_path = doc_data.get("file", "")
-			file_name = file_path.split('/')[-1] if file_path else "Text Document"
+			metadata = result.get("metadata", {})
+			text_content = result.get("content", "")
+			file_path = metadata.get("file") or metadata.get("url") or metadata.get("note_id") or ""
+			file_name = str(file_path).split('/')[-1] if file_path else "Knowledge source"
 			
 			# Extract a relevant snippet
 			snippet = ""

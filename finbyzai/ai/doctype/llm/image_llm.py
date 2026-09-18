@@ -49,7 +49,8 @@ class ImageGeneration:
                 'stabilityai': 'stability',
                 'huggingface': 'huggingface',
                 'hf': 'huggingface',
-                'replicate': 'replicate'
+                'replicate': 'replicate',
+                'openrouter': 'openrouter',
             }
             
             if provider in provider_mapping:
@@ -112,6 +113,8 @@ class ImageGeneration:
             return self._invoke_huggingface(prompt, **kwargs)
         elif self.provider == 'replicate':
             return self._invoke_replicate(prompt, **kwargs)
+        elif self.provider == 'openrouter':
+            return self._invoke_openrouter(prompt, **kwargs)
         else:
             raise ValueError(f"Unsupported provider: {self.provider}")
     
@@ -310,4 +313,33 @@ class ImageGeneration:
             prompt=prompt,
             metadata={'prediction_id': prediction_id}
         )
+
+    def _invoke_openrouter(self, prompt: str, **kwargs) -> ImageResponse:
+        """OpenRouter image generation using LiteLLM"""
+        from litellm import image_generation
+
+        response = image_generation(
+            prompt=prompt,
+            model=self.full_model,
+            api_key=self.api_key,
+            **kwargs
+        )
+        images = []
+        data_items = getattr(response, "data", []) or []
+        for item in data_items:
+            if hasattr(item, "b64_json") and item.b64_json:
+                images.append(item.b64_json)
+            elif hasattr(item, "url") and item.url:
+                images.append(item.url)
+            elif isinstance(item, dict):
+                images.append(item.get("b64_json") or item.get("url"))
+
+        return ImageResponse(
+            images=images,
+            model=self.full_model,
+            provider="openrouter",
+            prompt=prompt,
+            metadata={"created": getattr(response, "created", None)}
+        )
+
 

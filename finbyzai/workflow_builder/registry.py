@@ -58,6 +58,9 @@ NODE_OUTPUT_PATHS = {
 	"action.remove_from_workflow": ["cancelled_runs", "target_workflow", "terminate_path"],
 	"action.complete_goal": ["goal", "terminate_path"],
 	"action.go_to": ["target_node_id"],
+	"action.ai_generate": ["result", "text", "status", "summary", "confidence", "risk_flags", "intent", "issue_type", "priority", "language", "sentiment", "entities", "draft_reply", "answer", "citations", "knowledge_gaps", "profile_version", "attempt_id", "provider", "model", "usage", "error_code", "error_message"],
+	"action.ai_support_agent": ["result", "text", "status", "summary", "confidence", "risk_flags", "answer", "citations", "knowledge_gaps", "decision", "handoff", "handoff_reason", "profile_version", "attempt_id", "session_id", "turn_number", "provider", "model", "usage", "error_code", "error_message"],
+	"action.human_approval": ["approval_id", "status", "draft_text", "final_text", "edited", "decision_comment", "reviewed_by", "reviewed_at"],
 }
 
 
@@ -416,6 +419,9 @@ NODE_CATALOG = [
 	{"type": "action.complete_goal", "label": "Mark goal and end path", "category": "Logic", "description": "Record a named goal marker and end this path immediately; ordinary paths already complete automatically.", "default_config": {"goal": "Goal reached"}, "authoring_tier": "advanced"},
 	{"type": "action.go_to", "label": "Go to existing step", "category": "Logic", "description": "Reuse an existing downstream step in large workflows without manual edge drawing.", "default_config": {"target_node_id": ""}, "authoring_tier": "advanced"},
 	{"type": "action.notify_user", "label": "Notify users", "category": "Actions", "description": "Create in-app notifications for a specific user, current assignees, or all enabled system users.", "default_config": {"audience": "specific", "for_user": "", "subject": "", "message": ""}},
+	{"type": "action.ai_generate", "type_version": 1, "label": "Understand with AI", "category": "AI", "description": "Generate text, summarize, classify, extract, draft, or answer using AI directly or via an agent profile.", "default_config": {"prompt_mode": "inline", "model": "", "system_prompt": "You are a helpful ERP automation assistant.", "user_prompt": "", "output_format": "text", "mode": "summarize", "ai_profile": "", "knowledge_base": "", "field_allowlist": [], "include_thread": 0, "thread_limit": 10, "instructions": "", "confidence_threshold": 0.75, "timeout_seconds": 60, "max_tokens": 1024, "failure_mode": "branch"}},
+	{"type": "action.ai_support_agent", "type_version": 1, "label": "Run AI support agent", "category": "AI", "description": "Process one Issue conversation turn, produce a grounded response decision, and hand off safely when policy requires it.", "default_config": {"mode": "grounded_answer", "ai_profile": "", "knowledge_base": "", "field_allowlist": [], "include_thread": 1, "thread_limit": 20, "instructions": "", "confidence_threshold": 0.8, "timeout_seconds": 60, "max_tokens": 1536, "max_automatic_turns": 3, "response_policy": "draft_only", "failure_mode": "branch"}},
+	{"type": "action.human_approval", "type_version": 1, "label": "Request human approval", "category": "AI", "description": "Pause the run until a named Frappe user approves, edits, or rejects a prepared draft.", "default_config": {"reviewer": "", "title": "Review workflow draft", "instructions": "Check the evidence and approve, edit, or reject this draft.", "draft_text": {"kind": "literal", "value": ""}, "evidence": {"kind": "literal", "value": {}}, "ai_attempt": {"kind": "literal", "value": ""}, "allow_edit": 1, "expires_days": 7}},
 	{"type": "action.send_email", "type_version": 2, "label": "Send email", "category": "External", "description": "Send a standard or visual Email Template with preview, test-send, personalization, sender controls, and recipient suppression checks.", "default_config": {"content_mode": "template", "email_template": "", "recipient": {"kind": "literal", "value": ""}, "subject_override": {"kind": "literal", "value": ""}, "sender_name": "", "sender_email": "", "reply_to": "", "subscription_topic": ""}},
 	{"type": "action.send_sms", "label": "Send SMS", "category": "External", "description": "Send a text message via Frappe SMS Settings.", "default_config": {"recipient": {"kind": "literal", "value": ""}, "message": {"kind": "literal", "value": ""}, "purpose": "workflow", "require_consent": 1}},
 	{"type": "action.webhook", "label": "Send webhook", "category": "External", "description": "POST signed JSON to an allowlisted HTTPS endpoint.", "default_config": {"integration_secret": "", "url": "", "payload": {}, "purpose": "workflow", "require_consent": 0}, "authoring_tier": "advanced"},
@@ -465,6 +471,9 @@ NODE_AUTHORING_SCHEMAS = {
 	# for_user is required only for the "specific" audience. schema.py validates
 	# the audience-specific recipient together with the common text fields.
 	"action.notify_user": {"required": [{"path": "subject", "label": "Subject"}, {"path": "message", "label": "Message"}]},
+	"action.ai_generate": {"required": []},
+	"action.ai_support_agent": {"required": [{"path": "ai_profile", "label": "AI Agent"}, {"path": "knowledge_base", "label": "Knowledge Base"}, {"path": "field_allowlist", "label": "Permitted context fields"}]},
+	"action.human_approval": {"required": [{"path": "reviewer", "label": "Reviewer"}, {"path": "draft_text", "label": "Draft to review"}]},
 	"action.send_email": {"required": [{"path": "recipient", "label": "Recipient"}]},
 	"action.send_sms": {"required": [{"path": "recipient", "label": "Recipient"}, {"path": "message", "label": "Message"}, {"path": "purpose", "label": "Consent purpose"}]},
 	"action.webhook": {"required": [{"path": "integration_secret", "label": "Integration secret"}, {"path": "url", "label": "HTTPS endpoint"}, {"path": "payload", "label": "JSON payload"}]},
@@ -966,6 +975,12 @@ def _authoring_availability(node_type: str, primary_doctype: str | None, executi
 	"""
 	if node_type == "action.asana" and "asana_integration" not in frappe.get_installed_apps():
 		return False, _("Install the Asana Integration app to use this action.")
+	if node_type in {"action.ai_generate", "action.ai_support_agent"}:
+		user = execution_user or frappe.session.user
+		if not frappe.has_permission("AI Agent", ptype="read", user=user):
+			return False, _("Give the workflow execution user read access to AI Agents.")
+		if node_type == "action.ai_support_agent" and primary_doctype and primary_doctype != "Issue":
+			return False, _("The AI support agent is available only in Issue workflows.")
 	if not primary_doctype:
 		return True, None
 	if node_type == "action.merge_contact" and primary_doctype != "Contact":

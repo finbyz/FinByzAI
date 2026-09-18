@@ -3,8 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Iterator
-from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -27,6 +25,13 @@ from .constants import (
 from .errors import AutomationCancelledError, AutomationError, AutomationTransientError
 from .notifications import enqueue_notification_for_user
 from .observability import increment_metric, record_enrollment_decision, record_incident
+from .principal import (
+	_assert_worker_execution,
+	check_execution_permission,
+	current_execution_user,
+	execution_principal,
+	is_valid_execution_user,
+)
 from .registry import assert_field_access, is_eligible_doctype, round_robin_assignment
 from .schema import (
 	canonical_json,
@@ -38,62 +43,6 @@ from .schema import (
 	parse_object,
 	resolve_value,
 )
-
-_MISSING = object()
-_SET_USER_LOCAL_FIELDS = (
-	"cache",
-	"form_dict",
-	"jenv_restricted",
-	"jenv_unrestricted",
-	"role_permissions",
-	"new_doc_templates",
-	"user_perms",
-)
-
-
-def _assert_worker_execution() -> None:
-	"""Business actions may impersonate users only in an isolated RQ job or a test transaction."""
-	if not frappe.in_test and not getattr(frappe.local, "job", None):
-		raise AutomationError(_("Automation tokens can only execute inside an isolated background worker."))
-
-
-@contextmanager
-def _execution_identity(user: str, automation_context: dict) -> Iterator[None]:
-	"""Temporarily assume the execution user and restore every local reset by frappe.set_user."""
-	_assert_worker_execution()
-	session = frappe.local.session
-	session_snapshot = {
-		"user": session.user,
-		"sid": session.sid,
-		"data": session.data,
-	}
-	local_snapshot = {
-		fieldname: getattr(frappe.local, fieldname, _MISSING) for fieldname in _SET_USER_LOCAL_FIELDS
-	}
-	had_automation_context = "automation_context" in frappe.flags
-	previous_automation_context = frappe.flags.get("automation_context")
-	try:
-		frappe.set_user(user)
-		frappe.flags.automation_context = automation_context
-		yield
-	finally:
-		# Clear permissions/caches created for the execution identity first, then
-		# restore the exact caller-owned local objects instead of only its username.
-		frappe.set_user(session_snapshot["user"])
-		session.user = session_snapshot["user"]
-		session.sid = session_snapshot["sid"]
-		session.data = session_snapshot["data"]
-		for fieldname, value in local_snapshot.items():
-			if value is _MISSING:
-				if hasattr(frappe.local, fieldname):
-					delattr(frappe.local, fieldname)
-			else:
-				setattr(frappe.local, fieldname, value)
-		if had_automation_context:
-			frappe.flags.automation_context = previous_automation_context
-		else:
-			frappe.flags.pop("automation_context", None)
-
 
 def _new_trace_id() -> str:
 	return frappe.generate_hash(length=20)
@@ -544,6 +493,23 @@ def _cancel_open_run_artifacts(
 		{"status": "CANCELLED", "released_at": completed_at},
 		update_modified=False,
 	)
+	if frappe.db.table_exists("Automation Human Approval"):
+		approval_rows = frappe.get_all(
+			"Automation Human Approval",
+			filters={"run": run_name, "status": "PENDING"},
+			fields=["name", "todo"],
+			limit_page_length=0,
+		)
+		if approval_rows:
+			frappe.db.set_value(
+				"Automation Human Approval",
+				{"name": ["in", [row.name for row in approval_rows]]},
+				{"status": "CANCELLED", "decision_comment": error_message, "reviewed_at": completed_at},
+				update_modified=False,
+			)
+			for row in approval_rows:
+				if row.todo:
+					frappe.db.set_value("ToDo", row.todo, "status", "Cancelled", update_modified=False)
 
 
 def _queue_token(token_name: str) -> None:
@@ -833,7 +799,7 @@ def _next_round_robin_member(run, node: dict, users: list[str]) -> str:
 			cursor_table.next_index,
 		)
 		.insert(
-			frappe.generate_hash(length=10), now, now, frappe.session.user, frappe.session.user,
+			frappe.generate_hash(length=10), now, now, current_execution_user(), current_execution_user(),
 			0, 0, cursor_key, run.workflow_version, node["id"], 0,
 		)
 		.on_duplicate_key_update(cursor_table.cursor_key, cursor_key)
@@ -919,7 +885,7 @@ def _reserve_drip_slot(run, node: dict, config: dict) -> dict:
 			cursor_table.issued,
 		)
 		.insert(
-			frappe.generate_hash(length=10), now, now, frappe.session.user, frappe.session.user,
+			frappe.generate_hash(length=10), now, now, current_execution_user(), current_execution_user(),
 			0, 0, cursor_key, run.workflow_version, node["id"], now, 0,
 		)
 		.on_duplicate_key_update(cursor_table.cursor_key, cursor_key)
@@ -1002,41 +968,41 @@ def _execute_action(run, token, node, record, value_record, outputs: dict[str, A
 	if node_type == "action.update_record":
 		record = frappe.get_doc(record.doctype, record.name, for_update=True)
 		values = _update_assignments(config, value_record=value_record, live_record=record, outputs=outputs)
-		record.check_permission("write")
+		check_execution_permission(record, "write")
 		for fieldname, value in values.items():
 			assert_field_access(
 				record.doctype,
 				fieldname,
 				permission_type="write",
-				user=frappe.session.user,
+				user=current_execution_user(),
 				capability=("assignment_scalar", "assignment_collection"),
 			)
 			record.set(fieldname, _coerce_assignment_value(record.doctype, fieldname, value))
-		record.save()
+		record.save(ignore_permissions=True)
 		result = {"doctype": record.doctype, "name": record.name, "updated_fields": sorted(values)}
 	elif node_type == "action.numeric_adjust":
 		# Serialize adjustments from different workflow runs so none overwrite a
 		# value read concurrently by another worker.
 		record = frappe.get_doc(record.doctype, record.name, for_update=True)
-		record.check_permission("write")
+		check_execution_permission(record, "write")
 		fieldname = str(config.get("field") or "")
 		if not fieldname:
 			raise AutomationError(_("Numeric adjust requires a field."))
-		assert_field_access(record.doctype, fieldname, permission_type="write", user=frappe.session.user, capability="assignment_scalar")
+		assert_field_access(record.doctype, fieldname, permission_type="write", user=current_execution_user(), capability="assignment_scalar")
 		amount = frappe.utils.flt(config.get("amount") or 0)
 		operation = str(config.get("operation") or "add")
 		current = frappe.utils.flt(record.get(fieldname))
 		new_value = _calculate_numeric_adjustment(current, operation, amount)
 		record.set(fieldname, new_value)
-		record.save()
+		record.save(ignore_permissions=True)
 		result = {"doctype": record.doctype, "name": record.name, "field": fieldname, "previous": current, "new_value": new_value}
 	elif node_type == "action.delete_record":
-		record.check_permission("delete")
-		frappe.delete_doc(record.doctype, record.name, ignore_permissions=False)
+		check_execution_permission(record, "delete")
+		frappe.delete_doc(record.doctype, record.name, ignore_permissions=True)
 		result = {"doctype": record.doctype, "name": record.name, "deleted": True}
 	elif node_type == "action.create_record":
 		target_doctype = config.get("target_doctype")
-		if not is_eligible_doctype(target_doctype, permission_type="create", user=frappe.session.user):
+		if not is_eligible_doctype(target_doctype, permission_type="create", user=current_execution_user()):
 			raise AutomationError(_("Execution user cannot create the configured DocType."))
 		values = _assignments(config, record=value_record, outputs=outputs)
 		for fieldname, value in list(values.items()):
@@ -1044,34 +1010,44 @@ def _execute_action(run, token, node, record, value_record, outputs: dict[str, A
 				target_doctype,
 				fieldname,
 				permission_type="create",
-				user=frappe.session.user,
+				user=current_execution_user(),
 				capability=("assignment_scalar", "assignment_collection"),
 			)
 			values[fieldname] = _coerce_assignment_value(target_doctype, fieldname, value)
-		target = frappe.get_doc({"doctype": target_doctype, **values}).insert()
+		# A record a workflow creates belongs to the record that triggered it.
+		# action.create_todo gets that link for free from add_assignment; this
+		# node had no equivalent, so a ToDo it created was orphaned - not on the
+		# source record's timeline and invisible from its assignments. Fill the
+		# standard Dynamic Link pair when the target has one and the author did
+		# not set it themselves.
+		target_meta = frappe.get_meta(target_doctype)
+		if target_meta.get_field("reference_type") and target_meta.get_field("reference_name"):
+			values.setdefault("reference_type", record.doctype)
+			values.setdefault("reference_name", record.name)
+		target = frappe.get_doc({"doctype": target_doctype, **values}).insert(ignore_permissions=True)
 		result = {"doctype": target.doctype, "name": target.name}
 	elif node_type == "action.manage_association":
-		record.check_permission("write")
+		check_execution_permission(record, "write")
 		target_doctype = str(config.get("target_doctype") or "")
 		target_name = str(config.get("target_name") or "")
 		link_field = str(config.get("link_field") or "")
 		operation = config.get("operation") or "link"
-		assert_field_access(record.doctype, link_field, permission_type="write", user=frappe.session.user, capability="assignment_scalar")
+		assert_field_access(record.doctype, link_field, permission_type="write", user=current_execution_user(), capability="assignment_scalar")
 		field = frappe.get_meta(record.doctype).get_field(link_field)
 		if not field or field.fieldtype != "Link" or field.options != target_doctype:
 			raise AutomationError(_("Association field must link to the configured target DocType."))
 		if operation == "link":
 			target = frappe.get_doc(target_doctype, target_name)
-			target.check_permission("read")
+			check_execution_permission(target, "read")
 			record.set(link_field, target_name)
-			record.save()
+			record.save(ignore_permissions=True)
 		else:
 			if record.get(link_field) == target_name:
 				record.set(link_field, None)
-				record.save()
+				record.save(ignore_permissions=True)
 		result = {"doctype": record.doctype, "name": record.name, "operation": operation, "target_name": target_name}
 	elif node_type == "action.round_robin":
-		record.check_permission("read")
+		check_execution_permission(record, "read")
 		users, assignment = _round_robin_users(config)
 		group = assignment["group"]
 		if cint(node.get("type_version") or 1) >= 2:
@@ -1086,12 +1062,13 @@ def _execute_action(run, token, node, record, value_record, outputs: dict[str, A
 				"doctype": record.doctype,
 				"name": record.name,
 				"description": _("Round robin assignment from workflow"),
+				"assigned_by": current_execution_user(),
 			},
-			ignore_permissions=False,
+			ignore_permissions=True,
 		)
 		result = {"doctype": record.doctype, "name": record.name, "assigned_to": assigned_user, "group": group or None, "assignment_type": assignment["assignment_type"], "assignment_version": cint(node.get("type_version") or 1)}
 	elif node_type == "action.create_todo":
-		record.check_permission("read")
+		check_execution_permission(record, "read")
 		assignments = add_assignment(
 			{
 				"assign_to": json.dumps([config.get("allocated_to")]),
@@ -1100,8 +1077,9 @@ def _execute_action(run, token, node, record, value_record, outputs: dict[str, A
 				"description": config.get("description") or _("Automation task for {0}").format(record.name),
 				"priority": config.get("priority") or "Medium",
 				"date": config.get("date"),
+				"assigned_by": current_execution_user(),
 			},
-			ignore_permissions=False,
+			ignore_permissions=True,
 		)
 		created_todo = next(
 			(
@@ -1119,31 +1097,35 @@ def _execute_action(run, token, node, record, value_record, outputs: dict[str, A
 			"allocated_to": config.get("allocated_to"),
 		}
 	elif node_type == "action.add_comment":
-		record.check_permission("write")
-		comment = record.add_comment("Comment", text=str(config.get("content") or ""))
+		check_execution_permission(record, "write")
+		comment = record.add_comment(
+			"Comment",
+			text=str(config.get("content") or ""),
+			comment_email=current_execution_user(),
+		)
 		result = {"comment": comment.name if comment else None}
 	elif node_type == "action.create_note":
-		record.check_permission("read")
+		check_execution_permission(record, "read")
 		note = frappe.get_doc(
 			{
 				"doctype": "Note",
 				"title": str(config.get("title") or "")[:140],
 				"content": f"{str(config.get('content') or '')}<p><a href=\"/app/{frappe.scrub(record.doctype).replace('_', '-')}/{record.name}\">{record.doctype} {record.name}</a></p>",
 			}
-		).insert()
+		).insert(ignore_permissions=True)
 		result = {"note": note.name}
 	elif node_type == "action.copy_record":
-		record.check_permission("read")
-		if not frappe.has_permission(record.doctype, ptype="create"):
+		check_execution_permission(record, "read")
+		if not frappe.has_permission(record.doctype, ptype="create", user=current_execution_user()):
 			raise frappe.PermissionError
 		copied = frappe.copy_doc(record)
 		copied.flags.ignore_links = False
-		copied.insert()
+		copied.insert(ignore_permissions=True)
 		result = {"doctype": copied.doctype, "name": copied.name}
 	elif node_type == "action.merge_contact":
 		if record.doctype != "Contact":
 			raise AutomationError(_("Merge contact can only run in a Contact workflow."))
-		record.check_permission("write")
+		check_execution_permission(record, "write")
 		fields = [str(field) for field in config.get("match_fields") or []]
 		predicates = [{field: value_record.get(field)} for field in fields if value_record.get(field) not in (None, "")]
 		if not predicates or (config.get("match_mode", "all") == "all" and len(predicates) != len(fields)):
@@ -1155,32 +1137,40 @@ def _execute_action(run, token, node, record, value_record, outputs: dict[str, A
 				filters.update(predicate)
 		else:
 			or_filters = predicates
-		matches = frappe.get_all("Contact", filters=filters, or_filters=or_filters, pluck="name", order_by="creation asc", limit=2)
+		matches = frappe.get_list(
+			"Contact",
+			filters=filters,
+			or_filters=or_filters,
+			pluck="name",
+			order_by="creation asc",
+			limit=2,
+			user=current_execution_user(),
+		)
 		if not matches:
 			raise AutomationError(_("No canonical Contact matches the configured identity fields."))
 		if len(matches) > 1:
 			raise AutomationError(_("More than one canonical Contact matches; resolve ambiguity before merging."))
 		canonical = matches[0]
-		frappe.get_doc("Contact", canonical).check_permission("write")
-		frappe.rename_doc("Contact", record.name, canonical, merge=True)
+		check_execution_permission(frappe.get_doc("Contact", canonical), "write")
+		frappe.rename_doc("Contact", record.name, canonical, merge=True, ignore_permissions=True)
 		result = {"canonical_contact": canonical, "merged_contact": record.name, "matched_fields": [next(iter(item)) for item in predicates], "deleted": True}
 	elif node_type == "action.unassign_record":
-		record.check_permission("write")
+		check_execution_permission(record, "write")
 		open_count = frappe.db.count("ToDo", {"reference_type": record.doctype, "reference_name": record.name, "status": "Open"})
-		close_all_assignments(record.doctype, record.name)
+		close_all_assignments(record.doctype, record.name, ignore_permissions=True)
 		result = {"closed_assignments": open_count}
 	elif node_type == "action.verify_email":
-		record.check_permission("read")
+		check_execution_permission(record, "read")
 		email = str(resolve_value(config.get("email"), record=value_record, outputs=outputs) or "").strip()
 		valid = bool(validate_email_address(email, throw=False))
 		result = {"email": email, "valid": valid, "reason": None if valid else "INVALID_FORMAT"}
 	elif node_type == "action.mark_communications_read":
-		record.check_permission("write")
+		check_execution_permission(record, "write")
 		updated = frappe.db.count("Communication", {"reference_doctype": record.doctype, "reference_name": record.name, "sent_or_received": "Received", "seen": 0})
 		frappe.db.set_value("Communication", {"reference_doctype": record.doctype, "reference_name": record.name, "sent_or_received": "Received", "seen": 0}, {"seen": 1, "unread_notification_sent": 1}, update_modified=False)
 		result = {"updated": updated}
 	elif node_type == "action.remove_from_workflow":
-		record.check_permission("read")
+		check_execution_permission(record, "read")
 		target = str(config.get("target_workflow") or "current")
 		target_workflow = run.workflow if target == "current" else target
 		if not frappe.db.exists("Automation Workflow", {"name": target_workflow, "primary_doctype": record.doctype}):
@@ -1207,13 +1197,13 @@ def _execute_action(run, token, node, record, value_record, outputs: dict[str, A
 			)
 		result = {"cancelled_runs": len(other_runs), "target_workflow": target_workflow, "terminate_path": target_workflow == run.workflow}
 	elif node_type == "action.complete_goal":
-		record.check_permission("read")
+		check_execution_permission(record, "read")
 		result = {"goal": str(config.get("goal") or "Goal reached")[:140], "terminate_path": True}
 	elif node_type == "action.go_to":
-		record.check_permission("read")
+		check_execution_permission(record, "read")
 		result = {"target_node_id": str(config.get("target_node_id") or "")}
 	elif node_type == "action.notify_user":
-		record.check_permission("read")
+		check_execution_permission(record, "read")
 		audience = str(config.get("audience") or "specific")
 		if audience == "assigned":
 			recipients = frappe.get_all("ToDo", filters={"reference_type": record.doctype, "reference_name": record.name, "status": "Open"}, pluck="allocated_to", limit=500)
@@ -1232,7 +1222,7 @@ def _execute_action(run, token, node, record, value_record, outputs: dict[str, A
 				"email_content": str(config.get("message") or ""),
 				"document_type": record.doctype,
 				"document_name": record.name,
-				"from_user": frappe.session.user,
+				"from_user": current_execution_user(),
 			}):
 				sent.append(recipient)
 		if not sent:
@@ -1481,7 +1471,7 @@ def _execute_node(run, token, node, record, value_record, outputs: dict[str, Any
 			source = {"mode": "literal"}
 		else:
 			fieldname = str(config.get("field") or "")
-			assert_field_access(record.doctype, fieldname, permission_type="read", user=frappe.session.user, capability="scalar_read")
+			assert_field_access(record.doctype, fieldname, permission_type="read", user=current_execution_user(), capability="scalar_read")
 			due_value = value_record.get(fieldname)
 			source = {"mode": "field", "field": fieldname}
 			if due_value in (None, ""):
@@ -1571,9 +1561,9 @@ def _execute_node(run, token, node, record, value_record, outputs: dict[str, Any
 		target_doctype = df.options
 		if df.fieldtype == "Dynamic Link":
 			target_doctype = value_record.get(df.options)
-		assert_field_access(target_doctype, fetch_field, permission_type="read", user=frappe.session.user, capability="scalar_read")
+		assert_field_access(target_doctype, fetch_field, permission_type="read", user=current_execution_user(), capability="scalar_read")
 		linked_record = frappe.get_doc(target_doctype, ref_value)
-		linked_record.check_permission("read")
+		check_execution_permission(linked_record, "read")
 		fetched_value = linked_record.get(fetch_field)
 		return {"status": "COMPLETE", "output": {"value": fetched_value, "linked_name": ref_value}}
 	if node_type == "transform.child_records":
@@ -1586,7 +1576,7 @@ def _execute_node(run, token, node, record, value_record, outputs: dict[str, Any
 			field.options,
 			fetch_field,
 			permission_type="read",
-			user=frappe.session.user,
+			user=current_execution_user(),
 			parenttype=record.doctype,
 			capability="scalar_read",
 		)
@@ -1639,6 +1629,10 @@ def _execute_node(run, token, node, record, value_record, outputs: dict[str, Any
 				recursion_depth=next_recursion_depth,
 			)
 			return {"status": "COMPLETE", "output": {"run_id": subflow_run, "status": "QUEUED" if subflow_run else "NOT_ENROLLED"}}
+	if node_type == "action.human_approval":
+		from .approvals import create_approval
+
+		return create_approval(run, token, node, record=value_record, outputs=outputs)
 	if node_type in EXTERNAL_ACTION_NODE_TYPES:
 		return _schedule_external_action(run, token, node)
 	if node_type in ACTION_NODE_TYPES:
@@ -1668,13 +1662,18 @@ def _next_nodes(graph: dict, node_id: str, handle: str | None = None) -> list[st
 
 
 def _finish_or_continue(run, token, graph: dict, result: dict) -> None:
-	if result["status"] in {"WAIT_TIMER", "WAIT_EXTERNAL"}:
+	if result["status"] in {"WAIT_TIMER", "WAIT_EXTERNAL", "WAIT_APPROVAL"}:
 		token.status = "WAITING"
 		token.output_json = json.dumps(result.get("output") or {}, default=str)
 		token.save(ignore_permissions=True)
 		run.status = "WAITING"
 		run.save(ignore_permissions=True)
-		_append_event(run.name, "TIMER_CREATED" if result["status"] == "WAIT_TIMER" else "EXTERNAL_EFFECT_QUEUED", node_id=token.node_id, payload=result.get("output"))
+		event_type = {
+			"WAIT_TIMER": "TIMER_CREATED",
+			"WAIT_EXTERNAL": "EXTERNAL_EFFECT_QUEUED",
+			"WAIT_APPROVAL": "APPROVAL_REQUESTED",
+		}[result["status"]]
+		_append_event(run.name, event_type, node_id=token.node_id, payload=result.get("output"))
 		return
 	token.status = "COMPLETED"
 	token.output_json = json.dumps(result.get("output") or {}, default=str)
@@ -1966,13 +1965,13 @@ def reevaluate_active_run_policies(
 		version = frappe.get_doc("Automation Workflow Version", run.workflow_version)
 		if version.name != candidate["version"].name or version.workflow != run.workflow:
 			raise AutomationError(_("Pinned workflow version changed during policy evaluation."))
-		if not frappe.db.get_value("User", version.execution_user, "enabled"):
+		if not is_valid_execution_user(version.execution_user):
 			raise AutomationError(_("Workflow execution user is disabled or missing."))
 		if not is_eligible_doctype(run.record_doctype, permission_type="read", user=version.execution_user):
 			raise AutomationError(_("Workflow execution user can no longer read the enrolled DocType."))
 		settings = parse_object(version.settings_json or "{}", "workflow settings")
 		graph = _graph(version)
-		with _execution_identity(
+		with execution_principal(
 			version.execution_user,
 			{
 				"trace_id": run.trace_id,
@@ -1981,7 +1980,7 @@ def reevaluate_active_run_policies(
 			},
 		):
 			record = frappe.get_doc(record_doctype, record_name)
-			record.check_permission("read")
+			check_execution_permission(record, "read")
 			outcome, reason_code = _evaluate_run_policy(settings, graph, record)
 		if outcome in {"GOAL_MET", "ELIGIBILITY_LOST"}:
 			_terminate_run_from_record_event(
@@ -2155,7 +2154,7 @@ def execute_token(token_name: str) -> None:
 		)
 		return
 	version = frappe.get_doc("Automation Workflow Version", run.workflow_version)
-	if not frappe.db.get_value("User", version.execution_user, "enabled"):
+	if not is_valid_execution_user(version.execution_user):
 		_fail_unexecutable_token(
 			run,
 			token,
@@ -2191,12 +2190,12 @@ def execute_token(token_name: str) -> None:
 		)
 		return
 	try:
-		with _execution_identity(
+		with execution_principal(
 			version.execution_user,
 			{"trace_id": run.trace_id, "causation_id": run.causation_id or run.trace_id, "recursion_depth": cint(run.recursion_depth) + 1},
 		):
 			policy_record = frappe.get_doc(run.record_doctype, run.record_name)
-			policy_record.check_permission("read")
+			check_execution_permission(policy_record, "read")
 			if _apply_run_policies(run, token, version, graph, _read_record(run, policy_record)):
 				return
 	except frappe.db.InternalError:
@@ -2248,7 +2247,7 @@ def execute_token(token_name: str) -> None:
 	_append_event(run.name, "NODE_STARTED", node_id=token.node_id, payload={"attempt": token.attempts})
 	frappe.db.savepoint("automation_node")
 	try:
-		with _execution_identity(
+		with execution_principal(
 			version.execution_user,
 			{
 				"trace_id": run.trace_id,
@@ -2301,6 +2300,14 @@ def execute_external_effect(ledger_name: str, token_name: str) -> None:
 			token.save(ignore_permissions=True)
 		return
 	version = frappe.get_doc("Automation Workflow Version", run.workflow_version)
+	if not is_valid_execution_user(version.execution_user):
+		_fail_unexecutable_token(
+			run,
+			token,
+			error_code="EXECUTION_USER_UNAVAILABLE",
+			message="Workflow execution user is disabled, missing, or not a System User.",
+		)
+		return
 	graph = _graph(version)
 	node = _node_map(graph).get(token.node_id)
 	if not node or node.get("type") not in EXTERNAL_ACTION_NODE_TYPES:
@@ -2320,7 +2327,7 @@ def execute_external_effect(ledger_name: str, token_name: str) -> None:
 	try:
 		from .external import AutomationUnknownCommitError, execute_external
 
-		with _execution_identity(
+		with execution_principal(
 			version.execution_user,
 			{
 				"trace_id": run.trace_id,
@@ -2329,7 +2336,7 @@ def execute_external_effect(ledger_name: str, token_name: str) -> None:
 			},
 		):
 			record = frappe.get_doc(run.record_doctype, run.record_name)
-			record.check_permission("read")
+			check_execution_permission(record, "read")
 			value_record = _read_record(run, record)
 
 			# EXECUTE NETWORK I/O (No DB locks held here!)
@@ -2341,6 +2348,8 @@ def execute_external_effect(ledger_name: str, token_name: str) -> None:
 				outputs=_completed_outputs(run.name),
 				effect_key=ledger.effect_key,
 				workflow_settings=parse_object(version.settings_json or {}, "workflow settings"),
+				node_id=str(node.get("id") or token.node_id),
+				token_name=token.name,
 			)
 	except Exception as exc:
 		from .external import AutomationUnknownCommitError
@@ -3043,6 +3052,16 @@ _RUN_TRACE_SECTIONS = {
 		["name", "token", "node_id", "attempt_no", "status", "effect_key", "error_code", "error_message", "output_json", "started_at", "completed_at"],
 		"creation asc",
 	),
+	"ai_attempts": (
+		"Automation AI Attempt",
+		["name", "node_id", "status", "profile_version", "mode", "provider", "model", "confidence", "citations_json", "usage_json", "input_tokens", "output_tokens", "estimated_cost", "latency_ms", "output_hash", "error_code", "error_message", "started_at", "completed_at"],
+		"creation asc",
+	),
+	"approvals": (
+		"Automation Human Approval",
+		["name", "node_id", "reviewer", "status", "title", "draft_text", "final_text", "decision_comment", "created_at", "expires_at", "reviewed_at", "reviewed_by"],
+		"creation asc",
+	),
 	"enrollment_decisions": (
 		"Automation Enrollment Decision",
 		["name", "decision", "reason_code", "evidence_json", "source", "trace_id", "decided_at"],
@@ -3313,6 +3332,26 @@ def simulate_graph(graph: dict, record, *, start_node_id: str | None = None, exe
 				recipients = [config.get("for_user")]
 			recipients = _enabled_user_names(recipients)
 			entry["output"] = {"for_user": recipients[0] if len(recipients) == 1 else None, "recipients": recipients, "recipient_count": len(recipients)}
+		elif node["type"] in {"action.ai_generate", "action.ai_support_agent"}:
+			entry["status"] = "REQUIRES_AI_TEST"
+			entry["confidence"] = "unknown"
+			entry["note"] = _("AI outcomes are not guessed during deterministic simulation. Use Test AI on this step to run an explicitly confirmed billable test.")
+			entry["output"] = {"requires_ai_test": True, "billable": False, "status": "not_executed"}
+			outputs[current] = entry["output"]
+			path.append(entry)
+			return {"path": path, "mutated": False, "completed": False, "requires_ai_test": True}
+		elif node["type"] == "action.human_approval":
+			entry["status"] = "REQUIRES_HUMAN_APPROVAL"
+			entry["confidence"] = "unknown"
+			entry["note"] = _("The run pauses here until the assigned reviewer approves, edits, or rejects the draft.")
+			entry["output"] = {
+				"approval_id": "__pending__",
+				"status": "PENDING",
+				"draft_text": resolve_value(config.get("draft_text"), record=record, outputs=outputs),
+			}
+			outputs[current] = entry["output"]
+			path.append(entry)
+			return {"path": path, "mutated": False, "completed": False, "requires_human_approval": True}
 		elif node["type"] == "action.send_email":
 			entry["status"] = "SKIPPED_EXTERNAL"
 			entry["confidence"] = "skipped"
