@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import frappe
 from frappe import _
-from frappe.desk.form.assign_to import _add as add_assignment, close_all_assignments
+from frappe.desk.form.assign_to import add as add_assignment, close_all_assignments
 from frappe.utils import add_to_date, cint, get_system_timezone, now_datetime, validate_email_address
 
 from .configuration import automation_enabled, int_setting, workflow_runtime_allowed
