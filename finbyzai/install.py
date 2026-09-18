@@ -173,9 +173,11 @@ def after_install():
     """Create default AI records and initialize app features on a new site."""
     _sync_ai_defaults()
 
+    from finbyzai.copilot.setup import ensure_defaults as setup_copilot
     from finbyzai.workflow_builder.setup import after_install as setup_workflow_builder
 
     setup_workflow_builder()
+    setup_copilot()
 
 
 def after_migrate():
