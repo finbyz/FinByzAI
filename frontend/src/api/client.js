@@ -16,6 +16,10 @@ export const loadAgents = () =>
 				title: r.title || r.name,
 				logo: r.logo,
 				hint: r.llm || undefined,
+				// Which agent Copilot Settings nominates. Dropping it here left the
+				// store with nothing to match on, so the picker fell back to the
+				// alphabetically first agent.
+				is_default: Boolean(r.is_default),
 			}))
 		)
 		.then((rows) => (rows.length ? rows : [{ name: "Copilot", title: "Copilot" }]))
