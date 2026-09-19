@@ -121,11 +121,19 @@ permission_query_conditions = {
         "finbyzai.ai.doctype.ai_conversation.ai_conversation."
         "get_permission_query_conditions"
     ),
+    "Copilot User Settings": (
+        "finbyzai.copilot.doctype.copilot_user_settings.copilot_user_settings."
+        "get_permission_query_conditions"
+    ),
 }
 
 has_permission = {
     "AI Conversation": (
         "finbyzai.ai.doctype.ai_conversation.ai_conversation.has_permission"
+    ),
+    "Copilot User Settings": (
+        "finbyzai.copilot.doctype.copilot_user_settings.copilot_user_settings."
+        "has_permission"
     ),
 }
 

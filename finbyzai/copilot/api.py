@@ -15,6 +15,9 @@ import frappe
 from frappe import _
 
 from finbyzai.copilot import access, runner
+from finbyzai.copilot.doctype.copilot_user_settings import (
+    copilot_user_settings as user_settings,
+)
 
 TITLE_LENGTH = 60
 HISTORY_LIMIT = 500
@@ -531,18 +534,26 @@ def get_tools(agent=None, knowledge_base=None):
     return {"agent": doc.name if doc else None, "tools": builtin + custom}
 
 
+
+def can_administer() -> bool:
+    """Who may change what every user sees: the system prompt and the site defaults."""
+    return bool(set(frappe.get_roles()) & {"System Manager", "Copilot Admin"})
+
+
 @frappe.whitelist()
 def get_settings():
     """Everything the settings dialog shows: the pickers' contents, the system defaults,
     and whether this user may change them."""
     settings = runner.get_settings()
-    is_admin = "System Manager" in frappe.get_roles()
+    is_admin = can_administer()
 
     out = {
         "can_edit_system": is_admin,
         "agents": get_agents(),
         "models": get_models(),
         "knowledge_bases": get_knowledge_bases(),
+        # Everyone gets their own instructions; only an admin sees the system prompt.
+        "user": {"instructions": user_settings.for_user()},
         "system": {
             "enabled": bool(settings.enabled),
             "default_agent": settings.default_agent,
@@ -573,15 +584,22 @@ def get_settings():
 
 
 @frappe.whitelist()
-def save_settings(system=None, conversation=None):
+def save_settings(system=None, conversation=None, user=None):
     """Save the dialog. System defaults need System Manager; the per-conversation
     agent / model / knowledge base is the user's own choice on their own chat."""
     saved = {}
 
+    values = _parse(user) or {}
+    if "instructions" in values:
+        # A user's own instructions, applied to their turns only. No role check beyond
+        # being able to reach the Copilot at all: this cannot affect anyone else.
+        user_settings.save_for_user(values.get("instructions") or "")
+        saved["user"] = True
+
     values = _parse(system) or {}
     if values:
-        if "System Manager" not in frappe.get_roles():
-            frappe.throw(_("Only a System Manager can change the Copilot's defaults."))
+        if not can_administer():
+            frappe.throw(_("Only a Copilot Admin can change the Copilot's defaults."))
         allowed = (
             "enabled",
             "default_agent",

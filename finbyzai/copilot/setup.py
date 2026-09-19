@@ -20,11 +20,51 @@ AGENT = "Copilot"
 
 
 def ensure_defaults():
+    _ensure_role_permissions()
     _ensure_agent()
     sync_ai_tools()
     _attach_exported_tools()
     _ensure_settings()
 
+
+# The roles a Copilot Admin and a Copilot User need on the records the panel reads.
+# Shipped in each DocType's own JSON as well — but a DocType that has any Custom
+# DocPerm row ignores its standard permissions entirely, and on a site where someone
+# has opened the Role Permissions Manager that is exactly what happens. AI Agent on
+# this site is in that state, which silently left both roles with no access at all.
+ROLE_PERMISSIONS = {
+    "Copilot Admin": {
+        "AI Agent": ("read", "write", "create", "delete"),
+        "AI Tool": ("read", "write", "create", "delete"),
+        "Knowledge Base": ("read", "write", "create", "delete"),
+        "Copilot Settings": ("read", "write"),
+    },
+    "Copilot User": {
+        "AI Agent": ("read",),
+        "AI Tool": ("read",),
+        "Knowledge Base": ("read",),
+    },
+}
+
+
+def _ensure_role_permissions():
+    from frappe.permissions import add_permission, update_permission_property
+
+    for role, doctypes in ROLE_PERMISSIONS.items():
+        if not frappe.db.exists("Role", role):
+            continue
+        for doctype, rights in doctypes.items():
+            if not frappe.db.exists("DocType", doctype):
+                continue
+            # Only reach for Custom DocPerm where the DocType is already customised;
+            # everywhere else the JSON permission is live and adding a custom row
+            # would needlessly freeze a copy of today's standard permissions.
+            if not frappe.db.exists("Custom DocPerm", {"parent": doctype}):
+                continue
+            if not frappe.db.exists("Custom DocPerm", {"parent": doctype, "role": role}):
+                add_permission(doctype, role, 0)
+            for right in rights:
+                update_permission_property(doctype, role, 0, right, 1, validate=False)
 
 def _ensure_agent():
     if frappe.db.exists("AI Agent", AGENT):

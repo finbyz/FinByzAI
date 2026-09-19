@@ -75,6 +75,12 @@
    "read": 1,
    "write": 1,
    "create": 1
+  },
+  {
+   "role": "Copilot Admin",
+   "read": 1,
+   "write": 1,
+   "create": 1
   }
  ],
  "sort_field": "creation",
