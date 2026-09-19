@@ -261,6 +261,9 @@ class CopilotPanel {
 
 frappe.provide("frappe.copilot");
 $(document).on("app_ready", () => {
+	// The desk can fire app_ready more than once; a second panel would mount a
+	// second copy of the app over the first one.
+	if (frappe.copilot.panel) return;
 	frappe.copilot.panel = new CopilotPanel();
 	// A console-reachable handle, for when a shortcut is intercepted by the browser.
 	window.copilot = {

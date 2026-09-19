@@ -320,6 +320,17 @@ async function restorePausedRun(session) {
 	requestScroll();
 }
 
+
+// The conversation this turn belongs to. `sessionName` is the live value, but the
+// panel can be re-created (the desk re-runs its boot in some flows), which leaves a
+// fresh module ref at null while the conversation on screen is still going — every
+// following turn then silently started a new conversation. The id is written to the
+// panel state on every change, so fall back to it. `newChat()` clears the ref, which
+// persists null, so starting a new chat deliberately still works.
+function activeSession() {
+	return sessionName.value || readPanelState().session || null;
+}
+
 // ── sending / streaming ────────────────────────────────────────────────────────
 // Aborts the in-flight stream when the user stops the response.
 let abortController = null;
@@ -344,10 +355,10 @@ async function send(text) {
 			{
 				input: text,
 				...(files.length && { attachments: files }),
-				...(sessionName.value && { session: sessionName.value }),
-				...(selectedAgent.value && !sessionName.value && { agent: selectedAgent.value }),
+				...(activeSession() && { session: activeSession() }),
+				...(selectedAgent.value && !activeSession() && { agent: selectedAgent.value }),
 				...(selectedModel.value && { model: selectedModel.value }),
-				...(selectedKnowledgeBase.value && !sessionName.value && {
+				...(selectedKnowledgeBase.value && !activeSession() && {
 					knowledge_base: selectedKnowledgeBase.value,
 				}),
 			},

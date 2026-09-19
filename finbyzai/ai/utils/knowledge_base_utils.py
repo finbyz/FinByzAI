@@ -18,7 +18,7 @@ from bs4 import BeautifulSoup
 
 
 # Supported file extensions
-SUPPORTED_FILE_EXTENSIONS = ['.pdf', '.txt', '.csv', '.xlsx', '.xls']
+SUPPORTED_FILE_EXTENSIONS = ['.pdf', '.txt', '.csv', '.xlsx', '.xls', '.docx']
 SUPPORTED_WEB_CONTENT_TYPES = ['text/html', 'text/plain', 'application/pdf']
 
 
@@ -398,6 +398,41 @@ def extract_pdf_to_text(file_path: str) -> Tuple[bool, Optional[str], Optional[s
 
 
 
+def extract_docx_to_text(file_path: str) -> Tuple[bool, Optional[str], Optional[str]]:
+    """
+    Extract text content from a Word (.docx) document.
+
+    Paragraphs and table cells are both included, since resumes and similar
+    documents frequently lay their content out in tables.
+
+    Args:
+        file_path: Absolute path to the .docx file
+
+    Returns:
+        Tuple of (success, content, error_message)
+    """
+    try:
+        from docx import Document as DocxDocument
+    except ImportError:
+        return False, None, "python-docx library not installed. Please install it with: pip install python-docx"
+
+    try:
+        document = DocxDocument(file_path)
+
+        parts = [para.text for para in document.paragraphs if para.text.strip()]
+
+        for table in document.tables:
+            for row in table.rows:
+                cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                if cells:
+                    parts.append(' | '.join(cells))
+
+        return True, '\n'.join(parts), None
+
+    except Exception as e:
+        return False, None, f"DOCX extraction failed: {str(e)}"
+
+
 def extract_text_from_source(source: str, source_type: Optional[str] = None) -> Dict[str, Any]:
     """
     Universal function to extract text from files, URLs, or web links.
@@ -469,6 +504,8 @@ def extract_text_from_source(source: str, source_type: Optional[str] = None) -> 
             elif file_type == '.pdf':
                 # PDF extraction requires external function
                 success, content, error = extract_pdf_to_text(file_path)
+            elif file_type == '.docx':
+                success, content, error = extract_docx_to_text(file_path)
             else:
                 return {
                     'success': False,
