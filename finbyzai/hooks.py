@@ -218,6 +218,12 @@ scheduler_events = {
 		"finbyzai.workflow_builder.bulk.dispatch_ready_backfills",
 		"finbyzai.workflow_builder.bulk.dispatch_due_schedules",
 	],
+	"daily": [
+		# Rewrites each user's starter prompts from their own recent questions. The job
+		# itself only picks up users whose set is older than a few days, so most runs
+		# queue nothing.
+		"finbyzai.copilot.suggestions.refresh_stale",
+	],
 	"hourly": [
 		"finbyzai.ai.doctype.knowledge_base.knowledge_base.process_queued_knowledge_bases",
 		"finbyzai.workflow_builder.integrations.capture_abandoned_shopping_carts",

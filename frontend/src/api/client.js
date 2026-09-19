@@ -49,6 +49,13 @@ export const loadKnowledgeBases = () =>
 // Everything the settings dialog needs in one round trip.
 export const loadSettings = () => call("get_settings");
 
+// Starter prompts written from this user's own past questions; [] until the
+// scheduled job has enough to learn from.
+export const loadSuggestions = () =>
+	call("get_suggestions")
+		.then((d) => d?.prompts || [])
+		.catch(() => []);
+
 // What the agent can call — read from the live registry, shown in Settings → Tools.
 export const loadTools = (args) => call("get_tools", args);
 

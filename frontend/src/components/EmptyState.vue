@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { Button, KeyboardShortcut } from "@/lib/ui";
 import * as api from "@/api/client";
 import { useStore } from "@/store";
@@ -17,10 +17,18 @@ import { __ } from "@/lib/translate";
 // suggestion, so the screen now says what is true instead: ask for anything, and you
 // will only ever be shown what you already have access to.
 const store = useStore();
-const { needsSetup, selectedAgent, settingsOpen } = store;
+const { needsSetup, selectedAgent, settingsOpen, send } = store;
 
 const checking = ref(false);
 const connection = ref(null);
+
+// Written from this user's own past questions by a scheduled job, so they can only
+// ever point at things this person already asks about. Empty is the normal state for
+// someone new, and the screen simply shows nothing rather than a generic example.
+const suggestions = ref([]);
+onMounted(async () => {
+	suggestions.value = await api.loadSuggestions();
+});
 
 const greeting = computed(() => {
 	const name = (frappe.boot?.user?.first_name || "").trim();
@@ -60,6 +68,20 @@ async function testConnection() {
 				</p>
 				<Button variant="solid" theme="gray" label="Open settings" @click="settingsOpen = true" />
 			</div>
+
+			<template v-else-if="suggestions.length">
+				<p class="mt-8 px-2 pb-1 text-sm text-ink-gray-5">{{ __("You often ask") }}</p>
+				<div class="divide-y divide-outline-gray-1">
+					<button
+						v-for="prompt in suggestions"
+						:key="prompt"
+						class="w-full rounded px-2 py-2.5 text-left text-p-base text-ink-gray-7 hover:bg-surface-gray-2 hover:text-ink-gray-8"
+						@click="send(prompt)"
+					>
+						{{ prompt }}
+					</button>
+				</div>
+			</template>
 
 			<div class="mt-8 flex items-center justify-center gap-2 text-2xs text-ink-gray-5">
 				<KeyboardShortcut combo="Mod+I" />

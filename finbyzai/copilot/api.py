@@ -635,6 +635,19 @@ def save_settings(system=None, conversation=None, user=None):
 
 
 @frappe.whitelist()
+def get_suggestions():
+    """Starter prompts for this user, written from their own past questions.
+
+    Empty until the scheduled job has something to learn from, which is deliberate:
+    the panel shows nothing rather than a generic example the user may not be able
+    to run.
+    """
+    from finbyzai.copilot import suggestions
+
+    return {"prompts": suggestions.for_user()}
+
+
+@frappe.whitelist()
 def get_agents():
     """Agent picker contents — finbyzai's own AI Agent records."""
     from finbyzai.copilot import branding

@@ -7,7 +7,9 @@
  "engine": "InnoDB",
  "field_order": [
   "user",
-  "instructions"
+  "instructions",
+  "suggestions",
+  "suggestions_updated_on"
  ],
  "fields": [
   {
@@ -25,6 +27,19 @@
    "fieldtype": "Long Text",
    "label": "My Instructions",
    "description": "Added to this user's own Copilot turns only. Never applied to anyone else."
+  },
+  {
+   "fieldname": "suggestions",
+   "fieldtype": "Small Text",
+   "label": "Suggested Prompts",
+   "read_only": 1,
+   "description": "Generated from this user's own past questions. JSON list of strings."
+  },
+  {
+   "fieldname": "suggestions_updated_on",
+   "fieldtype": "Datetime",
+   "label": "Suggestions Updated On",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 0,
