@@ -13,7 +13,6 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from json_schema_to_pydantic import create_model
-from langgraph.prebuilt import create_react_agent
 from langchain_classic.agents import AgentType, initialize_agent
 from langchain_classic.memory import (
     ConversationBufferMemory,
@@ -22,6 +21,15 @@ from langchain_classic.memory import (
     ConversationBufferWindowMemory
 )
 from finbyzai.ai.memory.base import FrappeChatMessageHistory
+
+
+with warnings.catch_warnings():
+    warnings.filterwarnings(
+        "ignore",
+        message=r"The default value of `allowed_objects` will change in a future version\..*",
+        category=PendingDeprecationWarning,
+    )
+    from langgraph.prebuilt import create_react_agent
 
 
 class BaseAgentMemory(ABC):
@@ -389,4 +397,3 @@ class FrappeAgentValidator(BaseAgentValidator):
             self.agent_doc.output_schema = None
         
         return True
-

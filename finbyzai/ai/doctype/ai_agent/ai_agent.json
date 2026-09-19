@@ -142,7 +142,7 @@
    "label": "Verbose Mode"
   },
   {
-   "default": "3",
+   "default": "25",
    "fieldname": "max_iterations",
    "fieldtype": "Int",
    "label": "Max Iterations"

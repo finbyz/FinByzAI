@@ -28,10 +28,15 @@ class AIAgent(Document):
                 frappe.throw("You can not set system message for Gemini Cache Agent")
         if self.enable_memory and not self.memory_type:
             frappe.throw("Memory type is required when memory is enabled")
-        if self.max_iterations is not None and self.max_iterations < 1:
+        if not self.max_iterations:
+            self.max_iterations = 25
+        elif self.max_iterations < 0:
             frappe.throw("Max Iterations must be at least 1")
-        if self.temperature is not None and not 0 <= self.temperature <= 2:
-            frappe.throw("Temperature must be between 0 and 2")
+        if self.temperature is not None:
+            if self.temperature < 0:
+                frappe.throw("Temperature must be between 0 and 1")
+            if self.temperature > 1:
+                self.temperature = 1
         if self.max_tokens is not None and self.max_tokens < 0:
             frappe.throw("Max Tokens cannot be negative")
         if self.agent_type != "Gemini Cache Agent" and self.llm:
