@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch, onUnmounted } from "vue";
+import { nextTick, ref, watch, onUnmounted } from "vue";
 
 // The assistant's own words. Markdown, streamed.
 //
@@ -14,6 +14,7 @@ const props = defineProps({ part: { type: Object, required: true } });
 
 const THROTTLE_MS = 100;
 const html = ref("");
+const box = ref(null);
 let timer = 0;
 let parsedAt = 0;
 
@@ -54,10 +55,10 @@ function sanitize(root) {
 	}
 	// A wide table scrolls in its own box rather than widening the panel.
 	for (const table of [...root.querySelectorAll("table")]) {
-		const box = root.ownerDocument.createElement("div");
-		box.className = "prose-scroll";
-		table.replaceWith(box);
-		box.append(table);
+		const scroller = root.ownerDocument.createElement("div");
+		scroller.className = "prose-scroll";
+		table.replaceWith(scroller);
+		scroller.append(table);
 	}
 }
 
@@ -78,6 +79,22 @@ function parse() {
 	const doc = new DOMParser().parseFromString(frappe.markdown(text), "text/html");
 	sanitize(doc.body);
 	html.value = doc.body.innerHTML;
+	nextTick(pruneBrokenImages);
+}
+
+// The model sometimes writes a markdown image for a chart it "made" — a path that
+// was never created, or one it invented outright. Left alone that renders as a
+// broken-image icon in the middle of the answer. The listener is attached here
+// rather than as an onerror attribute because the sanitizer strips attributes, and
+// an inline handler in model output is exactly what it exists to prevent.
+function pruneBrokenImages() {
+	for (const img of box.value?.querySelectorAll("img") ?? []) {
+		if (img.dataset.checked) continue;
+		img.dataset.checked = "1";
+		// complete && naturalWidth === 0 means it already failed before we got here.
+		if (img.complete && img.naturalWidth === 0) img.remove();
+		else img.addEventListener("error", () => img.remove(), { once: true });
+	}
 }
 
 function schedule() {
@@ -93,5 +110,5 @@ onUnmounted(() => timer && clearTimeout(timer));
 
 <template>
 	<!-- eslint-disable-next-line vue/no-v-html -- sanitized above -->
-	<div class="copilot-prose" v-html="html"></div>
+	<div ref="box" class="copilot-prose" v-html="html"></div>
 </template>

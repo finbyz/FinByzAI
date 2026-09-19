@@ -2,7 +2,7 @@ import { ref, computed } from "vue";
 import * as api from "@/api/client";
 import { startRun, resumeRun } from "@/api/stream";
 import { normalizeToolName } from "@/lib/tools";
-import { readPanelState } from "@/lib/panelState";
+import { readPanelState, writePanelState } from "@/lib/panelState";
 import { __ } from "@/lib/translate";
 
 // Module-singleton store: one panel instance, one source of truth. Components
@@ -188,7 +188,7 @@ function setModel(name) {
 // ── conversation control ──────────────────────────────────────────────────────
 function newChat() {
 	if (sending.value) return;
-	sessionName.value = null;
+	rememberSession(null);
 	runName.value = null;
 	messages.value = [];
 	attachments.value = [];
@@ -237,7 +237,7 @@ async function switchSession(name) {
 	// A paused run is restored on return (restorePausedRun); only block mid-stream.
 	if (sending.value) return;
 	const seq = ++switchSeq;
-	sessionName.value = name;
+	rememberSession(name);
 	runName.value = null;
 	messages.value = [];
 	attachments.value = [];
@@ -329,6 +329,19 @@ async function restorePausedRun(session) {
 // persists null, so starting a new chat deliberately still works.
 function activeSession() {
 	return sessionName.value || readPanelState().session || null;
+}
+
+// Record it the moment the server names it. The panel also persists this through a
+// watcher, but that watcher belongs to the panel instance — if the panel is rebuilt,
+// or the ref this module holds is not the one it is watching, the id never reaches
+// storage and the next turn silently opens a new conversation.
+function rememberSession(name) {
+	sessionName.value = name || null;
+	try {
+		writePanelState({ ...readPanelState(), session: name || null });
+	} catch {
+		// storage unavailable — the in-memory ref still carries this turn
+	}
 }
 
 // ── sending / streaming ────────────────────────────────────────────────────────
@@ -465,7 +478,7 @@ function handleEvent(event, msg) {
 	switch (event.type) {
 		case "run_started":
 			runName.value = event.name;
-			sessionName.value = event.session;
+			rememberSession(event.session);
 			msg.runName = event.name;
 			break;
 		case "text":
