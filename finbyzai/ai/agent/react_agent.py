@@ -1,7 +1,8 @@
+import warnings
 from typing import List, Dict, Any, Optional
+
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import Tool
-from langgraph.prebuilt import create_react_agent
 from langchain_core.tools.base import BaseTool
 from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import HumanMessage
@@ -9,6 +10,15 @@ from langchain_core.output_parsers import PydanticOutputParser
 from pydantic import BaseModel
 from json_schema_to_pydantic import create_model
 import json
+
+
+with warnings.catch_warnings():
+    warnings.filterwarnings(
+        "ignore",
+        message=r"The default value of `allowed_objects` will change in a future version\..*",
+        category=PendingDeprecationWarning,
+    )
+    from langgraph.prebuilt import create_react_agent
 
 
 class ReactAgent:
