@@ -7,6 +7,7 @@
   "enabled",
   "default_agent",
   "default_model",
+  "suggestion_model",
   "max_iterations",
   "auto_approve",
   "enable_external_search",
@@ -60,6 +61,13 @@
    "fieldtype": "Long Text",
    "label": "System Prompt",
    "description": "Prepended to every turn. The agent's own knowledge base and tools are added automatically."
+  },
+  {
+   "fieldname": "suggestion_model",
+   "fieldtype": "Link",
+   "label": "Suggestion Model",
+   "options": "LLM",
+   "description": "Model used by the daily job that writes each user's starter prompts. Pick a cheap or free one — it is a single short call per user and never answers anyone. Falls back to Default Model, then to the agent's own LLM."
   }
  ],
  "index_web_pages_for_search": 0,

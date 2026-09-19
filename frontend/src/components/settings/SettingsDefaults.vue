@@ -64,6 +64,18 @@ const modelItems = computed(() => [
 		</SettingsRow>
 
 		<SettingsRow
+			:label="__('Suggestion model')"
+			:description="__('Writes each person\'s starter prompts once every few days, from their own past questions. Nobody waits on it, so a free model is the right choice here.')"
+		>
+			<SettingsSelect
+				:items="modelItems"
+				:model-value="value('suggestion_model')"
+				:placeholder="__('Same as default')"
+				@update:model-value="emit('edit', 'suggestion_model', $event)"
+			/>
+		</SettingsRow>
+
+		<SettingsRow
 			:label="__('Max steps per turn')"
 			:description="__('How many tool calls one answer may take before it stops and asks you.')"
 		>

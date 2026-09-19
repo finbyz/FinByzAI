@@ -98,15 +98,22 @@ def recent_queries(user: str, limit: int = QUERIES_PER_USER) -> list[str]:
 
 
 def _model():
-    """The model used for this, which is only ever a cheap one-shot call.
+    """The model this job uses — `Copilot Settings.suggestion_model` when set.
 
-    Falls back to the Copilot's own default so a site does not have to configure a
-    second model just to get starter prompts.
+    Deliberately its own setting rather than the chat model. This is a background
+    call nobody is waiting on, so it should run on the cheapest model available,
+    and it must not start costing money the day someone points the Copilot at a
+    premium model. No AI Agent is involved either: there are no tools, no memory and
+    no iterations here, just one prompt and one reply, so an agent would only add
+    machinery for something to go wrong in.
+
+    Falls back to Default Model, then to the agent's own LLM, so a site that has not
+    chosen one still gets prompts.
     """
     from finbyzai.copilot import runner
 
     settings = runner.get_settings()
-    name = settings.default_model
+    name = settings.get("suggestion_model") or settings.default_model
     if not name and settings.default_agent:
         name = frappe.db.get_value("AI Agent", settings.default_agent, "llm")
     return frappe.get_doc("LLM", name).llm if name else None
