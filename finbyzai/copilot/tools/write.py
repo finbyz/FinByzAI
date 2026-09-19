@@ -122,6 +122,12 @@ def update(doctype: str, names: list, values: dict) -> dict:
     label="Running Document Actions",
 )
 def run_action(doctype: str, names: list, action: str, args: dict | None = None) -> dict:
+    # Each action below enforces its own permission (submit/cancel/amend through the
+    # document, rename and whitelisted methods explicitly), so this is not a second
+    # permission check — it is the schema guard the other write tools apply, which
+    # run_action was skipping. Without it, `create` on a Client Script is refused
+    # while `run_action` on one is not.
+    _assert_schema_safe(doctype)
     names = _as_names(names)
     args = args or {}
     action_key = (action or "").strip()
@@ -231,13 +237,17 @@ def _call_whitelisted(doc, method: str, args: dict):
     return fn(**(args or {}))
 
 
-def _assert_writable(doctype: str, permission: str):
+def _assert_schema_safe(doctype: str):
     if doctype in DEVELOPER_ONLY and not _schema_changes_allowed():
         raise frappe.PermissionError(
             f"{doctype} changes how the site works and the copilot is not allowed to write it. "
             "A developer must make this change (or set copilot_allow_schema_changes in "
             "site_config.json on a development site)."
         )
+
+
+def _assert_writable(doctype: str, permission: str):
+    _assert_schema_safe(doctype)
     if not frappe.has_permission(doctype, permission):
         raise frappe.PermissionError(f"No permission to {permission} {doctype}")
 
