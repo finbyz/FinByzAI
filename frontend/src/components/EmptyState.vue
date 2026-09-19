@@ -57,7 +57,7 @@ async function testConnection() {
 				</div>
 				<p class="text-lg text-ink-gray-8">{{ greeting }}</p>
 				<p class="text-p-base text-ink-gray-5">
-					{{ __("Ask anything about your work — projects, tasks, time, reports, records. You only ever see what your permissions already allow.") }}
+					{{ __("Ask about your data, draft records, or run a task.") }}
 				</p>
 			</div>
 
@@ -70,7 +70,7 @@ async function testConnection() {
 			</div>
 
 			<template v-else-if="suggestions.length">
-				<p class="mt-8 px-2 pb-1 text-sm text-ink-gray-5">{{ __("You often ask") }}</p>
+				<p class="mt-8 px-2 pb-1 text-sm text-ink-gray-5">{{ __("Try asking") }}</p>
 				<div class="divide-y divide-outline-gray-1">
 					<button
 						v-for="prompt in suggestions"
