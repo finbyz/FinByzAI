@@ -17,6 +17,20 @@ const call = (method, args) => frappe.xcall(`finbyzai.copilot.api.${method}`, ar
 // `approval_required` into the three things the store already knows how to render:
 // a tool part, that part's result (so its activity line stops shimmering), and the
 // question that `done: Paused` carries.
+// One shape for the approval/question card, whether it came from a realtime event or
+// from asking the server for the run's state.
+function pendingFromCall(call) {
+	return call.kind === "question"
+		? { key: call.id, prompt: call.summary || call.name, options: [], kind: "question" }
+		: {
+				key: call.id,
+				prompt: call.summary || call.name,
+				note: call.note || null,
+				options: ["Approve", "Deny"],
+				kind: "approval",
+			};
+}
+
 function follow(run, onEvent, signal) {
 	return new Promise((resolve) => {
 		const channel = `copilot:${run}`;
@@ -63,16 +77,7 @@ function follow(run, onEvent, signal) {
 				onEvent({ type: "error", message: state.error });
 			} else if (state.status === "Paused" && state.pending_call) {
 				const call = state.pending_call;
-				pending =
-					call.kind === "question"
-						? { key: call.id, prompt: call.summary || call.name, options: [], kind: "question" }
-						: {
-								key: call.id,
-								prompt: call.summary || call.name,
-								note: call.note || null,
-								options: ["Approve", "Deny"],
-								kind: "approval",
-							};
+				pending = pendingFromCall(call);
 				onEvent({
 					type: "tool_started",
 					id: call.id,
@@ -140,21 +145,36 @@ function follow(run, onEvent, signal) {
 					});
 					break;
 
-				case "done":
+				case "done": {
 					// A failed run carries its message on `done` as well, so the error is
 					// shown even if the separate `error` event went missing.
 					if (event.status === "Failed" && event.error) {
 						onEvent({ type: "error", message: event.error });
 					}
-					try {
-						onEvent({
-							...event,
-							questions: event.status === "Paused" && pending ? [pending] : null,
-						});
-					} finally {
-						finish();
+					const settle = (questions) => {
+						try {
+							onEvent({ ...event, questions });
+						} finally {
+							finish();
+						}
+					};
+					// A paused run with no card is a dead end: the composer says "Answer
+					// above to continue" and there is nothing to answer, which only a
+					// reload escaped. `approval_required` can be missed — published
+					// before this subscription existed, or a socketio blip — so ask the
+					// server what the run is actually waiting on.
+					if (event.status === "Paused" && !pending) {
+						api.getRun(run)
+							.then((state) => {
+								const call = state && state.pending_call;
+								settle(call ? [pendingFromCall(call)] : null);
+							})
+							.catch(() => settle(null));
+					} else {
+						settle(event.status === "Paused" && pending ? [pending] : null);
 					}
 					break;
+				}
 
 				default:
 					onEvent(event);
