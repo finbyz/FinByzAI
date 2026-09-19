@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import SettingsChat from "./SettingsChat.vue";
 import SettingsDefaults from "./SettingsDefaults.vue";
 import SettingsInstructions from "./SettingsInstructions.vue";
+import SettingsMyInstructions from "./SettingsMyInstructions.vue";
 import SettingsTools from "./SettingsTools.vue";
 import * as api from "@/api/client";
 import { __ } from "@/lib/translate";
@@ -33,7 +34,7 @@ const saving = ref(false);
 const error = ref("");
 const active = ref("chat");
 // Edited values live here until Save, so closing the dialog discards nothing silently.
-const draft = ref({ conversation: {}, system: {} });
+const draft = ref({ conversation: {}, system: {}, user: {} });
 
 const canEditSystem = computed(() => Boolean(data.value?.can_edit_system));
 // Fullscreen gets a dimmed backdrop and a centred card; the side panel gets neither.
@@ -47,6 +48,7 @@ const groups = computed(() => [
 		items: [
 			{ key: "chat", label: __("Agent & model"), icon: "lucide-cpu" },
 			{ key: "tools", label: __("Tools"), icon: "lucide-wrench" },
+			{ key: "my-instructions", label: __("My instructions"), icon: "lucide-user-pen" },
 		],
 	},
 	...(canEditSystem.value
@@ -72,7 +74,7 @@ watch(open, async (isOpen) => {
 	error.value = "";
 	try {
 		data.value = await api.loadSettings();
-		draft.value = { conversation: {}, system: {} };
+		draft.value = { conversation: {}, system: {}, user: {} };
 		if (!canEditSystem.value && ["defaults", "instructions"].includes(active.value))
 			active.value = "chat";
 	} catch (e) {
@@ -103,7 +105,8 @@ function edit(scope, key, value) {
 const dirty = computed(
 	() =>
 		Object.keys(draft.value.conversation).length > 0 ||
-		Object.keys(draft.value.system).length > 0
+		Object.keys(draft.value.system).length > 0 ||
+		Object.keys(draft.value.user).length > 0
 );
 
 async function save(store) {
@@ -118,6 +121,7 @@ async function save(store) {
 		payload.conversation = { name: store.sessionName.value, ...draft.value.conversation };
 	if (Object.keys(draft.value.system).length && canEditSystem.value)
 		payload.system = draft.value.system;
+	if (Object.keys(draft.value.user).length) payload.user = draft.value.user;
 
 	try {
 		await api.saveSettings(payload);
@@ -232,6 +236,12 @@ async function save(store) {
 								:data="data"
 								:draft="draft.system"
 								@edit="(k, v) => edit('system', k, v)"
+							/>
+							<SettingsMyInstructions
+								v-else-if="active === 'my-instructions'"
+								:data="data"
+								:draft="draft.user"
+								@edit="(k, v) => edit('user', k, v)"
 							/>
 							<SettingsInstructions
 								v-else-if="active === 'instructions'"
