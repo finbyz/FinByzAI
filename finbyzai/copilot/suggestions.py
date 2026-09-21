@@ -47,16 +47,6 @@ _NOISE = re.compile(
     re.I,
 )
 
-SYSTEM = (
-    "You write starter prompts for a business assistant inside an ERP.\n"
-    "You are given questions one person actually asked it. Write exactly "
-    f"{PROMPT_COUNT} prompts they would plausibly ask again.\n"
-    "Rules: one per line, no numbering, no quotes, no preamble. Each under 70 "
-    "characters. Keep their subject matter and vocabulary — if they ask about leads, "
-    "write about leads. Make each one a complete question that stands alone, not a "
-    "follow-up. Do not invent record names, people or numbers that are not in their "
-    "questions."
-)
 
 
 def _worth_learning_from(text: str) -> bool:
@@ -97,23 +87,41 @@ def recent_queries(user: str, limit: int = QUERIES_PER_USER) -> list[str]:
     return picked
 
 
-def _model():
-    """The model this job uses — `Copilot Settings.suggestion_model` when set.
+def _agent():
+    """The AI Agent that writes the prompts.
 
-    Deliberately its own setting rather than the chat model. This is a background
-    call nobody is waiting on, so it should run on the cheapest model available,
-    and it must not start costing money the day someone points the Copilot at a
-    premium model. No AI Agent is involved either: there are no tools, no memory and
-    no iterations here, just one prompt and one reply, so an agent would only add
-    machinery for something to go wrong in.
-
-    Falls back to Default Model, then to the agent's own LLM, so a site that has not
-    chosen one still gets prompts.
+    `Copilot Settings.suggestion_agent` when set, otherwise the "Copilot Suggestions"
+    agent that ships with the app. Having a real agent record is the point: its LLM
+    and its system message are what an admin edits, in the same list as every other
+    agent, instead of the wording being buried in this file.
     """
+    from finbyzai.copilot import runner
+    from finbyzai.copilot.setup import SUGGESTION_AGENT
+
+    name = runner.get_settings().get("suggestion_agent") or SUGGESTION_AGENT
+    if not frappe.db.exists("AI Agent", name):
+        return None
+    return frappe.get_doc("AI Agent", name)
+
+
+def _system_prompt(agent) -> str:
+    """The agent's own standing instruction — its system Chat Message rows."""
+    parts = []
+    for row in (agent.messages if agent else None) or []:
+        kind = (getattr(row, "type", "") or "").lower()
+        content = (getattr(row, "content", "") or "").strip()
+        if content and kind in ("system", ""):
+            parts.append(content)
+    return "\n\n".join(parts)
+
+
+def _model(agent):
+    """The agent's LLM, falling back to the Copilot's own so a misconfigured agent
+    still produces something rather than silently producing nothing."""
     from finbyzai.copilot import runner
 
     settings = runner.get_settings()
-    name = settings.get("suggestion_model") or settings.default_model
+    name = (agent.llm if agent else None) or settings.default_model
     if not name and settings.default_agent:
         name = frappe.db.get_value("AI Agent", settings.default_agent, "llm")
     return frappe.get_doc("LLM", name).llm if name else None
@@ -124,14 +132,17 @@ def generate(queries: list[str]) -> list[str]:
     background nicety and must never be the reason a scheduler tick fails."""
     from langchain_core.messages import HumanMessage, SystemMessage
 
-    llm = _model()
-    if not llm:
+    agent = _agent()
+    instruction = _system_prompt(agent)
+    llm = _model(agent)
+    if not llm or not instruction:
+        # No agent, or an agent with no system message: nothing sensible to ask for.
         return []
 
     asked = "\n".join(f"- {q}" for q in queries)
     try:
         reply = llm.invoke(
-            [SystemMessage(content=SYSTEM), HumanMessage(content=f"Their questions:\n{asked}")]
+            [SystemMessage(content=instruction), HumanMessage(content=f"Their questions:\n{asked}")]
         )
     except Exception:
         # Rate limits and provider outages are expected here; the next run retries.

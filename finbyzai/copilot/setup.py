@@ -124,10 +124,20 @@ def _ensure_suggestion_agent():
 
 
 def _free_model():
-    """Prefer a free model: this job runs for every user, on a schedule, unattended."""
+    """Prefer a free model: this job runs for every user, on a schedule, unattended.
+
+    LLM has `enabled`, not `disabled` — getting that wrong is what stopped this agent
+    being created the first time, and the failure was swallowed by the migrate hook.
+    """
+    # The chat agent's own model first, when it is already a free one: it is known to
+    # work on this site, where picking alphabetically landed on a model that is
+    # rate-limited upstream and produced nothing.
+    chat = frappe.db.get_value("AI Agent", AGENT, "llm")
+    if chat and chat.endswith(":free"):
+        return chat
     return frappe.db.get_value(
         "LLM",
-        {"name": ("like", "%:free"), "is_embedding_model": 0, "disabled": 0},
+        {"name": ("like", "%:free"), "is_embedding_model": 0, "enabled": 1},
         "name",
         order_by="name",
     )

@@ -64,14 +64,14 @@ const modelItems = computed(() => [
 		</SettingsRow>
 
 		<SettingsRow
-			:label="__('Suggestion model')"
-			:description="__('Writes each person\'s starter prompts once every few days, from their own past questions. Nobody waits on it, so a free model is the right choice here.')"
+			:label="__('Suggestion agent')"
+			:description="__('Writes each person\'s starter prompts every few days from their own past questions. Its model and its wording live on the agent, so edit it there.')"
 		>
 			<SettingsSelect
-				:items="modelItems"
-				:model-value="value('suggestion_model')"
-				:placeholder="__('Same as default')"
-				@update:model-value="emit('edit', 'suggestion_model', $event)"
+				:items="agentItems"
+				:model-value="value('suggestion_agent')"
+				:placeholder="__('Copilot Suggestions')"
+				@update:model-value="emit('edit', 'suggestion_agent', $event)"
 			/>
 		</SettingsRow>
 
