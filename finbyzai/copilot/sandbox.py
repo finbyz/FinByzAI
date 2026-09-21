@@ -65,11 +65,55 @@ def execute_code(code: str) -> dict:
     exec_globals = build_globals()
     exec_locals = {}
 
-    with safe_exec_flags():
-        exec(compile_code(code, filename=SCRIPT_FILENAME), exec_globals, exec_locals)
+    try:
+        with safe_exec_flags():
+            exec(compile_code(code, filename=SCRIPT_FILENAME), exec_globals, exec_locals)
+    except Exception as e:
+        raise _explained(e) from e
 
     result = exec_locals.get("result", exec_globals.get("result"))
     return {"result": _clip(result), "output": _printed(exec_locals, exec_globals)}
+
+
+# What the sandbox actually offers, repeated in the error because that is where a
+# model reliably reads it — the tool description is read once, an error is read at
+# exactly the moment the script has to be rewritten.
+AVAILABLE = (
+    "frappe.get_list, frappe.get_doc, frappe.get_meta, frappe.get_value, "
+    "frappe.db.count, frappe.db.exists, frappe.utils.*, and the copilot's own "
+    "read / aggregate / count / run_report"
+)
+
+
+def _explained(error: Exception) -> Exception:
+    """Turn RestrictedPython's terse refusals into something a model can act on.
+
+    `__import__ not found` says nothing about what to do instead, so the same script
+    comes back a second time with the same import at the top. Naming the replacement
+    is what actually stops the loop.
+    """
+    text = str(error)
+
+    if isinstance(error, ImportError) or "__import__" in text:
+        return frappe.ValidationError(
+            "This sandbox has no imports — do not write `import frappe` or any other "
+            f"import. Everything you need is already defined: {AVAILABLE}. "
+            "Rewrite the script without the import line."
+        )
+
+    if isinstance(error, AttributeError) and "no attribute" in text:
+        missing = text.rsplit("'", 2)[-2] if "'" in text else ""
+        if missing == "get_all":
+            return frappe.ValidationError(
+                "`frappe.get_all` is not available here because it ignores permissions. "
+                "Use `frappe.get_list` instead — same arguments, and it returns only "
+                "rows this user may see."
+            )
+        return frappe.ValidationError(
+            f"`{missing}` is not available in this sandbox. Available names: {AVAILABLE}."
+        )
+
+    return error
 
 
 def build_globals() -> NamespaceDict:

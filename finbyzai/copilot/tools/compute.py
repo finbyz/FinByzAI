@@ -32,10 +32,23 @@ _LIMIT_PRESENT = re.compile(r"\blimit\b\s+\d+", re.IGNORECASE)
     """Run a short Python script when no report or tool answers the question — a join
     across doctypes, a computation over rows, an ad-hoc grouping.
 
-    The sandbox: no import, no shell, no filesystem, no raw SQL, no writes. Available
-    names are `frappe.get_list`, `frappe.get_doc`, `frappe.get_meta`, `frappe.get_value`,
-    `frappe.db.count`, `frappe.db.exists`, `frappe.utils.*`, and the copilot's own
-    `read`, `aggregate`, `count`, `run_report`. Assign your answer to `result`.
+    NEVER write an import. Not `import frappe`, not anything else — the sandbox has no
+    import at all and the script fails immediately. `frappe` is already defined.
+
+    NEVER use `frappe.get_all` or `frappe.db.sql`; neither exists here, because both
+    ignore permissions. Use `frappe.get_list`, which takes the same arguments.
+
+    A correct script looks exactly like this, with no preamble:
+
+        rows = frappe.get_list("Lead", fields=["name", "creation"],
+                               filters={"creation": ["between", ["2025-01-01", "2025-12-31"]]},
+                               limit=500)
+        result = len(rows)
+
+    Available names: `frappe.get_list`, `frappe.get_doc`, `frappe.get_meta`,
+    `frappe.get_value`, `frappe.db.count`, `frappe.db.exists`, `frappe.utils.*`, and the
+    copilot's own `read`, `aggregate`, `count`, `run_report`. No shell, no filesystem,
+    no raw SQL, no writes. Assign your answer to `result`.
 
     Prefer a report or `aggregate` over this — it is slower and easier to get wrong.
     To change data, use create / update / run_action instead; writes do not work here.""",
