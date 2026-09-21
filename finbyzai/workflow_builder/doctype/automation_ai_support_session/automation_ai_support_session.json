@@ -6,26 +6,120 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "session_key", "workflow", "record_doctype", "record_name", "profile_version",
-  "state", "turn_count", "last_decision", "last_confidence", "handoff_reason",
-  "memory_summary", "last_communication", "started_at", "last_turn_at", "stopped_at"
+  "session_key",
+  "workflow",
+  "record_doctype",
+  "record_name",
+  "profile_version",
+  "state",
+  "turn_count",
+  "last_decision",
+  "last_confidence",
+  "handoff_reason",
+  "memory_summary",
+  "last_communication",
+  "started_at",
+  "last_turn_at",
+  "stopped_at"
  ],
  "fields": [
-  {"fieldname": "session_key", "fieldtype": "Data", "label": "Session Key", "reqd": 1, "unique": 1},
-  {"fieldname": "workflow", "fieldtype": "Link", "label": "Workflow", "options": "Automation Workflow", "reqd": 1},
-  {"fieldname": "record_doctype", "fieldtype": "Link", "label": "Record DocType", "options": "DocType", "reqd": 1},
-  {"fieldname": "record_name", "fieldtype": "Dynamic Link", "label": "Record", "options": "record_doctype", "reqd": 1},
-  {"fieldname": "profile_version", "fieldtype": "Link", "label": "AI Profile Version", "options": "Automation AI Profile Version", "reqd": 1},
-  {"fieldname": "state", "fieldtype": "Select", "label": "State", "options": "ACTIVE\nAWAITING_CUSTOMER\nAWAITING_HUMAN\nHANDED_OFF\nRESOLVED\nSTOPPED", "reqd": 1},
-  {"fieldname": "turn_count", "fieldtype": "Int", "label": "Turn Count", "read_only": 1},
-  {"fieldname": "last_decision", "fieldtype": "Data", "label": "Last Decision", "read_only": 1},
-  {"fieldname": "last_confidence", "fieldtype": "Percent", "label": "Last Confidence", "read_only": 1},
-  {"fieldname": "handoff_reason", "fieldtype": "Small Text", "label": "Handoff Reason", "read_only": 1},
-  {"fieldname": "memory_summary", "fieldtype": "Long Text", "label": "Memory Summary", "read_only": 1},
-  {"fieldname": "last_communication", "fieldtype": "Link", "label": "Last Communication", "options": "Communication", "read_only": 1},
-  {"fieldname": "started_at", "fieldtype": "Datetime", "label": "Started At", "read_only": 1},
-  {"fieldname": "last_turn_at", "fieldtype": "Datetime", "label": "Last Turn At", "read_only": 1},
-  {"fieldname": "stopped_at", "fieldtype": "Datetime", "label": "Stopped At", "read_only": 1}
+  {
+   "fieldname": "session_key",
+   "fieldtype": "Data",
+   "label": "Session Key",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "workflow",
+   "fieldtype": "Link",
+   "label": "Workflow",
+   "options": "Automation Workflow",
+   "reqd": 1
+  },
+  {
+   "fieldname": "record_doctype",
+   "fieldtype": "Link",
+   "label": "Record DocType",
+   "options": "DocType",
+   "reqd": 1
+  },
+  {
+   "fieldname": "record_name",
+   "fieldtype": "Dynamic Link",
+   "label": "Record",
+   "options": "record_doctype",
+   "reqd": 1
+  },
+  {
+   "fieldname": "profile_version",
+   "fieldtype": "Link",
+   "label": "AI Profile Version",
+   "options": "Automation AI Profile Version",
+   "reqd": 1
+  },
+  {
+   "fieldname": "state",
+   "fieldtype": "Select",
+   "label": "State",
+   "options": "ACTIVE\nAWAITING_CUSTOMER\nAWAITING_HUMAN\nHANDED_OFF\nRESOLVED\nSTOPPED",
+   "reqd": 1
+  },
+  {
+   "fieldname": "turn_count",
+   "fieldtype": "Int",
+   "label": "Turn Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_decision",
+   "fieldtype": "Data",
+   "label": "Last Decision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_confidence",
+   "fieldtype": "Percent",
+   "label": "Last Confidence",
+   "read_only": 1
+  },
+  {
+   "fieldname": "handoff_reason",
+   "fieldtype": "Small Text",
+   "label": "Handoff Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "memory_summary",
+   "fieldtype": "Long Text",
+   "label": "Memory Summary",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_communication",
+   "fieldtype": "Link",
+   "label": "Last Communication",
+   "options": "Communication",
+   "read_only": 1
+  },
+  {
+   "fieldname": "started_at",
+   "fieldtype": "Datetime",
+   "label": "Started At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_turn_at",
+   "fieldtype": "Datetime",
+   "label": "Last Turn At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "stopped_at",
+   "fieldtype": "Datetime",
+   "label": "Stopped At",
+   "read_only": 1
+  }
  ],
  "index_web_pages_for_search": 0,
  "links": [],
@@ -35,9 +129,30 @@
  "name": "Automation AI Support Session",
  "owner": "Administrator",
  "permissions": [
-  {"role": "Automation Operator", "read": 1},
-  {"role": "Automation Publisher", "read": 1},
-  {"role": "System Manager", "read": 1}
+  {
+   "role": "Automation Operator",
+   "read": 1
+  },
+  {
+   "role": "Automation Publisher",
+   "read": 1
+  },
+  {
+   "role": "System Manager",
+   "read": 1
+  },
+  {
+   "role": "AI Automation",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "report": 1,
+   "export": 1,
+   "share": 1,
+   "print": 1,
+   "email": 1
+  }
  ],
  "sort_field": "modified",
  "sort_order": "DESC",

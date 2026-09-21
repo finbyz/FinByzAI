@@ -5,7 +5,11 @@
  "creation": "2026-09-09 00:00:00.000000",
  "doctype": "DocType",
  "engine": "InnoDB",
- "field_order": ["workflow", "user", "chat_history_json"],
+ "field_order": [
+  "workflow",
+  "user",
+  "chat_history_json"
+ ],
  "fields": [
   {
    "fieldname": "workflow",
@@ -41,9 +45,39 @@
  "naming_rule": "Expression",
  "owner": "Administrator",
  "permissions": [
-  {"role": "Automation Builder", "read": 1, "write": 1, "create": 1, "delete": 1},
-  {"role": "Automation Publisher", "read": 1, "write": 1, "create": 1, "delete": 1},
-  {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1}
+  {
+   "role": "Automation Builder",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1
+  },
+  {
+   "role": "Automation Publisher",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1
+  },
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1
+  },
+  {
+   "role": "AI Automation",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "report": 1,
+   "export": 1,
+   "share": 1,
+   "print": 1,
+   "email": 1
+  }
  ],
  "sort_field": "modified",
  "sort_order": "DESC",

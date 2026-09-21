@@ -22,6 +22,7 @@ AGENT = "Copilot"
 def ensure_defaults():
     _ensure_role_permissions()
     _ensure_agent()
+    _ensure_suggestion_agent()
     sync_ai_tools()
     _attach_exported_tools()
     _ensure_settings()
@@ -78,6 +79,58 @@ def _ensure_agent():
             "max_iterations": 25,
         }
     ).insert(ignore_permissions=True)
+
+
+SUGGESTION_AGENT = "Copilot Suggestions"
+
+# The standing instruction for the agent that writes each user's starter prompts.
+# It lives on the agent rather than in code so it can be read and tuned from the desk
+# like every other agent on the site — and seeing it in the AI Agent list is the point.
+SUGGESTION_PROMPT = """You write starter prompts for a business assistant inside an ERP.
+
+You are given questions one person actually asked it. Write exactly 3 prompts they
+would plausibly ask again.
+
+Rules: one per line, no numbering, no quotes, no preamble. Each under 70 characters.
+Keep their subject matter and vocabulary - if they ask about leads, write about leads.
+Make each one a complete question that stands alone, not a follow-up. Do not invent
+record names, people or numbers that are not in their questions."""
+
+
+def _ensure_suggestion_agent():
+    """A real AI Agent for the starter-prompt job, so it is visible and editable.
+
+    It is not the chat agent: no tools, one iteration, low temperature, and a prompt
+    of its own. Giving it its own record means an admin can change how prompts are
+    written, or point it at a cheaper model, without a deploy.
+    """
+    if frappe.db.exists("AI Agent", SUGGESTION_AGENT):
+        return
+
+    doc = frappe.get_doc(
+        {
+            "doctype": "AI Agent",
+            "title": SUGGESTION_AGENT,
+            "agent_type": "Conversational Agent",
+            "llm": _free_model() or _default_llm(),
+            # One short call, and nothing is waiting on it.
+            "max_iterations": 1,
+            "temperature": 0.3,
+            "enable_memory": 0,
+        }
+    )
+    doc.append("messages", {"type": "system", "content_type": "text", "content": SUGGESTION_PROMPT})
+    doc.insert(ignore_permissions=True)
+
+
+def _free_model():
+    """Prefer a free model: this job runs for every user, on a schedule, unattended."""
+    return frappe.db.get_value(
+        "LLM",
+        {"name": ("like", "%:free"), "is_embedding_model": 0, "disabled": 0},
+        "name",
+        order_by="name",
+    )
 
 
 def _default_llm():
