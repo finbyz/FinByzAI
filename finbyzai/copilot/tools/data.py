@@ -282,16 +282,73 @@ def read(
     return blocks.attach(payload, blocks.table(rows, doctype=doctype)) if rows else payload
 
 
+# Grouping a date column by its raw value gives one group per timestamp, which is
+# never the question — "leads per year" needs YEAR(creation), not creation. Only these
+# functions are allowed through, and the fieldname inside is still validated, so the
+# expression can never be anything the caller composed.
+DATE_PARTS = {
+    "year": "YEAR",
+    "month": "MONTH",
+    "quarter": "QUARTER",
+    "week": "WEEK",
+    "day": "DAY",
+    "date": "DATE",
+}
+
+_CALL = re.compile(r"^\s*(year|month|quarter|week|day|date)\s*\(\s*([a-z_][a-z0-9_]*)\s*\)\s*$", re.I)
+
+
+def _group_expression(doctype: str, group_by: str) -> tuple[str, str]:
+    """Return (sql expression, alias) for a group_by that may name a date part.
+
+    Accepts a plain fieldname, `YEAR(creation)`, or `year:creation`. The alias is
+    always a safe identifier, so the caller can order and read by it.
+    """
+    raw = str(group_by or "").strip()
+
+    part = None
+    field = raw
+    match = _CALL.match(raw)
+    if match:
+        part, field = match.group(1).lower(), match.group(2)
+    elif ":" in raw:
+        head, _, tail = raw.partition(":")
+        if head.strip().lower() in DATE_PARTS:
+            part, field = head.strip().lower(), tail.strip()
+
+    field = _safe_fieldname(doctype, field, "group_by")
+    if not part:
+        return field, field
+
+    meta_field = frappe.get_meta(doctype).get_field(field)
+    fieldtype = meta_field.fieldtype if meta_field else "Datetime"
+    if field not in ("creation", "modified") and fieldtype not in ("Date", "Datetime", "Datetime "):
+        raise frappe.ValidationError(
+            f"`{field}` is a {fieldtype}, so it cannot be grouped by {part}. "
+            "Use a date field, or group by the field itself."
+        )
+    return f"{DATE_PARTS[part]}({field})", part
+
+
+
 @tool(
     "aggregate",
     """Grouped totals without writing SQL: e.g. total sales per customer is
     aggregate("Sales Invoice", group_by="customer", measure="base_grand_total",
     agg="sum"). `agg` is one of sum, count, avg, min, max. Returns rows sorted by the
-    aggregate, largest first — use it for "top N" and "per month" questions.
+    aggregate, largest first — use it for "top N" and "per month" questions. The user is
+    shown a chart and a table of the result automatically. `chart` picks the shape:
+    "bar" (default, for rankings), "line" (for anything over time — months, dates), or
+    "none" for a table only.
 
-    The user is shown a chart and a table of the result automatically. `chart` picks the
-    shape: "bar" (default, for rankings), "line" (for anything over time — months,
-    dates), or "none" for a table only.""",
+    For anything per year / per month / per quarter, group by a period, not the raw
+    date: group_by="year:creation", "month:creation", "quarter:creation",
+    "week:creation" or "day:creation" (YEAR(creation) is accepted too). Grouping by a
+    bare datetime gives one group per timestamp and answers nothing.
+
+    This is the right tool for "how many X per year", "top projects by hours", "totals
+    by status". Do not fetch the rows with read() and count them yourself.
+    """,
     tags=["read"],
     label="Grouping Records",
 )
@@ -314,19 +371,23 @@ def aggregate(
     limit = max(1, min(int(limit or 20), AGG_LIMIT))
     conditions, scope = scope_to_live(doctype, normalize_filters(doctype, filters))
     alias = "value"
-    group_by = _safe_fieldname(doctype, group_by, "group_by")
+    expression, group_by = _group_expression(doctype, group_by)
     if agg_key == "count":
         function = f"count(name) as {alias}"
     else:
         measure = _safe_fieldname(doctype, measure, "measure")
         function = f"{AGGREGATIONS[agg_key].lower()}({measure}) as {alias}"
 
+    # A period reads forward in time; everything else reads biggest-first.
+    periodic = expression != group_by
+    order = f"{group_by} asc" if periodic else f"{alias} {'asc' if ascending else 'desc'}"
+
     rows = frappe.get_list(
         doctype,
         filters=conditions,
-        fields=[group_by, function],
-        group_by=group_by,
-        order_by=f"{alias} {'asc' if ascending else 'desc'}",
+        fields=[f"{expression} as {group_by}" if periodic else expression, function],
+        group_by=expression,
+        order_by=order,
         limit=limit,
     )
 
