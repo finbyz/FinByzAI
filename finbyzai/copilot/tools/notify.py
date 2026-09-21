@@ -19,6 +19,7 @@ from the tool call's own persisted result instead.
 
 import csv
 import io
+import re
 
 import frappe
 
@@ -83,16 +84,14 @@ def send_email(
     reference_doctype, reference_name = _resolved_reference(reference_doctype, reference_name)
     attachment = _csv_attachment(attach_from_call) if attach_from_call else None
 
-    queue = frappe.sendmail(
+    queue = _queue_mail(
         recipients=recipients,
         cc=cc_list or None,
         subject=(subject or "").strip() or "Message from Copilot",
-        message=body,
-        as_markdown=True,
+        body=body,
         reference_doctype=reference_doctype,
         reference_name=reference_name,
-        attachments=[attachment] if attachment else None,
-        now=True,
+        attachment=attachment,
     )
     # frappe.sendmail can process a call with no error and still queue nothing: every
     # address it was given may have unsubscribed from mail on this site (this bench's
@@ -117,6 +116,54 @@ def send_email(
         "attachment": attachment["fname"] if attachment else None,
     }
 
+
+# Markdown the model writes, turned into something both halves of an email can show.
+_BOLD = re.compile(r"\*\*(.+?)\*\*", re.S)
+_ITALIC = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", re.S)
+_HEADING = re.compile(r"^\s{0,3}#{1,6}\s*", re.M)
+_CODE = re.compile(r"`(.+?)`", re.S)
+_LINK = re.compile(r"\[(.+?)\]\((.+?)\)", re.S)
+
+
+def _as_plain_text(markdown: str) -> str:
+    """The same words with the markdown syntax taken out, not converted.
+
+    Frappe builds a multipart/alternative and derives the text half by running the
+    HTML back through `to_markdown`, which puts the asterisks straight back. Both
+    alternatives are then labelled text/html, and Outlook renders the first one — so
+    the recipient sees literal `**Leads Created This Month:**`. Supplying the text
+    half ourselves is the only part of that we can control, and it is enough: Outlook
+    shows clean prose, every other client shows the real HTML.
+    """
+    text = markdown or ""
+    text = _LINK.sub(r"\1 (\2)", text)
+    text = _BOLD.sub(r"\1", text)
+    text = _ITALIC.sub(r"\1", text)
+    text = _CODE.sub(r"\1", text)
+    text = _HEADING.sub("", text)
+    return text.strip()
+
+
+def _queue_mail(recipients, cc, subject, body, reference_doctype, reference_name, attachment):
+    """`frappe.sendmail` with the text alternative filled in.
+
+    sendmail has no `text_content` parameter, so it always derives one; this drives
+    the same QueueBuilder it does, with both halves supplied.
+    """
+    from frappe.email.doctype.email_queue.email_queue import QueueBuilder
+    from frappe.utils import md_to_html
+
+    builder = QueueBuilder(
+        recipients=recipients,
+        cc=cc,
+        subject=subject,
+        message=md_to_html(body),
+        text_content=_as_plain_text(body),
+        reference_doctype=reference_doctype,
+        reference_name=reference_name,
+        attachments=[attachment] if attachment else None,
+    )
+    return builder.process(send_now=True)
 
 def _resolve(addresses, field: str) -> list:
     """Expand "me"/"myself" to the signed-in user's address, then check every
