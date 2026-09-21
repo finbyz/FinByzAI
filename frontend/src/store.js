@@ -476,11 +476,22 @@ function answerQuestion(msg, question, answer) {
 
 function handleEvent(event, msg) {
 	switch (event.type) {
-		case "run_started":
-			runName.value = event.name;
-			rememberSession(event.session);
-			msg.runName = event.name;
+		case "run_started": {
+			// This fires twice per turn from two different shapes: `startRun` emits
+			// {name, session} as soon as start_run answers, and the worker publishes
+			// {run, conversation} over realtime a moment later. Reading only `session`
+			// meant the realtime copy arrived with undefined and wiped the id the first
+			// one had just stored — so every following turn opened a new conversation.
+			// Take whichever key is present, and never let a missing one clear it.
+			const conversation = event.session || event.conversation;
+			const run = event.name || event.run;
+			if (run) {
+				runName.value = run;
+				msg.runName = run;
+			}
+			if (conversation) rememberSession(conversation);
 			break;
+		}
 		case "text":
 			appendText(msg, event.delta);
 			requestScroll();
