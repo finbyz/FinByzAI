@@ -74,7 +74,12 @@ const focusTick = ref(0);
 // the first answer ended the conversation and the only way to ask a follow-up
 // was to start a new chat.
 const agentLocked = computed(() => messages.value.length > 0);
-const needsSetup = computed(() => loaded.value && (!agents.value.length || !models.value.length));
+// "The site has no model" and "you may not list models" look identical from here,
+// and most employees are the second. Telling them to go add an LLM Provider is both
+// wrong and something they cannot do, so setup is judged on the agent alone — and a
+// site that genuinely has no model still fails the first turn with the runner's own
+// accurate message instead of a misleading banner.
+const needsSetup = computed(() => loaded.value && !agents.value.length);
 const uploading = computed(() => attachments.value.some((a) => a.status === "uploading"));
 const paused = computed(() => {
 	const last = messages.value[messages.value.length - 1];
