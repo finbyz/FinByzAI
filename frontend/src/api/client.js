@@ -26,16 +26,20 @@ export const loadAgents = () =>
 		.catch(() => [{ name: "Copilot", title: "Copilot" }]);
 
 export const loadModels = () =>
-	call("get_models").then((rows) =>
-		(rows || []).map((r) => ({
-			name: r.name,
-			title: r.title || r.name,
-			provider: r.provider,
-			logo: r.logo,
-			vision: Boolean(r.supports_vision),
-			reasoning: Boolean(r.is_reasoning),
-		}))
-	);
+	call("get_models")
+		.then((rows) =>
+			(rows || []).map((r) => ({
+				name: r.name,
+				title: r.title || r.name,
+				provider: r.provider,
+				logo: r.logo,
+				vision: Boolean(r.supports_vision),
+				reasoning: Boolean(r.is_reasoning),
+			}))
+		)
+		// The picker is optional, the panel is not. Without this a user who cannot
+		// list LLM took the whole Copilot down on load with "failed to load".
+		.catch(() => []);
 
 export const loadHistory = (limit = 30) => call("list_conversations", { limit });
 

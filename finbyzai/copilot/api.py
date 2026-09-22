@@ -367,18 +367,32 @@ def rename_conversation(conversation, title):
 @frappe.whitelist()
 def delete_conversation(conversation):
     doc = _own_conversation(conversation)
-    frappe.delete_doc("Copilot Conversation", doc.name, ignore_permissions=True)
+    # Commit any open read transaction so the row lock held by the earlier
+    # SELECT is released before delete_doc tries to acquire FOR UPDATE NOWAIT.
+    frappe.db.commit()
+    try:
+        frappe.delete_doc("Copilot Conversation", doc.name, ignore_permissions=True)
+    except frappe.QueryTimeoutError:
+        # Another transaction (e.g. an in-flight AI run) still holds a row lock.
+        # Retry once after a short pause to give it time to finish.
+        import time
+        time.sleep(2)
+        frappe.db.begin()
+        frappe.delete_doc("Copilot Conversation", doc.name, ignore_permissions=True)
     return {"deleted": doc.name}
 
 
 @frappe.whitelist()
 def get_knowledge_bases():
     """Knowledge base picker contents — finbyzai's own Knowledge Base records."""
-    return frappe.get_list(
-        "Knowledge Base",
-        fields=["name", "title", "vector_store", "status", "embeding_model"],
-        order_by="modified desc",
-        limit=50,
+    return _picker(
+        lambda: frappe.get_list(
+            "Knowledge Base",
+            fields=["name", "title", "vector_store", "status", "embeding_model"],
+            order_by="modified desc",
+            limit=50,
+        ),
+        "knowledge base",
     )
 
 
@@ -649,16 +663,37 @@ def get_suggestions():
     return {"prompts": suggestions.for_user()}
 
 
+def _picker(fetch, label):
+    """Picker contents, or nothing — never an exception.
+
+    These three endpoints only fill the composer's dropdowns, but the panel loads all
+    of them before it will accept a message, so one PermissionError here took the whole
+    Copilot down with "failed to load" for anyone without read access on LLM, AI Agent
+    or Knowledge Base — which is most employees. The chat itself does not need them:
+    the run resolves its model and agent server-side from Copilot Settings. So a user
+    who cannot list them gets an empty picker and a working Copilot.
+    """
+    try:
+        return fetch()
+    except frappe.PermissionError:
+        frappe.clear_last_message()
+        frappe.log_error(f"Copilot: {label} picker hidden, user lacks read access", frappe.get_traceback())
+        return []
+
+
 @frappe.whitelist()
 def get_agents():
     """Agent picker contents — finbyzai's own AI Agent records."""
     from finbyzai.copilot import branding
 
-    rows = frappe.get_list(
-        "AI Agent",
-        fields=["name", "title", "llm", "llm_provider", "knowledge_base"],
-        order_by="title asc",
-        limit=50,
+    rows = _picker(
+        lambda: frappe.get_list(
+            "AI Agent",
+            fields=["name", "title", "llm", "llm_provider", "knowledge_base"],
+            order_by="title asc",
+            limit=50,
+        ),
+        "agent",
     )
     # Which one the picker should start on. Without this the panel fell back to the
     # alphabetically first AI Agent on the site, so a site with its own agents opened
@@ -676,11 +711,14 @@ def get_models():
     provider's logo so the picker can show who serves it."""
     from finbyzai.copilot import branding
 
-    rows = frappe.get_list(
-        "LLM",
-        filters={"enabled": 1, "is_embedding_model": 0},
-        fields=["name", "title", "provider", "supports_vision", "is_reasoning", "size"],
-        order_by="provider asc, name asc",
+    rows = _picker(
+        lambda: frappe.get_list(
+            "LLM",
+            filters={"enabled": 1, "is_embedding_model": 0},
+            fields=["name", "title", "provider", "supports_vision", "is_reasoning", "size"],
+            order_by="provider asc, name asc",
+        ),
+        "model",
     )
     for row in rows:
         row["logo"] = branding.logo_for(row.provider, row.name)
