@@ -14,10 +14,11 @@ should not be creating.
 from unittest.mock import patch
 
 import frappe
+from frappe.model.db_query import DatabaseQuery
 from frappe.tests.utils import FrappeTestCase
 
 from finbyzai.copilot import access, api, runner, sandbox, setup
-from finbyzai.copilot.tools.data import permitted_count
+from finbyzai.copilot.tools.data import _group_expression, _period_label, aggregate, permitted_count
 
 
 class TestCopilotSetup(FrappeTestCase):
@@ -181,3 +182,63 @@ class TestCopilotPermissionScopedCount(FrappeTestCase):
 			self.assertTrue(sandbox._gated_exists(self.FIXTURE_DOCTYPE))
 		finally:
 			frappe.set_user("Administrator")
+
+
+class TestCopilotAggregatePeriods(FrappeTestCase):
+	def test_period_labels_keep_their_year(self):
+		self.assertEqual(_period_label("month", 202601), "2026-01")
+		self.assertEqual(_period_label("quarter", 20264), "2026-Q4")
+		self.assertEqual(_period_label("week", 202601), "2026-W01")
+
+	def test_day_uses_the_full_calendar_date(self):
+		expression, alias = _group_expression("ToDo", "day:creation")
+
+		self.assertEqual(expression, "DATE(creation)")
+		self.assertEqual(alias, "day")
+
+	def test_postgres_uses_supported_date_functions(self):
+		with patch.object(frappe.db, "db_type", "postgres"):
+			month, alias = _group_expression("ToDo", "month:creation")
+			week, week_alias = _group_expression("ToDo", "week:creation")
+			query = DatabaseQuery("ToDo").execute(
+				fields=[f"{month} as {alias}", "count(name) as value"],
+				group_by=alias,
+				order_by=f"{alias} asc",
+				ignore_permissions=True,
+				run=False,
+			)
+
+		self.assertEqual(
+			month,
+			"DATE_PART('year', creation) * 100 + DATE_PART('month', creation)",
+		)
+		self.assertEqual(alias, "month")
+		self.assertEqual(
+			week,
+			"DATE_PART('isoyear', creation) * 100 + DATE_PART('week', creation)",
+		)
+		self.assertEqual(week_alias, "week")
+		self.assertIn(month, query)
+		self.assertIn("group by month", query)
+
+	def test_line_chart_preserves_database_period_order(self):
+		rows = [
+			frappe._dict(month=202601, value=1),
+			frappe._dict(month=202602, value=2),
+			frappe._dict(month=202610, value=10),
+		]
+		with (
+			patch("finbyzai.copilot.tools.data.scope_to_live", return_value=({}, None)),
+			patch("frappe.get_list", return_value=rows) as get_list,
+		):
+			result = aggregate("ToDo", "month:creation", agg="count", chart="line")
+
+		self.assertEqual(
+			[row["month"] for row in result["rows"]],
+			["2026-01", "2026-02", "2026-10"],
+		)
+		self.assertEqual(
+			[row["month"] for row in result["_blocks"][0]["rows"]],
+			["2026-01", "2026-02", "2026-10"],
+		)
+		self.assertEqual(get_list.call_args.kwargs["group_by"], "month")
