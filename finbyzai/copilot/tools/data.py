@@ -286,14 +286,7 @@ def read(
 # never the question — "leads per year" needs YEAR(creation), not creation. Only these
 # functions are allowed through, and the fieldname inside is still validated, so the
 # expression can never be anything the caller composed.
-DATE_PARTS = {
-    "year": "YEAR",
-    "month": "MONTH",
-    "quarter": "QUARTER",
-    "week": "WEEK",
-    "day": "DAY",
-    "date": "DATE",
-}
+DATE_PARTS = frozenset(("year", "month", "quarter", "week", "day", "date"))
 
 _CALL = re.compile(r"^\s*(year|month|quarter|week|day|date)\s*\(\s*([a-z_][a-z0-9_]*)\s*\)\s*$", re.I)
 
@@ -327,8 +320,50 @@ def _group_expression(doctype: str, group_by: str) -> tuple[str, str]:
             f"`{field}` is a {fieldtype}, so it cannot be grouped by {part}. "
             "Use a date field, or group by the field itself."
         )
-    return f"{DATE_PARTS[part]}({field})", part
+    return _date_part_expression(part, field), part
 
+
+def _date_part_expression(part: str, field: str) -> str:
+    """Build a chronological period key for the active database."""
+    if part in ("day", "date"):
+        return f"DATE({field})"
+
+    if frappe.db.db_type == "postgres":
+        year_unit = "isoyear" if part == "week" else "year"
+        year = f"DATE_PART('{year_unit}', {field})"
+        unit = f"DATE_PART('{part}', {field})"
+    else:
+        if part == "week":
+            return f"YEARWEEK({field}, 3)"
+        year = f"YEAR({field})"
+        unit = f"{part.upper()}({field})"
+
+    if part == "year":
+        return year
+    multiplier = 10 if part == "quarter" else 100
+    return f"{year} * {multiplier} + {unit}"
+
+
+def _format_period_rows(rows: list[dict], part: str) -> list[dict]:
+    if part not in DATE_PARTS:
+        return rows
+    return [{**row, part: _period_label(part, row.get(part))} for row in rows]
+
+
+def _period_label(part: str, value):
+    if value is None or part in ("day", "date"):
+        return value
+
+    number = int(value)
+    if part == "year":
+        return number
+    if part == "quarter":
+        year, quarter = divmod(number, 10)
+        return f"{year:04d}-Q{quarter}"
+
+    year, period = divmod(number, 100)
+    marker = "W" if part == "week" else ""
+    return f"{year:04d}-{marker}{period:02d}"
 
 
 @tool(
@@ -386,10 +421,11 @@ def aggregate(
         doctype,
         filters=conditions,
         fields=[f"{expression} as {group_by}" if periodic else expression, function],
-        group_by=expression,
+        group_by=group_by if periodic else expression,
         order_by=order,
         limit=limit,
     )
+    rows = _format_period_rows(rows, group_by)
 
     payload = {
         "doctype": doctype,
@@ -411,12 +447,10 @@ def aggregate(
     shape = (chart or "bar").lower()
 
     if shape == "line":
-        # A time series reads as a line; sort by the group so the x axis runs forward.
-        ordered = sorted(rows, key=lambda r: str(r.get(group_by) or ""))
         return blocks.attach(
             payload,
-            blocks.line(ordered, x=group_by, series=series),
-            blocks.table(ordered, columns=columns, title=title),
+            blocks.line(rows, x=group_by, series=series),
+            blocks.table(rows, columns=columns, title=title),
         )
     if shape == "none":
         return blocks.attach(payload, blocks.table(rows, columns=columns, title=title))
