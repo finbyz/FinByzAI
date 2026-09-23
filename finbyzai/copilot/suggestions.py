@@ -48,6 +48,12 @@ _NOISE = re.compile(
 )
 
 
+def _personalization_enabled() -> bool:
+    from finbyzai.copilot import runner
+
+    settings = runner.get_settings()
+    return bool(settings.enabled and settings.get("enable_personalized_suggestions"))
+
 
 def _worth_learning_from(text: str) -> bool:
     text = (text or "").strip()
@@ -164,7 +170,9 @@ def generate(queries: list[str]) -> list[str]:
 
 
 def refresh_for(user: str) -> list[str]:
-    """Rewrite one user's prompts. Safe to call directly; the job calls it per user."""
+    """Rewrite one user's prompts when the site has explicitly opted in."""
+    if not _personalization_enabled():
+        return []
     queries = recent_queries(user)
     # Three prompts extrapolated from two questions is invention, not personalisation.
     if len(queries) < 3:
@@ -196,7 +204,9 @@ def _store(user: str, prompts: list[str]) -> None:
 
 
 def refresh_stale() -> dict:
-    """Scheduler entry point: rewrite prompts for users whose set has gone stale."""
+    """Queue refreshes only when Copilot and personalization are enabled."""
+    if not _personalization_enabled():
+        return {"queued": 0, "considered": 0}
     cutoff = add_to_date(now_datetime(), days=-REFRESH_DAYS)
 
     # Only people who have used the Copilot recently enough to have something to learn

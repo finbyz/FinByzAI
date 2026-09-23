@@ -459,11 +459,6 @@ def _email_receipt(tag: str, workflows: list[dict]) -> dict:
 	if not queue_name or not frappe.db.exists("Email Queue", queue_name):
 		return {"queue": queue_name, "queue_status": None, "mailbox_matches": 0}
 	queue_status = frappe.db.get_value("Email Queue", queue_name, "status")
-	if queue_status not in {"Sent", "Sending"}:
-		from frappe.email.doctype.email_queue.email_queue import send_now
-
-		send_now(queue_name, force_send=True)
-		queue_status = frappe.db.get_value("Email Queue", queue_name, "status")
 
 	subject = f"{PREFIX}{tag} actual mailbox delivery"
 	recipient = result.get("recipient")
@@ -517,7 +512,7 @@ def _asana_receipt(workflows: list[dict]) -> dict:
 
 
 def collect_live_uat(confirmation: str, tag: str, verify_mailbox: int = 1) -> dict:
-	"""Collect durable workflow/provider evidence; optionally send and search IMAP."""
+	"""Collect durable evidence without sending email or changing provider state."""
 	_require_live_confirmation(confirmation)
 	workflows = _workflow_rows(tag)
 	result = {"tag": tag, "workflows": workflows}
@@ -546,7 +541,7 @@ def collect_live_uat(confirmation: str, tag: str, verify_mailbox: int = 1) -> di
 
 
 def provision_browser_uat(confirmation: str, tag: str) -> dict:
-	"""Create an API-authenticated System Manager and a multi-trigger draft."""
+	"""Create a least-privilege API user and a multi-trigger draft."""
 	_require_live_confirmation(confirmation)
 	user_email = f"wf-uat-browser-{tag.lower()}@example.invalid"
 	user = frappe.get_doc(
@@ -559,7 +554,8 @@ def provision_browser_uat(confirmation: str, tag: str) -> dict:
 			"send_welcome_email": 0,
 		}
 	).insert(ignore_permissions=True)
-	user.add_roles("System Manager")
+	user.add_roles("Automation Publisher")
+	user.add_roles("Sales User")
 	user.api_key = frappe.generate_hash(length=15)
 	api_secret = frappe.generate_hash(length=24)
 	user.api_secret = api_secret
@@ -678,4 +674,6 @@ def cleanup_live_uat(confirmation: str, tag: str) -> dict:
 		remove("Subscription Topic", topic, force=True)
 	remove("Automation Integration Secret", f"{PREFIX}{tag}-Webhook", force=True)
 	frappe.db.commit()
+	if errors:
+		frappe.throw("Live UAT cleanup was incomplete:\n" + "\n".join(errors))
 	return {"tag": tag, "removed": removed, "errors": errors}

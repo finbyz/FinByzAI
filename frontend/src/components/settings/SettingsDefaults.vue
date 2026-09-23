@@ -76,6 +76,18 @@ const modelItems = computed(() => [
 		</SettingsRow>
 
 		<SettingsRow
+			:label="__('Personalized suggestions')"
+			:description="__('Allow recent Copilot questions to be sent to the suggestion agent every few days. Off by default.')"
+		>
+			<Switch
+				:model-value="Boolean(value('enable_personalized_suggestions'))"
+				@update:model-value="
+					emit('edit', 'enable_personalized_suggestions', $event ? 1 : 0)
+				"
+			/>
+		</SettingsRow>
+
+		<SettingsRow
 			:label="__('Max steps per turn')"
 			:description="__('How many tool calls one answer may take before it stops and asks you.')"
 		>

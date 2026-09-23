@@ -13,7 +13,7 @@ frappe.ui.form.on("Knowledge Base", {
             };
         });
 		
-		frm.set_query('embeding_model', function() {
+		frm.set_query('embedding_model', function() {
 
 			 let filters = {
                 'enabled': 1,

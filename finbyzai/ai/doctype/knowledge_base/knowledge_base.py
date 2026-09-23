@@ -16,6 +16,24 @@ STATUS_IN_PROGRESS = "In Progress"
 STATUS_COMPLETED = "Completed"
 
 
+def make_source_id(kb_name: str, parent_table: str, row_name: str) -> str:
+    """Return the stable vector metadata key for one Knowledge Base row."""
+    return f"{kb_name}_{parent_table}_{row_name}"
+
+
+def enqueue_knowledge_base(kb_name: str) -> None:
+    """Queue one Knowledge Base processor after the current transaction commits."""
+    frappe.enqueue(
+        "finbyzai.ai.doctype.knowledge_base.knowledge_base._run_process_items",
+        queue="long",
+        timeout=3600,
+        enqueue_after_commit=True,
+        job_id=f"knowledge-base-process::{kb_name}",
+        deduplicate=True,
+        kb_name=kb_name,
+    )
+
+
 class KnowledgeBase(Document):
     """
     KnowledgeBase DocType that integrates with different vector stores
@@ -44,6 +62,7 @@ class KnowledgeBase(Document):
             current_docs=[r.name for r in (self.documents or [])],
             current_notes=[r.name for r in (self.notes or [])],
             timeout=300,
+            enqueue_after_commit=True,
         )
 
         # Step 2: Enqueue processing for new unprocessed items
@@ -57,13 +76,7 @@ class KnowledgeBase(Document):
                 STATUS_QUEUE,
                 update_modified=False,
             )
-            frappe.db.commit()
-            frappe.enqueue(
-                "finbyzai.ai.doctype.knowledge_base.knowledge_base._run_process_items",
-                queue="long",
-                kb_name=self.name,
-                timeout=3600,
-            )
+            enqueue_knowledge_base(self.name)
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -109,6 +122,19 @@ class KnowledgeBase(Document):
             embeddings=emb,
             api_key=api_key,
         )
+
+    def reprocess_all_documents(self) -> None:
+        """Mark every source for reprocessing and queue one processor."""
+        for child_doctype in ("AI Links", "Knowledge Document", "AI Note"):
+            frappe.db.set_value(
+                child_doctype,
+                {"parent": self.name},
+                "is_processed",
+                0,
+                update_modified=False,
+            )
+        self.db_set("status", STATUS_QUEUE, update_modified=False)
+        enqueue_knowledge_base(self.name)
 
     # ── Core processing ───────────────────────────────────────────────────────
 
@@ -219,7 +245,7 @@ class KnowledgeBase(Document):
                     # 4. Build metadata & IDs
                     #    source_id is the stable identifier used to delete all
                     #    chunks for this row when the row is removed.
-                    source_id = f"{self.name}_{parent_table}_{row.name}"
+                    source_id = make_source_id(self.name, parent_table, row.name)
                     metadatas, ids = [], []
                     for i, chunk in enumerate(chunks):
                         meta = {
@@ -317,7 +343,7 @@ def _get_embeddings(kb: KnowledgeBase):
     - An embedding model is set on the KB.
     - The selected LLM has `is_embedding_model = 1`.
     """
-    llm_name = getattr(kb, "embeding_model", None)
+    llm_name = getattr(kb, "embedding_model", None)
     if not llm_name:
         return None
 
@@ -359,7 +385,7 @@ def _get_embeddings(kb: KnowledgeBase):
 # Public API + background-job wrappers
 # ──────────────────────────────────────────────────────────────────────────────
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def process_knowledge_base(kb_name):
     """
     Whitelisted endpoint: enqueue a background job to process a Knowledge Base.
@@ -367,20 +393,15 @@ def process_knowledge_base(kb_name):
     if not frappe.db.exists("Knowledge Base", kb_name):
         frappe.throw(f"Knowledge Base '{kb_name}' not found.")
 
-    current_status = frappe.db.get_value("Knowledge Base", kb_name, "status")
+    kb = frappe.get_doc("Knowledge Base", kb_name)
+    kb.check_permission("write")
+    current_status = kb.status
 
-    if current_status == STATUS_IN_PROGRESS:
+    if current_status in {STATUS_QUEUE, STATUS_IN_PROGRESS}:
         return {"status": "already_processing", "kb_name": kb_name}
 
-    frappe.db.set_value("Knowledge Base", kb_name, "status", STATUS_QUEUE)
-    frappe.db.commit()
-
-    frappe.enqueue(
-        "finbyzai.ai.doctype.knowledge_base.knowledge_base._run_process_items",
-        queue="long",
-        kb_name=kb_name,
-        timeout=3600,
-    )
+    kb.db_set("status", STATUS_QUEUE, update_modified=False)
+    enqueue_knowledge_base(kb_name)
 
     return {"status": "enqueued", "kb_name": kb_name}
 
@@ -447,7 +468,7 @@ def _run_delete_removed_rows(kb_name, current_links, current_docs, current_notes
 
         removed = existing_names - current_set
         for row_name in removed:
-            source_id = f"{kb_name}_{parent_table}_{row_name}"
+            source_id = make_source_id(kb_name, parent_table, row_name)
             try:
                 store.delete({"source_id": source_id})
                 frappe.logger().info(
@@ -499,12 +520,7 @@ def process_queued_knowledge_bases():
                 frappe.db.commit()
                 continue
 
-            frappe.enqueue(
-                "finbyzai.ai.doctype.knowledge_base.knowledge_base._run_process_items",
-                queue="long",
-                kb_name=kb_name,
-                timeout=3600,
-            )
+            enqueue_knowledge_base(kb_name)
 
         except Exception as e:
             frappe.log_error(
@@ -673,7 +689,7 @@ def _run_update_ai_links(old_route, new_route):
             try:
                 store = kb.get_vector_store()
                 for row_name in row_names:
-                    source_id = f"{kb_name}_links_{row_name}"
+                    source_id = make_source_id(kb_name, "links", row_name)
                     store.delete({"source_id": source_id})
             except Exception:
                 frappe.log_error(

@@ -157,7 +157,7 @@ def _knowledge_snapshot(knowledge_base: str | None, execution_user: str) -> dict
 		"modified": str(kb.modified),
 		"status": kb.status,
 		"vector_store": kb.vector_store,
-		"embedding_model": kb.embeding_model,
+		"embedding_model": kb.embedding_model,
 		"sources": sources,
 	}
 	manifest["content_hash"] = frappe.utils.sha256_hash(canonical_json(manifest))

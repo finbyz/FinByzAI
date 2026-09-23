@@ -61,7 +61,7 @@ class AIAgent(Document):
             return response
         return str(response)
     
-    @frappe.whitelist()
+    @frappe.whitelist(methods=["POST"])
     def test_agent(self, **kwargs):
         """
         Test the AI agent with automatic memory and session management.

@@ -20,7 +20,7 @@ class GeminiCache(Document):
             cached_content=self.cache_name
         )
     
-    @frappe.whitelist()
+    @frappe.whitelist(methods=["POST"])
     def update_cache(self):
         files = self.get_files()
         model_name = self.llm.split('/',2)[1]

@@ -169,11 +169,30 @@ def after_install():
 
 def after_migrate():
     """Synchronize AI defaults and Workflow Builder runtime invariants."""
+    _migrate_embedding_model_field()
     _sync_ai_defaults()
 
     from finbyzai.workflow_builder.setup import after_migrate as setup_workflow_builder
 
     setup_workflow_builder()
+
+
+def _migrate_embedding_model_field():
+    """Copy data from the former misspelled Knowledge Base field."""
+    if not (
+        frappe.db.has_column("Knowledge Base", "embeding_model")
+        and frappe.db.has_column("Knowledge Base", "embedding_model")
+    ):
+        return
+    knowledge_base = frappe.qb.DocType("Knowledge Base")
+    (
+        frappe.qb.update(knowledge_base)
+        .set(knowledge_base.embedding_model, knowledge_base.embeding_model)
+        .where(
+            knowledge_base.embedding_model.isnull()
+            | (knowledge_base.embedding_model == "")
+        )
+    ).run()
 
 
 def _sync_ai_defaults():
