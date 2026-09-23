@@ -82,7 +82,7 @@ class AgentService:
         self._memory = None
         self._conversation_id = None
         self._is_basic_chain = False
-        _configure_langsmith()
+        configure_tracing()
         try:
             # Accept both name and Document
             if isinstance(agent, str):
