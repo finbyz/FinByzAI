@@ -130,6 +130,14 @@ permission_query_conditions = {
         "finbyzai.copilot.doctype.copilot_user_settings.copilot_user_settings."
         "get_permission_query_conditions"
     ),
+    "Copilot Conversation": (
+        "finbyzai.copilot.doctype.copilot_conversation.copilot_conversation."
+        "get_permission_query_conditions"
+    ),
+    "Copilot Run": (
+        "finbyzai.copilot.doctype.copilot_run.copilot_run."
+        "get_permission_query_conditions"
+    ),
 }
 
 has_permission = {
@@ -138,6 +146,14 @@ has_permission = {
     ),
     "Copilot User Settings": (
         "finbyzai.copilot.doctype.copilot_user_settings.copilot_user_settings."
+        "has_permission"
+    ),
+    "Copilot Conversation": (
+        "finbyzai.copilot.doctype.copilot_conversation.copilot_conversation."
+        "has_permission"
+    ),
+    "Copilot Run": (
+        "finbyzai.copilot.doctype.copilot_run.copilot_run."
         "has_permission"
     ),
 }

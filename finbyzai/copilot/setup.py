@@ -59,6 +59,15 @@ ROLE_PERMISSIONS = {
 }
 
 
+OWNER_ROLE_PERMISSIONS = {
+    role: {
+        "Copilot Conversation": ("read", "write", "create", "delete"),
+        "Copilot Run": ("read", "write", "create", "delete"),
+    }
+    for role in ("Copilot Admin", "Copilot User")
+}
+
+
 def _ensure_role_permissions():
     from frappe.permissions import add_permission, update_permission_property
 
@@ -77,6 +86,50 @@ def _ensure_role_permissions():
                 add_permission(doctype, role, 0)
             for right in rights:
                 update_permission_property(doctype, role, 0, right, 1, validate=False)
+
+    for role, doctypes in OWNER_ROLE_PERMISSIONS.items():
+        if not frappe.db.exists("Role", role):
+            continue
+        for doctype, rights in doctypes.items():
+            if not frappe.db.exists("DocType", doctype):
+                continue
+            if not frappe.db.exists("Custom DocPerm", {"parent": doctype}):
+                continue
+            _ensure_owner_permission(doctype, role, rights)
+
+
+def _ensure_owner_permission(doctype, role, rights):
+    from frappe.permissions import update_permission_property
+
+    filters = {
+        "parent": doctype,
+        "role": role,
+        "permlevel": 0,
+        "if_owner": 1,
+    }
+    if not frappe.db.exists("Custom DocPerm", filters):
+        frappe.get_doc(
+            {
+                "doctype": "Custom DocPerm",
+                "parent": doctype,
+                "parenttype": "DocType",
+                "parentfield": "permissions",
+                "role": role,
+                "permlevel": 0,
+                "if_owner": 1,
+            }
+        ).insert(ignore_permissions=True)
+    for right in rights:
+        update_permission_property(
+            doctype,
+            role,
+            0,
+            right,
+            1,
+            validate=False,
+            if_owner=1,
+        )
+
 
 def _ensure_agent():
     if frappe.db.exists("AI Agent", AGENT):
