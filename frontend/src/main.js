@@ -261,6 +261,12 @@ class CopilotPanel {
 
 frappe.provide("frappe.copilot");
 $(document).on("app_ready", () => {
+	// Not everyone on the site has the Copilot. The bundle still loads for them —
+	// app_include_js has no per-user form — so this is where it stops: no launcher,
+	// no panel, no shortcut, and nothing calling the API behind the scenes. Silence
+	// rather than an error, because a feature they were never given has not failed.
+	if (!frappe.boot?.copilot_enabled) return;
+
 	// The desk can fire app_ready more than once; a second panel would mount a
 	// second copy of the app over the first one.
 	if (frappe.copilot.panel) return;
