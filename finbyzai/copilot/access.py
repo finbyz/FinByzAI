@@ -38,3 +38,35 @@ def can_read(doctype: str, name) -> bool:
     except frappe.DoesNotExistError:
         return False
     return bool(frappe.has_permission(doctype, "read", doc=doc))
+
+
+# Who the Copilot exists for. Anything outside this set should not see the launcher,
+# should not have the panel mounted, and should be refused by every endpoint — not
+# shown an error, because a feature they were never given is not a failure.
+COPILOT_ROLES = {"Copilot User", "Copilot Admin", "System Manager"}
+ADMIN_ROLES = {"Copilot Admin", "System Manager"}
+
+
+def has_copilot(user: str | None = None) -> bool:
+    """Whether this user may use the Copilot at all."""
+    user = user or frappe.session.user
+    if user == "Guest":
+        return False
+    return bool(set(frappe.get_roles(user)) & COPILOT_ROLES)
+
+
+def is_copilot_admin(user: str | None = None) -> bool:
+    return bool(set(frappe.get_roles(user or frappe.session.user)) & ADMIN_ROLES)
+
+
+def require_copilot() -> None:
+    """Gate every Copilot endpoint.
+
+    Raises rather than returning empty, so a user without the role cannot reach the
+    chat by calling the API directly. The panel never calls these for them, because
+    boot tells it not to mount at all.
+    """
+    if not has_copilot():
+        raise frappe.PermissionError(
+            _("The Copilot is not enabled for your account.")
+        )

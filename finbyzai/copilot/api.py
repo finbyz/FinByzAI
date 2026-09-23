@@ -23,10 +23,11 @@ TITLE_LENGTH = 60
 HISTORY_LIMIT = 500
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def start_run(input, conversation=None, agent=None, model=None, attachments=None, knowledge_base=None):
     """Start a turn. Creates the conversation when none is given. Returns immediately —
     the run happens in a worker and streams on `copilot:<run>`."""
+    access.require_copilot()
     settings = runner.get_settings()
     if not settings.enabled:
         frappe.throw(_("The Copilot is turned off in Copilot Settings."))
@@ -75,9 +76,10 @@ def start_run(input, conversation=None, agent=None, model=None, attachments=None
     return {"run": run.name, "conversation": conversation_doc.name}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def approve_run(run, call_id, decision, values=None):
     """Answer the Approve/Reject card. Resumes the run in a worker."""
+    access.require_copilot()
     doc = _own_run(run)
     if doc.status != "Paused":
         frappe.throw(_("This run is {0}, not waiting for an answer.").format(doc.status))
@@ -101,11 +103,12 @@ def approve_run(run, call_id, decision, values=None):
     return {"status": "Running"}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def answer_question(run, call_id, answer):
     """Answer an `ask_user` question. The answer is delivered as that tool call's
     result, not as a new user turn — the model asked, so the model gets a reply to its
     own call and the tool-call sequence stays valid."""
+    access.require_copilot()
     doc = _own_run(run)
     if doc.status != "Paused":
         frappe.throw(_("This run is {0}, not waiting for an answer.").format(doc.status))
@@ -131,9 +134,10 @@ def answer_question(run, call_id, answer):
     return {"status": "Running"}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def stop_run(run):
     """User pressed Stop. The worker checks status between steps and gives up."""
+    access.require_copilot()
     doc = _own_run(run)
     if doc.status in ("Running", "Paused"):
         doc.db_set({"status": "Stopped", "pending_call": None, "decision": None}, update_modified=False)
@@ -150,6 +154,7 @@ def get_run(run):
     or a backgrounded tab can miss events. The panel polls this while a turn is in
     flight so a finished or failed run is never left spinning.
     """
+    access.require_copilot()
     doc = _own_run(run)
     return {
         "run": doc.name,
@@ -215,7 +220,7 @@ def _replay(doc):
 RECOVER_GRACE = 60
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def recover_conversation(conversation):
     """Fail runs left Running by a worker that died or a panel that went away.
 
@@ -230,6 +235,7 @@ def recover_conversation(conversation):
     the panel now believes is free, and a new turn started on top of it interleaves
     both runs' messages into one transcript.
     """
+    access.require_copilot()
     doc = _own_conversation(conversation)
     candidates = frappe.get_all(
         "Copilot Run",
@@ -282,6 +288,7 @@ def _labelled(calls):
 @frappe.whitelist()
 def get_conversation(conversation):
     """Rebuild a conversation on reload: messages in order, with their blocks."""
+    access.require_copilot()
     doc = _own_conversation(conversation)
     rows = frappe.get_all(
         "Copilot Message",
@@ -348,6 +355,7 @@ def get_conversation(conversation):
 
 @frappe.whitelist()
 def list_conversations(limit=20):
+    access.require_copilot()
     return frappe.get_all(
         "Copilot Conversation",
         filters={"owner": frappe.session.user},
@@ -357,38 +365,31 @@ def list_conversations(limit=20):
     )
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def rename_conversation(conversation, title):
+    access.require_copilot()
     doc = _own_conversation(conversation)
     doc.db_set("title", (title or "").strip()[:TITLE_LENGTH] or doc.title)
     return {"title": doc.title}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def delete_conversation(conversation):
+    access.require_copilot()
     doc = _own_conversation(conversation)
-    # Commit any open read transaction so the row lock held by the earlier
-    # SELECT is released before delete_doc tries to acquire FOR UPDATE NOWAIT.
-    frappe.db.commit()
-    try:
-        frappe.delete_doc("Copilot Conversation", doc.name, ignore_permissions=True)
-    except frappe.QueryTimeoutError:
-        # Another transaction (e.g. an in-flight AI run) still holds a row lock.
-        # Retry once after a short pause to give it time to finish.
-        import time
-        time.sleep(2)
-        frappe.db.begin()
-        frappe.delete_doc("Copilot Conversation", doc.name, ignore_permissions=True)
+    _block_while_running(doc.name)
+    frappe.delete_doc("Copilot Conversation", doc.name, ignore_permissions=True)
     return {"deleted": doc.name}
 
 
 @frappe.whitelist()
 def get_knowledge_bases():
     """Knowledge base picker contents — finbyzai's own Knowledge Base records."""
+    access.require_copilot()
     return _picker(
         lambda: frappe.get_list(
             "Knowledge Base",
-            fields=["name", "title", "vector_store", "status", "embeding_model"],
+            fields=["name", "title", "vector_store", "status", "embedding_model"],
             order_by="modified desc",
             limit=50,
         ),
@@ -396,7 +397,7 @@ def get_knowledge_bases():
     )
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def test_model(model=None, agent=None):
     """Ask the configured model to say one word, and report exactly what came back.
 
@@ -408,6 +409,7 @@ def test_model(model=None, agent=None):
 
     Deliberately tiny: three tokens, no tools, no history, no conversation created.
     """
+    access.require_copilot()
     import time
 
     from finbyzai.copilot import agent as agent_config
@@ -487,6 +489,7 @@ def get_tools(agent=None, knowledge_base=None):
     Reads the live registry rather than a hardcoded list, so a tool added to the app —
     or an AI Tool row linked on the agent — shows up here without a UI change.
     """
+    access.require_copilot()
     from finbyzai.copilot import agent as agent_config
     from finbyzai.copilot import registry
 
@@ -558,6 +561,7 @@ def can_administer() -> bool:
 def get_settings():
     """Everything the settings dialog shows: the pickers' contents, the system defaults,
     and whether this user may change them."""
+    access.require_copilot()
     settings = runner.get_settings()
     is_admin = can_administer()
 
@@ -573,6 +577,9 @@ def get_settings():
             "default_agent": settings.default_agent,
             "default_model": settings.default_model,
             "suggestion_agent": settings.get("suggestion_agent"),
+            "enable_personalized_suggestions": bool(
+                settings.get("enable_personalized_suggestions")
+            ),
             "max_iterations": settings.max_iterations,
             "auto_approve": bool(settings.auto_approve),
             "enable_external_search": bool(settings.enable_external_search),
@@ -598,10 +605,11 @@ def get_settings():
     return out
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def save_settings(system=None, conversation=None, user=None):
     """Save the dialog. System defaults need System Manager; the per-conversation
     agent / model / knowledge base is the user's own choice on their own chat."""
+    access.require_copilot()
     saved = {}
 
     values = _parse(user) or {}
@@ -620,6 +628,7 @@ def save_settings(system=None, conversation=None, user=None):
             "default_agent",
             "default_model",
             "suggestion_agent",
+            "enable_personalized_suggestions",
             "max_iterations",
             "auto_approve",
             "enable_external_search",
@@ -658,6 +667,7 @@ def get_suggestions():
     the panel shows nothing rather than a generic example the user may not be able
     to run.
     """
+    access.require_copilot()
     from finbyzai.copilot import suggestions
 
     return {"prompts": suggestions.for_user()}
@@ -684,6 +694,7 @@ def _picker(fetch, label):
 @frappe.whitelist()
 def get_agents():
     """Agent picker contents — finbyzai's own AI Agent records."""
+    access.require_copilot()
     from finbyzai.copilot import branding
 
     rows = _picker(
@@ -709,6 +720,7 @@ def get_agents():
 def get_models():
     """Model picker contents: the enabled, non-embedding LLM records, each with its
     provider's logo so the picker can show who serves it."""
+    access.require_copilot()
     from finbyzai.copilot import branding
 
     rows = _picker(

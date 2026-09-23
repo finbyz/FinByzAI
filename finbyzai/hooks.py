@@ -20,6 +20,10 @@ app_license = "gpl-3.0"
 app_include_js = ["finbyzai_copilot.bundle.js"]
 app_include_css = ["finbyzai_copilot.bundle.css"]
 
+# The bundle above is served to every user on the site, so who actually gets the
+# Copilot is decided in the boot payload — the panel does not mount without it.
+extend_bootinfo = "finbyzai.copilot.boot.boot_session"
+
 # include js, css files in header of web template
 # web_include_css = "/assets/finbyzai/css/finbyzai.css"
 # web_include_js = "/assets/finbyzai/js/finbyzai.js"
@@ -72,9 +76,10 @@ app_include_css = ["finbyzai_copilot.bundle.css"]
 # before_install = "finbyzai.install.before_install"
 after_install = "finbyzai.install.after_install"
 
-after_migrate = "finbyzai.install.after_migrate"
-
-after_migrate = ["finbyzai.copilot.setup.ensure_defaults"]
+after_migrate = [
+	"finbyzai.install.after_migrate",
+	"finbyzai.copilot.setup.ensure_defaults",
+]
 
 # Uninstallation
 # ------------

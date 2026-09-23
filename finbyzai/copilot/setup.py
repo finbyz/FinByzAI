@@ -33,17 +33,28 @@ def ensure_defaults():
 # DocPerm row ignores its standard permissions entirely, and on a site where someone
 # has opened the Role Permissions Manager that is exactly what happens. AI Agent on
 # this site is in that state, which silently left both roles with no access at all.
+# Everything the Copilot's own pickers and settings read. An admin configures them;
+# a user only ever reads them, which is what the composer's dropdowns need.
+# Child tables (AI Agent Tool, Knowledge Document) are deliberately absent: Frappe
+# grants no permission on them independently, they inherit the parent's.
+_CONFIG_DOCTYPES = (
+    "AI Agent",
+    "AI Tool",
+    "LLM",
+    "LLM Provider",
+    "Knowledge Base",
+)
+
 ROLE_PERMISSIONS = {
     "Copilot Admin": {
-        "AI Agent": ("read", "write", "create", "delete"),
-        "AI Tool": ("read", "write", "create", "delete"),
-        "Knowledge Base": ("read", "write", "create", "delete"),
+        **{dt: ("read", "write", "create", "delete") for dt in _CONFIG_DOCTYPES},
         "Copilot Settings": ("read", "write"),
+        "Copilot User Settings": ("read", "write", "create", "delete"),
     },
     "Copilot User": {
-        "AI Agent": ("read",),
-        "AI Tool": ("read",),
-        "Knowledge Base": ("read",),
+        **{dt: ("read",) for dt in _CONFIG_DOCTYPES},
+        # Their own row only — the document-level hook still confines them to it.
+        "Copilot User Settings": ("read", "write", "create"),
     },
 }
 
