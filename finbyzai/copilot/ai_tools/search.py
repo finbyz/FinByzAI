@@ -1,54 +1,27 @@
 # Copyright (c) 2026, Finbyz Tech Pvt Ltd and contributors
 # For license information, please see license.txt
 
-"""One tool, two places to look.
-
-`scope="internal"` is Frappe's own global search — every DocType a word could be
-in, not one you have to guess first. It already checks permission twice over
-(`frappe.utils.global_search.search`: doctype-level, then a per-record
-`has_permission()` on each hit) and runs as whichever user is having this
-conversation, never as Administrator, so a result is exactly what that person
-could have found themselves by typing into the desk's own search bar.
-
-`scope="external"` is the open web — for "what's the news on X" and anything
-this ERP would never contain. It goes through OpenRouter's own web-search
-plugin (backed by Exa) — the request shape (`plugins: [{"id": "web"}]`, a POST
-to openrouter.ai) is OpenRouter's own proprietary extension, not something
-Google's or OpenAI's native APIs understand, so this needs an LLM Provider
-record literally named "OpenRouter" with its own funded key.
-
-That requirement is independent of whichever provider a site actually chats
-through. A site whose agent only ever talks to Gemini or GPT still needs this
-one extra, cheap provider record purely to power search — same as `send_email`
-needing a working Email Account regardless of which LLM answered the question.
-Nothing here reads the conversation's own model or its provider; EXTERNAL_MODEL
-below is a second, independent choice, fixed because search results read the
-same whichever model assembled the request.
-
-Billing: every external call is charged to whatever OpenRouter account owns
-that key — Exa's own fee (~$0.007/call as of writing), passed straight
-through, not billed to Google, OpenAI or the client's own account with them.
-"""
+"""Native implementation of the ``search`` AI Tool."""
 
 import frappe
+
 import requests
 
-from finbyzai.copilot import blocks
+from finbyzai.copilot import access, blocks
+
 from finbyzai.copilot.registry import tool
 
 INTERNAL_LIMIT = 20
+
 EXTERNAL_RESULTS = 5
+
 EXTERNAL_TIMEOUT = 20
+
 SNIPPET_WIDTH = 220
 
-# A fixed model for the external call, independent of whatever the conversation's
-# own model is set to — search results read the same regardless of which model
-# assembled the request, and the free tier keeps this at just the search
-# backend's own fee (~$0.007/call via Exa, OpenRouter's default web-search
-# backend, as of writing) rather than also paying for a paid completion.
 EXTERNAL_MODEL = "cohere/north-mini-code:free"
-EXTERNAL_PROVIDER = "OpenRouter"
 
+EXTERNAL_PROVIDER = "OpenRouter"
 
 @tool(
     "search",
@@ -69,7 +42,9 @@ EXTERNAL_PROVIDER = "OpenRouter"
     tags=["read"],
     label="Searching",
 )
-def search(query: str, scope: str = "internal", doctype: str | None = None, limit: int = 10) -> dict:
+def search_tool(query: str, scope: str = "internal", doctype: str | None = None, limit: int = 10) -> dict:
+    if doctype:
+        access.require_permission(doctype, "read")
     scope = (scope or "internal").strip().lower()
     if scope not in ("internal", "external", "both"):
         raise frappe.ValidationError('`scope` must be "internal", "external" or "both".')
@@ -94,7 +69,6 @@ def search(query: str, scope: str = "internal", doctype: str | None = None, limi
             ui_blocks.append(block)
 
     return blocks.attach(payload, *ui_blocks)
-
 
 def _internal(query: str, doctype: str | None, limit: int) -> list:
     """Frappe's own `global_search.search()` does this, but its row-enrichment
@@ -150,14 +124,12 @@ def _internal(query: str, doctype: str | None, limit: int) -> list:
         )
     return out
 
-
 def _title_of(doctype: str, name: str) -> str:
     try:
         title_field = frappe.get_meta(doctype).title_field
         return (title_field and frappe.db.get_value(doctype, name, title_field)) or name
     except Exception:
         return name
-
 
 def _snippet(content: str, query: str, width: int = SNIPPET_WIDTH) -> str:
     """The bit of the matched record around the first query word, not the whole
@@ -169,7 +141,6 @@ def _snippet(content: str, query: str, width: int = SNIPPET_WIDTH) -> str:
         return text[:width].strip()
     start = max(0, idx - width // 3)
     return text[start : start + width].strip()
-
 
 def _external(query: str) -> dict:
     """One call to OpenRouter's web-search plugin: a model's own answer, grounded
@@ -226,7 +197,6 @@ def _external(query: str) -> dict:
         if a.get("type") == "url_citation" and a.get("url_citation")
     ]
     return {"answer": message.get("content") or "", "sources": sources}
-
 
 def _openrouter_key() -> str:
     """The funded OpenRouter key external search needs — independent of whatever

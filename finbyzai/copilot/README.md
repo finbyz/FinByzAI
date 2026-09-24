@@ -6,14 +6,10 @@ and returns UI blocks the chat panel renders with frappe-ui.
 
     guard.py       every tool call: savepoint + errors returned, never raised   [done]
     blocks.py      kpi / table / line / bar / records contract for the panel    [done]
-    registry.py    tool registry, schemas, confirm flags                        [done, langchain wrapper day 4]
-    tools/meta     find_doctypes, describe                                      [done]
-    tools/data     read, aggregate, count  (get_list only, never get_all)       [done]
-    tools/reports  list_reports, describe_report, run_report                    [done]
-    sandbox.py     RestrictedPython namespace, permission-gated, no writes     [done]
-    tools/compute  execute (sandboxed python), run_query (read-only SQL)        [done]
-    tools/write    create, update, run_action, delete   (all confirm=True)      [done]
-    tools/files    extract_file_content (pdf / sheet / image)                   [done]
+    registry.py    load and sync AI Tools, schemas, confirmation flags
+    ai_tools/      one complete implementation per AI Tool record
+    access.py      permission checks shared by AI Tools
+    sandbox.py     restricted Python namespace and permission-checked reads
     runner.py      agent loop in an RQ worker, socketio events, approval pause  [done]
     api.py         whitelisted endpoints for the panel                          [done]
     doctype/       Copilot Conversation / Message / Run / Settings              [done]

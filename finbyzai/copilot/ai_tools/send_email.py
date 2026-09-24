@@ -1,39 +1,27 @@
 # Copyright (c) 2026, Finbyz Tech Pvt Ltd and contributors
 # For license information, please see license.txt
 
-"""Sending mail — the answer to "can you email this to me".
-
-One tool, `send_email`, registered with confirm=True like every other write: the user
-sees the exact recipients, subject and body and approves it before anything leaves
-the site. It goes through `frappe.sendmail`, the same primitive
-`AIDigestSchedule.build_and_send` already uses for the scheduled briefing, so a
-message sent from the chat and a message sent by the digest go out through identical
-plumbing and land in the same Email Queue.
-
-`attach_from_call` is the same idea `visualize` is built on: the model writes the
-words, the data comes back out of a call it actually made. Asked to "email the table
-too", a model can only retype what it already summarized — the three rows it chose
-to mention, not the other twenty-one — so the full table goes out as a CSV read back
-from the tool call's own persisted result instead.
-"""
+"""Native implementation of the ``send_email`` AI Tool."""
 
 import csv
+
 import io
+
 import re
 
 import frappe
 
+from finbyzai.copilot import access
+
 from finbyzai.copilot.registry import tool
-from finbyzai.copilot.tools.visualize import rows_from_call
+
+from finbyzai.copilot.ai_tools.visualize import rows_from_call
 
 MAX_RECIPIENTS = 20
+
 MAX_ATTACHMENT_ROWS = 5000
 
-# What "email me this" resolves to — the signed-in user's own address, and only that.
-# A model that could send to any name it heard in the conversation would be a data
-# exfiltration path; this alias can never become anyone else's inbox.
 SELF_ALIASES = {"me", "myself", "my email", "my own email", "my email address"}
-
 
 @tool(
     "send_email",
@@ -60,7 +48,7 @@ SELF_ALIASES = {"me", "myself", "my email", "my own email", "my email address"}
     tags=["write"],
     label="Sending Email",
 )
-def send_email(
+def send_email_tool(
     to: list,
     subject: str,
     body: str,
@@ -69,6 +57,7 @@ def send_email(
     reference_name: str | None = None,
     attach_from_call: str | None = None,
 ) -> dict:
+    access.require_permission("Communication", "create")
     recipients = _resolve(to, "to")
     cc_list = _resolve(cc or [], "cc")
     if not recipients:
@@ -116,14 +105,15 @@ def send_email(
         "attachment": attachment["fname"] if attachment else None,
     }
 
-
-# Markdown the model writes, turned into something both halves of an email can show.
 _BOLD = re.compile(r"\*\*(.+?)\*\*", re.S)
-_ITALIC = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", re.S)
-_HEADING = re.compile(r"^\s{0,3}#{1,6}\s*", re.M)
-_CODE = re.compile(r"`(.+?)`", re.S)
-_LINK = re.compile(r"\[(.+?)\]\((.+?)\)", re.S)
 
+_ITALIC = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", re.S)
+
+_HEADING = re.compile(r"^\s{0,3}#{1,6}\s*", re.M)
+
+_CODE = re.compile(r"`(.+?)`", re.S)
+
+_LINK = re.compile(r"\[(.+?)\]\((.+?)\)", re.S)
 
 def _as_plain_text(markdown: str) -> str:
     """The same words with the markdown syntax taken out, not converted.
@@ -142,7 +132,6 @@ def _as_plain_text(markdown: str) -> str:
     text = _CODE.sub(r"\1", text)
     text = _HEADING.sub("", text)
     return text.strip()
-
 
 def _queue_mail(recipients, cc, subject, body, reference_doctype, reference_name, attachment):
     """`frappe.sendmail` with the text alternative filled in.
@@ -186,7 +175,6 @@ def _resolve(addresses, field: str) -> list:
         if text not in out:
             out.append(text)
     return out
-
 
 def _csv_attachment(call_id: str) -> dict:
     """The full rows an earlier tool call produced, as a CSV attachment — not the
@@ -234,14 +222,15 @@ def _csv_attachment(call_id: str) -> dict:
     name = f"{slug}{'-truncated' if truncated else ''}.csv"
     return {"fname": name, "fcontent": buffer.getvalue().encode("utf-8")}
 
-
 def _resolved_reference(doctype: str | None, name: str | None):
     """Only link the email to a record the user can actually see — the tool must not
     become a way to attach an email to a document you have no read access to."""
     if not doctype or not name:
         return None, None
+    access.require_permission(doctype, "read")
+    access.require_permission(doctype, "email")
     if not frappe.db.exists(doctype, name):
         raise frappe.ValidationError(f"{doctype} {name!r} does not exist.")
-    if not frappe.has_permission(doctype, "read", doc=name):
-        raise frappe.PermissionError(f"No permission to read {doctype} {name!r}.")
+    access.require_permission(doctype, "read", doc=name, label=f"{doctype} {name!r}")
+    access.require_permission(doctype, "email", doc=name, label=f"{doctype} {name!r}")
     return doctype, name

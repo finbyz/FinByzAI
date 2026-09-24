@@ -490,8 +490,7 @@ def _provider_hint(error: Exception) -> str | None:
 def get_tools(agent=None, knowledge_base=None):
     """What this agent can actually do, for the settings dialog's Tools pane.
 
-    Reads the live registry rather than a hardcoded list, so a tool added to the app —
-    or an AI Tool row linked on the agent — shows up here without a UI change.
+    Uses the same configured tool list as the model and execution boundary.
     """
     access.require_copilot()
     from finbyzai.copilot import agent as agent_config
@@ -501,58 +500,20 @@ def get_tools(agent=None, knowledge_base=None):
     doc = agent_config.load(agent or settings.default_agent)
     selected_kb = access.require_read("Knowledge Base", knowledge_base) if knowledge_base else None
 
-    registry.load_tools()
-    builtin = [
-        {
-            "name": spec["name"],
-            "label": spec["label"],
-            "description": " ".join((spec["description"] or "").split())[:220],
-            "tags": spec["tags"],
-            "confirm": spec["confirm"],
-            "asks": spec["asks"],
-            "source": "builtin",
-        }
-        for spec in registry.TOOLS.values()
-    ]
-    builtin.sort(key=lambda t: (t["tags"][0] if t["tags"] else "", t["name"]))
-
-    custom = []
-    for row in (doc.tools if doc else None) or []:
-        if not access.can_read("AI Tool", row.tool):
-            continue
-        tool = frappe.db.get_value(
-            "AI Tool", row.tool, ["name", "description", "requires_confirmation"], as_dict=True
-        )
-        if tool:
-            custom.append(
-                {
-                    "name": tool.name,
-                    "label": frappe.unscrub(tool.name),
-                    "description": " ".join((tool.description or "").split())[:220],
-                    "tags": ["custom"],
-                    "confirm": bool(tool.requires_confirmation),
-                    "asks": False,
-                    "source": "AI Tool",
-                }
-            )
-
-    active_kb = selected_kb or (doc.knowledge_base if doc else None)
-    if active_kb and not access.can_read("Knowledge Base", active_kb):
-        active_kb = None
-    if active_kb:
-        custom.append(
-            {
-                "name": "search_knowledge",
-                "label": _("Searching Knowledge"),
-                "description": _("Searches the {0} knowledge base.").format(active_kb),
-                "tags": ["knowledge"],
-                "confirm": False,
-                "asks": False,
-                "source": "Knowledge Base",
-            }
-        )
-
-    return {"agent": doc.name if doc else None, "tools": builtin + custom}
+    configured = agent_config.tools(doc, selected_kb)
+    result = []
+    for tool in configured:
+        spec = registry.TOOLS.get(tool.name) or {}
+        result.append({
+            "name": tool.name,
+            "label": spec.get("label") or frappe.unscrub(tool.name),
+            "description": " ".join((tool.description or "").split())[:220],
+            "tags": spec.get("tags") or ["custom"],
+            "confirm": bool(spec.get("confirm") or (tool.metadata or {}).get("requires_confirmation")),
+            "asks": bool(spec.get("asks")),
+            "source": "AI Tool",
+        })
+    return {"agent": doc.name if doc else None, "tools": result}
 
 
 

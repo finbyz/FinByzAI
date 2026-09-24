@@ -40,10 +40,6 @@ from finbyzai.copilot import blocks as block_lib
 from finbyzai.copilot import registry
 
 DEFAULT_MAX_ITERATIONS = 25
-# Set per run from the agent's own tool list; see _bound_model.
-_external_tools: dict = {}
-# AI Tools whose record has requires_confirmation set — gated like a builtin write.
-_external_confirm: set = set()
 RESULT_CHARS = 6000
 QUEUE = "long"
 JOB_TIMEOUT = 1800
@@ -129,8 +125,7 @@ def execute_run(run: str):
         settings = get_settings()
         publish(run, {"type": "run_started", "run": run, "conversation": doc.conversation})
 
-        resumed = _resolve_pending_call(doc)
-        _loop(doc, settings, resumed)
+        _loop(doc, settings)
     except Exception as e:
         message = frappe.utils.strip_html(str(e)) or e.__class__.__name__
         frappe.db.rollback()
@@ -148,6 +143,8 @@ def execute_run(run: str):
         # Released even on a failure, so an approval that arrives later can resume.
         _release(claim)
         _shown_blocks.pop(run, None)
+        frappe.local.copilot_tools = {}
+        frappe.local.copilot_confirming_tools = set()
 
 
 def _loop(doc, settings, resumed=None):
@@ -158,7 +155,7 @@ def _loop(doc, settings, resumed=None):
     seen_failures = set()
     # Seeded from the call the user just approved: when that call failed and the model
     # fixes its arguments and asks again, the second card can say what went wrong.
-    last_error = dict(resumed or {})
+    last_error = dict(_resolve_pending_call(doc) or resumed or {})
     stalled = False
 
     while doc.iterations < max_iterations:
@@ -211,17 +208,15 @@ def _loop(doc, settings, resumed=None):
                 return
             name, arguments, call_id = call.get("name"), call.get("args") or {}, call.get("id")
 
-            # `registry.get` throws for anything unregistered, and a tool that came
-            # from the AI Agent is not registered — so ask the registry only about its
-            # own tools. An AI Tool is admin-attached, like a Server Script, and runs
-            # without the approval gate; the gate protects the builtin write tools.
-            spec = registry.TOOLS.get(name) or {}
+            # Registry metadata applies only to tools enabled on this agent.
+            configured = getattr(frappe.local, "copilot_tools", {})
+            spec = (registry.TOOLS.get(name) or {}) if name in configured else {}
 
             if spec.get("asks"):
                 _pause(doc, call_id, name, arguments, kind="question")
                 return
 
-            needs_approval = spec.get("confirm") or name in _external_confirm
+            needs_approval = spec.get("confirm") or name in getattr(frappe.local, "copilot_confirming_tools", set())
             if needs_approval and not settings.auto_approve:
                 _pause(doc, call_id, name, arguments, kind="approval", note=last_error.get(name))
                 return
@@ -322,16 +317,22 @@ def _call_tool(name: str, arguments: dict) -> dict:
     behaves like any other: the model reads it and corrects itself."""
     from finbyzai.copilot.guard import normalize_exception
 
-    if name in registry.TOOLS or not _external_tools:
+    configured = getattr(frappe.local, "copilot_tools", {})
+    if name not in configured:
+        return {
+            "ok": False, "error_type": "PermissionError", "retryable": False,
+            "error": f"Tool {name!r} is not enabled on this AI Agent.", "tool": name,
+        }
+    if name in registry.TOOLS:
         return registry.call(name, arguments)
-
-    tool = _external_tools.get(name)
-    if tool is None:
-        return registry.call(name, arguments)
+    tool = configured[name]
 
     savepoint = f"copilot_ext_{frappe.generate_hash(length=8)}"
     frappe.db.savepoint(savepoint)
     try:
+        from finbyzai.copilot import access
+
+        access.require_copilot()
         return {"ok": True, "result": tool.invoke(arguments or {})}
     except Exception as e:
         frappe.db.rollback(save_point=savepoint)
@@ -527,7 +528,7 @@ def _summary(name: str, arguments: dict) -> str:
         suffix = " (with the full table attached)" if arguments.get("attach_from_call") else ""
         base = f'Email {shown}: "{subject}"' if subject else f"Email {shown}" if shown else "Send an email"
         return base + suffix
-    if name in _external_confirm:
+    if name in getattr(frappe.local, "copilot_confirming_tools", set()):
         described = ", ".join(f"{k}={v!r}" for k, v in list((arguments or {}).items())[:3])
         return f"Run {registry.label_for(name)}" + (f" ({described})" if described else "")
     return registry.label_for(name)
@@ -553,29 +554,28 @@ def _context(arguments: dict):
 def _bound_model(agent, settings, doc=None, knowledge_base=None):
     """finbyzai's LLM doctype builds the client; the AI Agent decides which tools exist.
 
-    Tools = the copilot builtins + the agent's own AI Tool rows + its knowledge base.
+    Tools come exclusively from the agent's configured AI Tool rows.
 
     The model, though, follows the *conversation's* choice first. This used to resolve
     from the agent alone and then write that name over `doc.model` — so picking a model
     in the composer was both ignored and erased, and a run that asked for OpenRouter
     failed with an OpenAI error.
     """
-    global _external_tools, _external_confirm
+    frappe.local.copilot_tools = {}
+    frappe.local.copilot_confirming_tools = set()
 
     chosen = doc.model if doc is not None else None
     llm = agent_config.model(agent, settings, override=chosen)
     tools = agent_config.tools(agent, knowledge_base)
-    # Tools that came from the AI Agent rather than the registry — the runner has to
-    # invoke these itself, since the guard only knows about registered ones.
-    _external_tools = {t.name: t for t in tools if t.name not in registry.TOOLS}
-    _external_confirm = agent_config.confirming_tools(_external_tools)
+    frappe.local.copilot_tools = {tool.name: tool for tool in tools}
+    frappe.local.copilot_confirming_tools = agent_config.confirming_tools(frappe.local.copilot_tools)
 
     # Record what answered, but never overwrite a choice the user made.
     if doc is not None and not chosen:
         resolved = agent_config.resolved_model(agent, settings)
         if resolved:
             doc.db_set("model", resolved, update_modified=False)
-    return llm.bind_tools(tools)
+    return llm.bind_tools(tools) if tools else llm
 
 
 def _call_model(llm, messages, doc):

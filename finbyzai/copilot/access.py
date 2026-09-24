@@ -40,6 +40,24 @@ def can_read(doctype: str, name) -> bool:
     return bool(frappe.has_permission(doctype, "read", doc=doc))
 
 
+def require_permission(
+    doctype: str,
+    ptype: str = "read",
+    *,
+    doc=None,
+    label: str | None = None,
+) -> None:
+    """Require an effective Frappe permission for the current user."""
+    if not isinstance(doctype, str) or not doctype.strip():
+        raise frappe.ValidationError(_("DocType must be a non-empty string."))
+
+    doctype = doctype.strip()
+    if not frappe.has_permission(doctype, ptype, doc=doc):
+        raise frappe.PermissionError(
+            _("You do not have {0} permission for {1}.").format(ptype, label or doctype)
+        )
+
+
 # Who the Copilot exists for. Anything outside this set should not see the launcher,
 # should not have the panel mounted, and should be refused by every endpoint — not
 # shown an error, because a feature they were never given is not a failure.
