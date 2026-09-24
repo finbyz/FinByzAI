@@ -17,10 +17,8 @@ import { __ } from "@/lib/translate";
 //    the whole 1500px while the conversation sat in a 770px column — the field looked
 //    like a different app. Same column, same gutters, everything lines up.
 // 2. Agent and model sit here; knowledge base stays in settings. Which agent answers
-//    is a real choice when a site has more than one, so it belongs beside the field —
-//    but with one agent configured there is nothing to choose, so the picker hides
-//    itself rather than reading "Copilot" forever. Knowledge base is set once per
-//    conversation, not per message, so it has no business on this row.
+//    is a real choice, so it belongs beside the field even when only one agent is
+//    currently available. Knowledge base is set once per conversation, not per message.
 // 3. No keyboard hint. "⏎ send · ⇧⏎ new line" is decoration once you have sent one
 //    message, and the shortcut is on the empty state where it is actually new.
 const {
@@ -207,7 +205,7 @@ defineExpose({
 				     keep their space; the two pickers give way first. -->
 				<div class="flex items-center gap-1 px-2 pb-2">
 					<Menu
-						v-if="agents.length > 1"
+						v-if="agents.length"
 						:items="agentItems"
 						:model-value="selectedAgent"
 						:disabled="agentLocked"
@@ -234,7 +232,7 @@ defineExpose({
 						</template>
 					</Menu>
 
-					<span v-if="agents.length > 1" class="shrink-0 text-ink-gray-3">/</span>
+					<span v-if="agents.length" class="shrink-0 text-ink-gray-3">/</span>
 
 					<Menu
 						:items="modelItems"

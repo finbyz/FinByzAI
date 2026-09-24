@@ -5,6 +5,8 @@
  "engine": "InnoDB",
  "field_order": [
   "enabled",
+  "available_agents",
+  "available_models",
   "default_agent",
   "default_model",
   "suggestion_agent",
@@ -19,6 +21,20 @@
    "fieldtype": "Check",
    "label": "Enabled",
    "default": "1"
+  },
+  {
+   "description": "AI Agents users can choose in Copilot. Leave unset to make every agent available.",
+   "fieldname": "available_agents",
+   "fieldtype": "Table MultiSelect",
+   "label": "Available Agents",
+   "options": "Copilot Available Agent"
+  },
+  {
+   "description": "Enabled, non-embedding LLMs users can choose in Copilot. Leave unset to make every model available.",
+   "fieldname": "available_models",
+   "fieldtype": "Table MultiSelect",
+   "label": "Available Models",
+   "options": "Copilot Available Model"
   },
   {
    "fieldname": "default_agent",

@@ -22,6 +22,10 @@ from finbyzai.copilot.doctype.copilot_user_settings import (
 TITLE_LENGTH = 60
 HISTORY_LIMIT = 500
 
+AVAILABLE_RESOURCES = {
+    "available_agents": ("AI Agent", {}, "agent"),
+    "available_models": ("LLM", {"enabled": 1, "is_embedding_model": 0}, "model"),
+}
 
 @frappe.whitelist(methods=["POST"])
 def start_run(input, conversation=None, agent=None, model=None, attachments=None, knowledge_base=None):
@@ -565,15 +569,26 @@ def get_settings():
     settings = runner.get_settings()
     is_admin = can_administer()
 
+    agents = _agent_rows(settings=settings, apply_allowlist=not is_admin)
+    models = _model_rows(settings=settings, apply_allowlist=not is_admin)
+    available_agents = _configured_names(settings, "available_agents")
+    available_models = _configured_names(settings, "available_models")
+
     out = {
         "can_edit_system": is_admin,
-        "agents": get_agents(),
-        "models": get_models(),
+        "agents": agents,
+        "models": models,
         "knowledge_bases": get_knowledge_bases(),
         # Everyone gets their own instructions; only an admin sees the system prompt.
         "user": {"instructions": user_settings.for_user()},
         "system": {
             "enabled": bool(settings.enabled),
+            "available_agents": available_agents
+            if available_agents is not None
+            else [row.name for row in agents],
+            "available_models": available_models
+            if available_models is not None
+            else [row.name for row in models],
             "default_agent": settings.default_agent,
             "default_model": settings.default_model,
             "suggestion_agent": settings.get("suggestion_agent"),
@@ -607,7 +622,7 @@ def get_settings():
 
 @frappe.whitelist(methods=["POST"])
 def save_settings(system=None, conversation=None, user=None):
-    """Save the dialog. System defaults need System Manager; the per-conversation
+    """Save the dialog. System defaults need a Copilot Admin; the per-conversation
     agent / model / knowledge base is the user's own choice on their own chat."""
     access.require_copilot()
     saved = {}
@@ -625,6 +640,8 @@ def save_settings(system=None, conversation=None, user=None):
             frappe.throw(_("Only a Copilot Admin can change the Copilot's defaults."))
         allowed = (
             "enabled",
+            "available_agents",
+            "available_models",
             "default_agent",
             "default_model",
             "suggestion_agent",
@@ -637,7 +654,22 @@ def save_settings(system=None, conversation=None, user=None):
         doc = frappe.get_single("Copilot Settings")
         for key in allowed:
             if key in values:
-                doc.set(key, values[key])
+                value = values[key]
+                if key in {"available_agents", "available_models"}:
+                    names = _valid_resource_names(key, value)
+                    child_field = AVAILABLE_RESOURCES[key][2]
+                    value = [{child_field: name} for name in names]
+                doc.set(key, value)
+
+        available_agents = _configured_names(doc, "available_agents")
+        available_models = _configured_names(doc, "available_models")
+        if available_agents is not None:
+            if doc.default_agent not in available_agents:
+                doc.default_agent = None
+            if doc.suggestion_agent not in available_agents:
+                doc.suggestion_agent = None
+        if available_models is not None and doc.default_model not in available_models:
+            doc.default_model = None
         doc.save(ignore_permissions=True)
         frappe.clear_cache(doctype="Copilot Settings")
         saved["system"] = True
@@ -695,8 +727,13 @@ def _picker(fetch, label):
 def get_agents():
     """Agent picker contents — finbyzai's own AI Agent records."""
     access.require_copilot()
+    return _agent_rows()
+
+
+def _agent_rows(settings=None, apply_allowlist=True):
     from finbyzai.copilot import branding
 
+    settings = settings or runner.get_settings()
     rows = _picker(
         lambda: frappe.get_list(
             "AI Agent",
@@ -706,10 +743,12 @@ def get_agents():
         ),
         "agent",
     )
+    if apply_allowlist:
+        rows = _apply_allowlist(rows, _configured_names(settings, "available_agents"))
     # Which one the picker should start on. Without this the panel fell back to the
     # alphabetically first AI Agent on the site, so a site with its own agents opened
     # the Copilot on someone else's agent and its provider.
-    default_agent = runner.get_settings().default_agent
+    default_agent = settings.default_agent
     for row in rows:
         row["logo"] = branding.logo_for(row.llm_provider, row.llm)
         row["is_default"] = 1 if row.name == default_agent else 0
@@ -721,8 +760,13 @@ def get_models():
     """Model picker contents: the enabled, non-embedding LLM records, each with its
     provider's logo so the picker can show who serves it."""
     access.require_copilot()
+    return _model_rows()
+
+
+def _model_rows(settings=None, apply_allowlist=True):
     from finbyzai.copilot import branding
 
+    settings = settings or runner.get_settings()
     rows = _picker(
         lambda: frappe.get_list(
             "LLM",
@@ -732,9 +776,51 @@ def get_models():
         ),
         "model",
     )
+    if apply_allowlist:
+        rows = _apply_allowlist(rows, _configured_names(settings, "available_models"))
     for row in rows:
         row["logo"] = branding.logo_for(row.provider, row.name)
     return rows
+
+
+def _configured_names(settings, fieldname):
+    rows = settings.get(fieldname) or []
+    if not isinstance(rows, list):
+        return None
+    child_field = AVAILABLE_RESOURCES[fieldname][2]
+    values = (row.get(child_field) for row in rows if hasattr(row, "get"))
+    names = list(dict.fromkeys(value for value in values if isinstance(value, str) and value))
+    return names or None
+
+
+def _apply_allowlist(rows, names):
+    if names is None:
+        return rows
+    allowed = set(names)
+    return [row for row in rows if row.name in allowed]
+
+
+def _valid_resource_names(fieldname, values):
+    doctype, filters, _child_field = AVAILABLE_RESOURCES[fieldname]
+    parsed = _parse(values)
+    if not isinstance(parsed, list):
+        frappe.throw(_("{0} must be a list.").format(frappe.unscrub(fieldname)))
+    requested = list(
+        dict.fromkeys(value for value in parsed if isinstance(value, str) and value)
+    )
+    if not requested:
+        return []
+    existing = set(
+        frappe.get_all(doctype, filters={**filters, "name": ("in", requested)}, pluck="name")
+    )
+    missing = [name for name in requested if name not in existing]
+    if missing:
+        frappe.throw(
+            _("Unknown or unavailable {0}: {1}").format(
+                frappe.unscrub(fieldname), ", ".join(missing)
+            )
+        )
+    return requested
 
 
 # ── ownership ─────────────────────────────────────────────────────────────────
@@ -757,6 +843,34 @@ def _assert_owner(doc):
         raise frappe.PermissionError(f"{doc.doctype} {doc.name} belongs to another user.")
 
 
+def _generated_title(text, settings, agent_name=None, model_name=None):
+    fallback = text[:TITLE_LENGTH]
+    try:
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        from finbyzai.copilot import agent as agent_config
+
+        agent_doc = agent_config.load(agent_name)
+        llm = agent_config.model(agent_doc, settings, override=model_name)
+        reply = llm.invoke(
+            [
+                SystemMessage(
+                    content=(
+                        "Create a concise 3-7 word title for this new chat. "
+                        "Return only the title, with no quotes or trailing punctuation. "
+                        "Do not answer the message."
+                    )
+                ),
+                HumanMessage(content=text),
+            ]
+        )
+        title = re.sub(r"\s+", " ", runner._text_of(reply)).strip().strip("\"'\x60.,!?;:")
+        title = re.sub(r"^title\s*:\s*", "", title, flags=re.IGNORECASE)
+        return title[:TITLE_LENGTH] or fallback
+    except Exception:
+        return fallback
+
+
 def _new_conversation(text, model=None, agent=None, knowledge_base=None):
     settings = runner.get_settings()
     chosen = access.require_read("AI Agent", agent or settings.default_agent, label="agent")
@@ -769,7 +883,7 @@ def _new_conversation(text, model=None, agent=None, knowledge_base=None):
     return frappe.get_doc(
         {
             "doctype": "Copilot Conversation",
-            "title": text[:TITLE_LENGTH],
+            "title": _generated_title(text, settings, chosen, selected_model),
             "user": frappe.session.user,
             "agent": chosen,
             "knowledge_base": selected_kb,
