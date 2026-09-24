@@ -2,10 +2,10 @@
 import { computed } from "vue";
 import SettingsRow from "./SettingsRow.vue";
 import SettingsSelect from "./SettingsSelect.vue";
-import { Switch } from "@/lib/ui";
+import { MultiSelect, Switch } from "@/lib/ui";
 import { __ } from "@/lib/translate";
 
-// Site-wide defaults. System Manager only — the dialog hides this pane otherwise.
+// Site-wide defaults. Copilot admins only — the dialog hides this pane otherwise.
 const props = defineProps({
 	data: { type: Object, required: true },
 	draft: { type: Object, required: true },
@@ -15,19 +15,65 @@ const emit = defineEmits(["edit"]);
 const system = computed(() => props.data.system || {});
 const value = (key) => (key in props.draft ? props.draft[key] : system.value[key]);
 
+const availableAgentItems = computed(() =>
+	(props.data.agents || []).map((agent) => ({
+		value: agent.name,
+		label: agent.title || agent.name,
+		logo: agent.logo,
+	})),
+);
+const availableModelItems = computed(() =>
+	(props.data.models || []).map((model) => ({
+		value: model.name,
+		label: model.title || model.name,
+		logo: model.logo,
+		description: model.provider,
+	})),
+);
+
+const availableAgentNames = computed(() => {
+	const selected = value("available_agents") || [];
+	const names = selected.length ? selected : (props.data.agents || []).map((agent) => agent.name);
+	return new Set(names);
+});
+const availableModelNames = computed(() => {
+	const selected = value("available_models") || [];
+	const names = selected.length ? selected : (props.data.models || []).map((model) => model.name);
+	return new Set(names);
+});
+
 const agentItems = computed(() => [
 	{ value: null, label: __("None") },
-	...(props.data.agents || []).map((a) => ({ value: a.name, label: a.title || a.name, logo: a.logo })),
+	...(props.data.agents || [])
+		.filter((agent) => availableAgentNames.value.has(agent.name))
+		.map((agent) => ({
+			value: agent.name,
+			label: agent.title || agent.name,
+			logo: agent.logo,
+		})),
 ]);
 const modelItems = computed(() => [
 	{ value: null, label: __("None") },
-	...(props.data.models || []).map((m) => ({
-		value: m.name,
-		label: m.title || m.name,
-		logo: m.logo,
-		group: m.provider,
-	})),
+	...(props.data.models || [])
+		.filter((model) => availableModelNames.value.has(model.name))
+		.map((m) => ({
+			value: m.name,
+			label: m.title || m.name,
+			logo: m.logo,
+			group: m.provider,
+		})),
 ]);
+
+function setAvailableAgents(agents) {
+	emit("edit", "available_agents", agents);
+	if (agents.length && !agents.includes(value("default_agent"))) emit("edit", "default_agent", null);
+	if (agents.length && !agents.includes(value("suggestion_agent"))) emit("edit", "suggestion_agent", null);
+}
+
+function setAvailableModels(models) {
+	emit("edit", "available_models", models);
+	if (models.length && !models.includes(value("default_model"))) emit("edit", "default_model", null);
+}
 </script>
 
 <template>
@@ -37,6 +83,34 @@ const modelItems = computed(() => [
 			:description="__('Turns the Copilot off for everyone without uninstalling anything.')"
 		>
 			<Switch :model-value="Boolean(value('enabled'))" @update:model-value="emit('edit', 'enabled', $event ? 1 : 0)" />
+		</SettingsRow>
+
+		<SettingsRow
+			:label="__('Available agents')"
+			:description="__('Agents users can choose in Copilot. Leave empty to allow every agent.')"
+		>
+			<MultiSelect
+				:model-value="value('available_agents') || []"
+				:options="availableAgentItems"
+				:placeholder="__('Select agents')"
+				portal-to="#copilot-root"
+				@update:model-value="setAvailableAgents"
+			/>
+		</SettingsRow>
+
+		<SettingsRow
+			:label="__('Available models')"
+			:description="
+				__('Models users can choose in Copilot. Leave empty to allow every enabled model.')
+			"
+		>
+			<MultiSelect
+				:model-value="value('available_models') || []"
+				:options="availableModelItems"
+				:placeholder="__('Select models')"
+				portal-to="#copilot-root"
+				@update:model-value="setAvailableModels"
+			/>
 		</SettingsRow>
 
 		<SettingsRow
