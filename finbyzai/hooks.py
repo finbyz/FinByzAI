@@ -332,6 +332,14 @@ override_whitelisted_methods = {
 
 fixtures = [
     {
+        "doctype": "Role",
+        "filters": {"name": ["in", ["AI Automation"]]}
+    },
+    {
+        "doctype": "Custom DocPerm",
+        "filters": {"role": ["in", ["AI Automation"]]}
+    },
+    {
         "doctype": "Custom Field",
         "filters": [
             ["module", "=", "FinByz AI"]
