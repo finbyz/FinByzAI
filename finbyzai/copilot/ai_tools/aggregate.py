@@ -1,24 +1,16 @@
 # Copyright (c) 2026, Finbyz Tech Pvt Ltd and contributors
 # For license information, please see license.txt
 
-"""Permission-respecting reads.
-
-Rule that must not be broken: `frappe.get_list`, never `frappe.get_all`. get_all
-ignores permissions — tested on this site, a Guest user reading Sales Invoices
-through get_all returns rows, while get_list raises "Insufficient Permission".
-
-`aggregate` exists so the model never writes SQL. Frappe v16 rejects function
-strings in `fields` ("SQL functions are not allowed as strings in SELECT ... use
-dict syntax") and the models don't know that; this tool takes a plain
-group_by/measure/agg and builds the dict form itself.
-"""
+"""Native implementation of the ``aggregate`` AI Tool."""
 
 import json
+
 import re
 
 import frappe
 
-from finbyzai.copilot import blocks
+from finbyzai.copilot import access, blocks
+
 from finbyzai.copilot.registry import tool
 
 def permitted_count(doctype: str, filters: dict) -> int:
@@ -32,25 +24,18 @@ def permitted_count(doctype: str, filters: dict) -> int:
     rows = frappe.get_list(doctype, filters=filters, fields=["count(name) as total"], limit_page_length=0)
     return rows[0].total if rows else 0
 
-
-ROW_LIMIT = 200
 AGG_LIMIT = 200
-# Rows handed to the model. The table block carries all of them to the panel — a
-# 200-row read should not spend 200 rows of context.
-PREVIEW_ROWS = 20
+
 AGGREGATIONS = {"sum": "SUM", "count": "COUNT", "avg": "AVG", "min": "MIN", "max": "MAX"}
 
-# v15's query builder has no dict-shaped aggregate field, so the aggregate expression is
-# built as a string — which means a model-supplied fieldname reaches SQL. Only a real
-# field on the doctype gets through.
 _FIELDNAME = re.compile(r"^[a-z_][a-z0-9_]*$")
+
 _STANDARD_FIELDS = frozenset(
     {
         "name", "owner", "creation", "modified", "modified_by",
         "docstatus", "idx", "parent", "parenttype", "parentfield",
     }
 )
-
 
 def _safe_fieldname(doctype: str, fieldname: str | None, label: str) -> str:
     name = str(fieldname or "").strip()
@@ -60,11 +45,6 @@ def _safe_fieldname(doctype: str, fieldname: str | None, label: str) -> str:
         raise frappe.ValidationError(f"{doctype} has no field {name!r} (passed as `{label}`)")
     return name
 
-
-# ── filters ───────────────────────────────────────────────────────────────────
-
-# Every operator Frappe understands, so a mistyped one is caught here with a hint
-# rather than turning into a confusing SQL error.
 OPERATORS = frozenset(
     (
         "=", "!=", ">", "<", ">=", "<=", "like", "not like", "in", "not in",
@@ -72,7 +52,6 @@ OPERATORS = frozenset(
         "not ancestors of",
     )
 )
-
 
 def normalize_filters(doctype: str, filters):
     """Accept every filter shape a model plausibly writes, and reject the rest loudly.
@@ -158,7 +137,6 @@ def normalize_filters(doctype: str, filters):
         title="Bad filters",
     )
 
-
 def _condition(field: str, value):
     """One field's condition, in the [operator, value] shape Frappe expects."""
     if not isinstance(value, list | tuple):
@@ -196,7 +174,6 @@ def _condition(field: str, value):
         title="Bad filters",
     )
 
-
 def scope_to_live(doctype: str, conditions: dict):
     """Exclude cancelled documents, and say whether drafts are in the answer.
 
@@ -228,68 +205,9 @@ def scope_to_live(doctype: str, conditions: dict):
         note = "Cancelled documents are excluded; every record here is submitted."
     return scoped, note
 
-
-@tool(
-    "read",
-    """Read records. `filters` is a dict like {"status": "Overdue"} or
-    {"posting_date": [">=", "2026-01-01"]}. `fields` defaults to name + title field.
-    Use `parent` to read a child table (e.g. doctype="Sales Invoice Item",
-    parent="Sales Invoice"). Confirm fieldnames with describe() first.""",
-    tags=["read"],
-    label="Reading DocType Records",
-)
-def read(
-    doctype: str,
-    filters: dict | None = None,
-    fields: list | None = None,
-    order_by: str | None = None,
-    limit: int = 50,
-    parent: str | None = None,
-) -> dict:
-    limit = max(1, min(int(limit or 50), ROW_LIMIT))
-    conditions, scope = scope_to_live(doctype, normalize_filters(doctype, filters))
-    kwargs = {
-        "filters": conditions,
-        "fields": fields or _default_fields(doctype),
-        "limit": limit + 1,
-        "ignore_ifnull": True,
-    }
-    if order_by:
-        kwargs["order_by"] = order_by
-    if parent:
-        kwargs["parent"] = parent
-
-    rows = frappe.get_list(doctype, **kwargs)
-    truncated = len(rows) > limit
-    rows = rows[:limit]
-
-    payload = {
-        "doctype": doctype,
-        "rows": rows[:PREVIEW_ROWS],
-        "count": len(rows),
-        "scope": scope,
-        "truncated": truncated,
-        "hint": "More rows exist. Narrow the filters or aggregate instead of paging."
-        if truncated
-        else None,
-    }
-    if len(rows) > PREVIEW_ROWS:
-        payload["preview_only"] = (
-            f"You are seeing {PREVIEW_ROWS} of {len(rows)} rows; the user sees all of them "
-            "in the table. Summarize, do not list them back."
-        )
-    # The user sees every row as a table; the model only needs a sample of them.
-    return blocks.attach(payload, blocks.table(rows, doctype=doctype)) if rows else payload
-
-
-# Grouping a date column by its raw value gives one group per timestamp, which is
-# never the question — "leads per year" needs YEAR(creation), not creation. Only these
-# functions are allowed through, and the fieldname inside is still validated, so the
-# expression can never be anything the caller composed.
 DATE_PARTS = frozenset(("year", "month", "quarter", "week", "day", "date"))
 
 _CALL = re.compile(r"^\s*(year|month|quarter|week|day|date)\s*\(\s*([a-z_][a-z0-9_]*)\s*\)\s*$", re.I)
-
 
 def _group_expression(doctype: str, group_by: str) -> tuple[str, str]:
     """Return (sql expression, alias) for a group_by that may name a date part.
@@ -322,7 +240,6 @@ def _group_expression(doctype: str, group_by: str) -> tuple[str, str]:
         )
     return _date_part_expression(part, field), part
 
-
 def _date_part_expression(part: str, field: str) -> str:
     """Build a chronological period key for the active database."""
     if part in ("day", "date"):
@@ -343,12 +260,10 @@ def _date_part_expression(part: str, field: str) -> str:
     multiplier = 10 if part == "quarter" else 100
     return f"{year} * {multiplier} + {unit}"
 
-
 def _format_period_rows(rows: list[dict], part: str) -> list[dict]:
     if part not in DATE_PARTS:
         return rows
     return [{**row, part: _period_label(part, row.get(part))} for row in rows]
-
 
 def _period_label(part: str, value):
     if value is None or part in ("day", "date"):
@@ -364,7 +279,6 @@ def _period_label(part: str, value):
     year, period = divmod(number, 100)
     marker = "W" if part == "week" else ""
     return f"{year:04d}-{marker}{period:02d}"
-
 
 @tool(
     "aggregate",
@@ -387,7 +301,7 @@ def _period_label(part: str, value):
     tags=["read"],
     label="Grouping Records",
 )
-def aggregate(
+def aggregate_tool(
     doctype: str,
     group_by: str,
     measure: str | None = None,
@@ -397,6 +311,7 @@ def aggregate(
     ascending: bool = False,
     chart: str = "bar",
 ) -> dict:
+    access.require_permission(doctype, "read")
     agg_key = (agg or "sum").lower()
     if agg_key not in AGGREGATIONS:
         raise frappe.ValidationError(f"agg must be one of {', '.join(AGGREGATIONS)}, got {agg!r}")
@@ -460,26 +375,6 @@ def aggregate(
         blocks.table(rows, columns=columns, title=title),
     )
 
-
-@tool(
-    "count",
-    "How many records match. Cheaper than read() when the user only wants a number.",
-    tags=["read"],
-    label="Counting Records",
-)
-def count(doctype: str, filters: dict | None = None) -> dict:
-    if not frappe.has_permission(doctype, "read"):
-        raise frappe.PermissionError(f"No permission to read {doctype}")
-    conditions, scope = scope_to_live(doctype, normalize_filters(doctype, filters))
-    total = permitted_count(doctype, conditions)
-    return blocks.attach(
-        {"doctype": doctype, "count": total, "scope": scope},
-        # A count is a count: without saying so, a tile labelled "Sales Invoice
-        # (filtered)" was given the site's currency symbol and read "Rp 0".
-        blocks.kpi(f"{doctype}{' (filtered)' if filters else ''}", total, format="number"),
-    )
-
-
 def _measure_format(doctype: str, measure: str | None, agg_key: str):
     """"currency" | "number", from the aggregated field's own fieldtype."""
     if agg_key == "count" or not measure:
@@ -491,15 +386,3 @@ def _measure_format(doctype: str, measure: str | None, agg_key: str):
     if not field:
         return None
     return "currency" if field.fieldtype == "Currency" else "number"
-
-
-def _default_fields(doctype: str) -> list:
-    """name plus the title field, so a bare read() is still readable."""
-    fields = ["name"]
-    try:
-        title_field = frappe.get_meta(doctype).title_field
-    except Exception:
-        title_field = None
-    if title_field and title_field != "name":
-        fields.append(title_field)
-    return fields

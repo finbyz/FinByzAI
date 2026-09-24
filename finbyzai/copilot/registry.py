@@ -9,10 +9,18 @@ Nothing calls a tool function directly: `run_guarded` (see guard.py) always wrap
 it, so a failure comes back to the model as a result it can act on.
 """
 
+from importlib import import_module
+
 import frappe
 from finbyzai.copilot.guard import run_guarded
 
 TOOLS = {}
+TOOL_MODULES = (
+    "aggregate", "ask_user", "count", "create", "delete", "describe",
+    "describe_report", "execute", "extract_file_content", "find_doctypes",
+    "list_reports", "read", "remember", "run_action", "run_query",
+    "run_report", "search", "send_email", "update", "visualize",
+)
 
 
 def tool(name, description, args_schema=None, confirm=False, tags=None, label=None, asks=False):
@@ -98,18 +106,41 @@ def langchain_tools(names=None):
 
 def load_tools():
     """Import the tool modules so their decorators run. Called by the runner."""
-    from finbyzai.copilot.tools import (  # noqa: F401
-        compute,
-        data,
-        files,
-        interact,
-        memory,
-        meta,
-        notify,
-        reports,
-        search,
-        visualize,
-        write,
-    )
+    for module in TOOL_MODULES:
+        import_module(f"finbyzai.copilot.ai_tools.{module}")
 
     return TOOLS
+
+
+def sync_ai_tools(module: str = "Copilot") -> dict:
+    """Create or refresh one native AI Tool record per registered implementation."""
+    load_tools()
+    created, updated = [], []
+
+    for name in TOOL_MODULES:
+        spec = TOOLS[name]
+        path = f"{spec['fn'].__module__}.{spec['fn'].__name__}"
+        values = {
+            "tool_function": path,
+            "description": " ".join((spec["description"] or "").split())[:500],
+            "module": module,
+            "is_custom": 1,
+            "from_package": "",
+            "requires_confirmation": int(spec["confirm"]),
+        }
+        if frappe.db.exists("AI Tool", name):
+            doc = frappe.get_doc("AI Tool", name)
+            values["requires_confirmation"] = int(
+                bool(doc.requires_confirmation) or spec["confirm"]
+            )
+            doc.update(values)
+            doc.save(ignore_permissions=True)
+            updated.append(name)
+            continue
+
+        frappe.get_doc({"doctype": "AI Tool", "__newname": name, **values}).insert(
+            ignore_permissions=True
+        )
+        created.append(name)
+
+    return {"created": created, "updated": updated}

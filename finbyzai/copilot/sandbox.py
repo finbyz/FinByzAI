@@ -118,14 +118,16 @@ def _explained(error: Exception) -> Exception:
 
 def build_globals() -> NamespaceDict:
     """The sandbox namespace. Everything data-shaped in here is permission-checked."""
-    from finbyzai.copilot.tools import data as data_tools
-    from finbyzai.copilot.tools import reports as report_tools
+    from finbyzai.copilot.ai_tools.aggregate import aggregate_tool
+    from finbyzai.copilot.ai_tools.count import count_tool
+    from finbyzai.copilot.ai_tools.read import read_tool
+    from finbyzai.copilot.ai_tools.run_report import run_report_tool
 
     out = NamespaceDict(
         json=NamespaceDict(loads=json.loads, dumps=json.dumps),
         frappe=NamespaceDict(
             # reads — permission-respecting only
-            get_list=frappe.get_list,
+            get_list=_gated_get_list,
             get_doc=_gated_get_doc,
             get_meta=_gated_get_meta,
             get_value=_gated_get_value,
@@ -143,10 +145,10 @@ def build_globals() -> NamespaceDict:
         ),
         # the copilot's own tools, so generated code composes with them instead of
         # reimplementing them badly
-        read=data_tools.read,
-        aggregate=data_tools.aggregate,
-        count=data_tools.count,
-        run_report=report_tools.run_report,
+        read=read_tool,
+        aggregate=aggregate_tool,
+        count=count_tool,
+        run_report=run_report_tool,
         # RestrictedPython plumbing
         _getitem_=_getitem,
         _getattr_=_getattr_for_safe_exec,
@@ -186,11 +188,29 @@ def _printed(exec_locals: dict, exec_globals: dict):
 # ── gated primitives ──────────────────────────────────────────────────────────
 
 
+def _gated_get_list(
+    doctype: str, fields=None, filters=None, or_filters=None,
+    group_by=None, order_by=None, limit_start=0, limit_page_length=20,
+    *, limit=None, start=None, page_length=None, as_list=False,
+    distinct=False, pluck=None, parent_doctype=None,
+):
+    """Expose query options without permission overrides or user impersonation."""
+    return frappe.get_list(
+        doctype, fields=fields, filters=filters, or_filters=or_filters,
+        group_by=group_by, order_by=order_by, limit_start=limit_start,
+        limit_page_length=limit_page_length, limit=limit, start=start,
+        page_length=page_length, as_list=as_list, distinct=distinct,
+        pluck=pluck, parent_doctype=parent_doctype,
+        user=frappe.session.user, ignore_permissions=False,
+    )
+
+
 def _gated_get_doc(doctype: str, name: str | None = None) -> dict:
     """A record as a plain dict, after a read permission check. Returning a dict rather
     than a Document keeps `.save()`/`.delete()` out of the sandbox."""
     doc = frappe.get_doc(doctype, name)
     doc.check_permission("read")
+    doc.apply_fieldlevel_read_permissions()
     return doc.as_dict()
 
 

@@ -1,27 +1,15 @@
 # Copyright (c) 2026, Finbyz Tech Pvt Ltd and contributors
 # For license information, please see license.txt
 
-"""Durable memory, on finbyzai's own knowledge pipeline.
-
-Conversation memory is already handled: `AI Agent.enable_memory` + `memory_type`
-shape the transcript (Buffer / Window / Summary), and `agent.py` applies them.
-
-What this adds is the other kind — a fact worth keeping *across* conversations
-("our fiscal year starts in April", "Nayla Bahamas is the export company"). Rather
-than a new store, it writes an `AI Note` row on the Knowledge Base attached to the
-conversation or its agent. finbyzai's own pipeline then embeds it, which means the
-fact comes back through the knowledge-base search tool like any other document.
-
-Recall is therefore not a separate tool: attach a Knowledge Base and the agent's KB
-tool retrieves what it remembered.
-"""
+"""Native implementation of the ``remember`` AI Tool."""
 
 import frappe
+
+from finbyzai.copilot import access
 
 from finbyzai.copilot.registry import tool
 
 NOTE_LIMIT = 2000
-
 
 @tool(
     "remember",
@@ -35,7 +23,7 @@ NOTE_LIMIT = 2000
     tags=["memory"],
     label="Remembering",
 )
-def remember(fact: str, category: str | None = None) -> dict:
+def remember_tool(fact: str, category: str | None = None) -> dict:
     text = (fact or "").strip()
     if not text:
         raise frappe.ValidationError("`fact` is required")
@@ -71,12 +59,12 @@ def remember(fact: str, category: str | None = None) -> dict:
         "note": "Saved. It becomes searchable once the knowledge base finishes embedding it.",
     }
 
-
 def _knowledge_base() -> str | None:
     """The conversation's knowledge base, else its agent's."""
     context = frappe.flags.get("copilot") or {}
     conversation = context.get("conversation")
     if conversation:
+        access.require_read("Copilot Conversation", conversation, label="conversation")
         chosen = frappe.db.get_value("Copilot Conversation", conversation, ["knowledge_base", "agent"], as_dict=True)
         if chosen and chosen.knowledge_base:
             return chosen.knowledge_base

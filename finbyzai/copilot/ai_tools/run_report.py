@@ -1,165 +1,21 @@
 # Copyright (c) 2026, Finbyz Tech Pvt Ltd and contributors
 # For license information, please see license.txt
 
-"""Report tools — the highest-value tools in this app.
-
-This site has 222 Report records (201 Script, 13 Query, 8 Report Builder), and every
-question the client asked for already exists as one: Sales Analytics, Sales Order
-Analysis, Item-wise Sales History, Customer Ledger Summary, Accounts Receivable,
-Gross Profit, Stock Ageing, Stock Projected Qty, Item Shortage Report, General Ledger.
-
-Those reports are written, tested by ERPNext and permission-aware. Running one beats
-having the model rediscover the schema and generate its own query — that is exactly
-what failed six times in a row in the Flow transcript.
-
-`describe_report` is what makes the "required filter" mistake self-correcting: the
-model reads the real filter list, sees `reqd: True`, and asks the user for the value
-instead of guessing. Standard Script Reports keep their filters only in the report's
-JavaScript (on this site 221 of 222 have no Report Filter rows), so we parse them out.
-"""
+"""Native implementation of the ``run_report`` AI Tool."""
 
 import re
 
 import frappe
 
-from finbyzai.copilot import blocks
+from finbyzai.copilot import access, blocks
+
 from finbyzai.copilot.registry import tool
 
-# Rows handed to the model. The UI block carries the full set — a 3,000-row report
-# must never enter the context window.
 PREVIEW_ROWS = 30
+
 BLOCK_ROWS = 500
+
 NUMERIC_FIELDTYPES = {"Currency", "Float", "Int", "Percent"}
-
-
-def _allowed_role_map() -> dict:
-    """{report: allowed roles} for every role-restricted Report.
-
-    Mirrors `Report.is_permitted()` — including a Custom Role, which *replaces* the
-    report's own `Has Role` rows — but in two queries instead of loading every Report
-    document. 302 of this site's 325 reports are role-restricted, so skipping this
-    check makes `list_reports` offer reports the user cannot actually run.
-    """
-    allowed: dict = {}
-    for row in frappe.get_all(
-        "Has Role", filters={"parenttype": "Report"}, fields=["parent", "role"], limit_page_length=0
-    ):
-        allowed.setdefault(row.parent, set()).add(row.role)
-
-    custom = {
-        row.name: row.report
-        for row in frappe.get_all(
-            "Custom Role", filters={"report": ("is", "set")}, fields=["name", "report"], limit_page_length=0
-        )
-    }
-    if custom:
-        override: dict = {}
-        for row in frappe.get_all(
-            "Has Role",
-            filters={"parenttype": "Custom Role", "parent": ("in", list(custom))},
-            fields=["parent", "role"],
-            limit_page_length=0,
-        ):
-            override.setdefault(custom[row.parent], set()).add(row.role)
-        allowed.update(override)
-    return allowed
-
-
-def _report_permitted(name: str, ref_doctype: str | None, allowed: dict, user_roles: set) -> bool:
-    """Both gates Frappe applies when a report is actually run."""
-    if ref_doctype:
-        try:
-            if not frappe.has_permission(ref_doctype, "report"):
-                return False
-        except Exception:
-            # The report points at a DocType that no longer exists (this site has one:
-            # "Price Graph" -> "Purchase Price"). Unusable, and it must not abort the list.
-            return False
-    roles = allowed.get(name)
-    return not roles or bool(roles & user_roles)
-
-
-@tool(
-    "list_reports",
-    """Find existing reports. ALWAYS try this before writing your own query: this site
-    has 222 ready-made, permission-aware reports and one of them usually answers the
-    question exactly. Search by words in the report name, or list every report for a
-    DocType with `ref_doctype`.""",
-    tags=["reports"],
-    label="Finding Reports",
-)
-def list_reports(
-    search: str | None = None,
-    ref_doctype: str | None = None,
-    module: str | None = None,
-    limit: int = 25,
-) -> dict:
-    limit = max(1, min(int(limit or 25), 100))
-    filters = {"disabled": 0}
-    if search:
-        filters["name"] = ("like", f"%{search.strip()}%")
-    if ref_doctype:
-        filters["ref_doctype"] = ref_doctype
-    if module:
-        filters["module"] = module
-
-    rows = frappe.get_all(
-        "Report",
-        filters=filters,
-        fields=["name", "report_type", "ref_doctype", "module"],
-        limit=limit * 5,
-    )
-    rows.sort(key=lambda r: len(r.name or ""))
-
-    allowed = _allowed_role_map()
-    user_roles = set(frappe.get_roles())
-
-    out = []
-    for row in rows:
-        if not _report_permitted(row.name, row.ref_doctype, allowed, user_roles):
-            continue
-        out.append(
-            {
-                "report": row.name,
-                "type": row.report_type,
-                "doctype": row.ref_doctype,
-                "module": row.module,
-            }
-        )
-        if len(out) >= limit:
-            break
-
-    return {"reports": out, "count": len(out)}
-
-
-@tool(
-    "describe_report",
-    """The filters a report accepts, before you run it. Check `required` — if a required
-    filter has no default and you cannot infer it from the conversation, ask the user
-    rather than guessing. Never invent a filter fieldname.""",
-    tags=["reports"],
-    label="Reading Report Filters",
-)
-def describe_report(report: str) -> dict:
-    doc = frappe.get_doc("Report", report)
-    if doc.ref_doctype and not frappe.has_permission(doc.ref_doctype, "report"):
-        raise frappe.PermissionError(f"No report permission for {doc.ref_doctype}")
-    if not doc.is_permitted():
-        raise frappe.PermissionError(f"Your roles do not allow the report {doc.name}")
-
-    filters, source = _report_filters(doc)
-    return {
-        "report": doc.name,
-        "type": doc.report_type,
-        "doctype": doc.ref_doctype,
-        "filters": filters,
-        "filters_source": source,
-        "hint": "Could not read this report's filters. Call run_report and read the error "
-        "message it returns — it names what is missing."
-        if source == "unknown"
-        else None,
-    }
-
 
 @tool(
     "run_report",
@@ -170,12 +26,15 @@ def describe_report(report: str) -> dict:
     tags=["reports"],
     label="Running Report",
 )
-def run_report(report: str, filters: dict | None = None, limit: int = BLOCK_ROWS) -> dict:
+def run_report_tool(report: str, filters: dict | None = None, limit: int = BLOCK_ROWS) -> dict:
     from frappe.desk.query_report import run as run_query_report
 
+    _require_report(report)
     limit = max(1, min(int(limit or BLOCK_ROWS), BLOCK_ROWS))
     filters = _apply_filter_defaults(report, dict(filters or {}))
-    result = run_query_report(report, filters=filters, are_default_filters=False)
+    result = run_query_report(
+        report, filters=filters, user=frappe.session.user, are_default_filters=False
+    )
 
     columns = _normalize_columns(result.get("columns") or [])
     rows = _normalize_rows(result.get("result") or [], columns)
@@ -202,6 +61,25 @@ def run_report(report: str, filters: dict | None = None, limit: int = BLOCK_ROWS
         ),
     )
 
+def _require_report(report: str):
+    """Authorize the requested report and every report it delegates to."""
+    doc = frappe.get_doc("Report", report)
+    current = doc
+    visited = set()
+    while True:
+        if current.name in visited:
+            raise frappe.ValidationError("Circular report reference")
+        visited.add(current.name)
+        access.require_permission(current.ref_doctype, "read")
+        access.require_permission(current.ref_doctype, "report")
+        if not current.is_permitted():
+            raise frappe.PermissionError(f"Your roles do not allow the report {current.name}")
+        if current.disabled:
+            raise frappe.PermissionError(f"Report {current.name} is disabled")
+        if current.report_type != "Custom Report":
+            break
+        current = frappe.get_doc("Report", current.reference_report)
+    return doc
 
 def _apply_filter_defaults(report: str, filters: dict) -> dict:
     """Fill in the report's own literal defaults, then refuse to run if a required
@@ -232,7 +110,6 @@ def _apply_filter_defaults(report: str, filters: dict) -> dict:
 
     return filters
 
-
 def _normalize_columns(raw: list) -> list:
     """Script Reports return columns as dicts or as "Label:Type/Options:Width" strings."""
     out = []
@@ -253,7 +130,6 @@ def _normalize_columns(raw: list) -> list:
         out.append({"key": frappe.scrub(label), "label": label, "type": fieldtype})
     return out
 
-
 def _normalize_rows(raw: list, columns: list) -> list:
     """Rows come back as dicts or as positional lists depending on the report."""
     keys = [c["key"] for c in columns]
@@ -264,7 +140,6 @@ def _normalize_rows(raw: list, columns: list) -> list:
         elif isinstance(row, list | tuple):
             out.append(dict(zip(keys, row, strict=False)))
     return out
-
 
 def _totals(rows: list, columns: list) -> dict:
     """Column totals so the model can state the bottom line without reading every row."""
@@ -278,27 +153,25 @@ def _totals(rows: list, columns: list) -> dict:
             totals[col["key"]] = round(sum(numbers), 2)
     return totals
 
-
-# ── filter discovery ──────────────────────────────────────────────────────────
-# Report Filter rows first (only 1 of 222 reports on this site uses them), then the
-# report's JavaScript, which is where every standard Script Report keeps its filters.
-
-# Report JS may quote its keys (`"filters": [`) or not (`filters: [`). ERPNext's own
-# reports leave them bare; several of this site's do not, and an unquoted-only pattern
-# silently reported "no filters" for 16 of 18 Productivity Next reports — which makes
-# the model guess filter names instead of reading them.
 _K = lambda key: r"""["']?""" + key + r"""["']?\s*:\s*"""
 
 _FILTER_ARRAY = re.compile(_K("filters") + r"\[", re.S)
-_FIELDNAME = re.compile(_K("fieldname") + r"""["']([^"']+)["']""")
-_LABEL = re.compile(_K("label") + r"""(?:__\(\s*)?["']([^"']+)["']""")
-_FIELDTYPE = re.compile(_K("fieldtype") + r"""["']([^"']+)["']""")
-_OPTIONS = re.compile(_K("options") + r"""["']([^"']+)["']""")
-_REQD = re.compile(_K("reqd") + r"(1|true)")
-_DEFAULT_LITERAL = re.compile(_K("default") + r"""["']([^"']*)["']""")
-_DEFAULT_NUMBER = re.compile(_K("default") + r"(-?\d+(?:\.\d+)?)\s*[,}]")
-_DEFAULT_DYNAMIC = re.compile(_K("default"))
 
+_FIELDNAME = re.compile(_K("fieldname") + r"""["']([^"']+)["']""")
+
+_LABEL = re.compile(_K("label") + r"""(?:__\(\s*)?["']([^"']+)["']""")
+
+_FIELDTYPE = re.compile(_K("fieldtype") + r"""["']([^"']+)["']""")
+
+_OPTIONS = re.compile(_K("options") + r"""["']([^"']+)["']""")
+
+_REQD = re.compile(_K("reqd") + r"(1|true)")
+
+_DEFAULT_LITERAL = re.compile(_K("default") + r"""["']([^"']*)["']""")
+
+_DEFAULT_NUMBER = re.compile(_K("default") + r"(-?\d+(?:\.\d+)?)\s*[,}]")
+
+_DEFAULT_DYNAMIC = re.compile(_K("default"))
 
 def _report_filters(doc) -> tuple:
     if doc.filters:
@@ -319,7 +192,6 @@ def _report_filters(doc) -> tuple:
 
     parsed = _filters_from_script(doc.name)
     return (parsed, "script") if parsed else ([], "unknown")
-
 
 def _filters_from_script(report_name: str) -> list:
     from frappe.desk.query_report import get_script
@@ -354,7 +226,6 @@ def _filters_from_script(report_name: str) -> list:
         out.append(entry)
     return out
 
-
 def _balanced(text: str, start_pattern, open_char: str, close_char: str):
     """The bracketed span that `start_pattern` opens, brackets balanced."""
     match = start_pattern.search(text)
@@ -370,7 +241,6 @@ def _balanced(text: str, start_pattern, open_char: str, close_char: str):
             if depth == 0:
                 return text[start : i + 1]
     return None
-
 
 def _objects(array_text: str) -> list:
     """Top-level {...} blocks inside a JS array literal. Brace-balanced, which also

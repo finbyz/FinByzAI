@@ -1,29 +1,19 @@
 # Copyright (c) 2026, Finbyz Tech Pvt Ltd and contributors
 # For license information, please see license.txt
 
-"""Letting the agent decide to draw something.
-
-Every data tool already renders its natural visual — `read` a table, `aggregate` a
-chart, `count` a KPI card. This tool is for when the agent wants a *different* view of
-data it has already fetched: the top-line number as a KPI card, a monthly total as a
-line instead of a bar, two columns of a report as their own chart.
-
-The one rule: **the agent chooses the shape, never the numbers.** `from_call` names a
-tool call earlier in this same conversation and the rows are read back out of what that
-call actually returned. A model asked to retype a column will quietly invent values, so
-it is never given the chance — there is no `rows` argument.
-"""
+"""Native implementation of the ``visualize`` AI Tool."""
 
 import json
 
 import frappe
 
-from finbyzai.copilot import blocks
+from finbyzai.copilot import access, blocks
+
 from finbyzai.copilot.registry import tool
 
 KINDS = ("kpi", "table", "bar", "line", "records")
-AGGREGATIONS = ("sum", "count", "avg", "min", "max")
 
+AGGREGATIONS = ("sum", "count", "avg", "min", "max")
 
 @tool(
     "visualize",
@@ -45,7 +35,7 @@ AGGREGATIONS = ("sum", "count", "avg", "min", "max")
     tags=["visualize"],
     label="Drawing",
 )
-def visualize(
+def visualize_tool(
     from_call: str,
     kind: str = "table",
     x: str | None = None,
@@ -93,7 +83,6 @@ def visualize(
         block,
     )
 
-
 def _kpi(rows: list, value_column: str | None, agg: str, label: str | None, available: list):
     key = value_column or _first_numeric(rows, available)
     if not key:
@@ -119,7 +108,6 @@ def _kpi(rows: list, value_column: str | None, agg: str, label: str | None, avai
 
     return blocks.kpi(label or f"{agg.title()} of {frappe.unscrub(key)}", value)
 
-
 def _chart(shape: str, rows: list, x: str | None, series: list | None, available: list, horizontal: bool):
     x_key = x or _first_text(rows, available) or available[0]
     keys = series or [_first_numeric(rows, available)]
@@ -135,12 +123,7 @@ def _chart(shape: str, rows: list, x: str | None, series: list | None, available
         return blocks.line(ordered, x=x_key, series=spec)
     return blocks.bar(rows, x=x_key, series=spec, horizontal=horizontal)
 
-
-# Words a model reaches for when it means "the table I just drew" without tracking
-# the call's own id — accepted as synonyms for LATEST, below, rather than making
-# every caller of rows_from_call get this exactly right on the model's behalf.
 LATEST_ALIASES = {"", "last", "latest", "previous", "this", "recent", "the last one"}
-
 
 def rows_from_call(call_id: str) -> tuple:
     """The rows an earlier tool call produced, read back from its persisted result.
@@ -158,6 +141,7 @@ def rows_from_call(call_id: str) -> tuple:
     conversation = context.get("conversation")
     if not conversation:
         raise frappe.ValidationError("visualize can only run inside a copilot conversation.")
+    access.require_read("Copilot Conversation", conversation, label="conversation")
 
     if (call_id or "").strip().lower() in LATEST_ALIASES:
         call_id = _latest_table_call(conversation)
@@ -184,12 +168,18 @@ def rows_from_call(call_id: str) -> tuple:
             f"here, or one of {sorted(a for a in LATEST_ALIASES if a)!r} for the most recent one."
         )
 
+    content = _json(row.content) or {}
+    if content.get("report"):
+        from finbyzai.copilot.ai_tools.run_report import _require_report
+
+        _require_report(content["report"])
     block = _best_table_block(_json(row.blocks) or [])
+    doctype = content.get("doctype") or (block or {}).get("doctype")
+    if doctype:
+        access.require_permission(doctype, "read")
     if block:
         return block["rows"], block
-    content = _json(row.content) or {}
     return (content.get("rows") or []), content
-
 
 def _best_table_block(candidates: list):
     """Of the blocks one call attached, the one worth reading rows back from.
@@ -203,7 +193,6 @@ def _best_table_block(candidates: list):
     return next((b for b in with_rows if b.get("type") == "table"), None) or (
         with_rows[0] if with_rows else None
     )
-
 
 def _latest_table_call(conversation: str) -> str | None:
     """The tool_call_id of the most recent call in this conversation whose result
@@ -220,20 +209,17 @@ def _latest_table_call(conversation: str) -> str | None:
             return row.tool_call_id
     return None
 
-
 def _first_numeric(rows: list, available: list):
     for key in available:
         if any(isinstance(r.get(key), int | float) for r in rows):
             return key
     return None
 
-
 def _first_text(rows: list, available: list):
     for key in available:
         if any(isinstance(r.get(key), str) for r in rows):
             return key
     return None
-
 
 def _json(value):
     if not value:

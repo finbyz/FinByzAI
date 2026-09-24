@@ -82,6 +82,9 @@ def run_guarded(name, fn, kwargs=None):
 
     frappe.db.savepoint(savepoint)
     try:
+        from finbyzai.copilot import access
+
+        access.require_copilot()
         result = fn(**kwargs)
     except Exception as e:
         # A tool that committed before it failed has already destroyed the savepoint,

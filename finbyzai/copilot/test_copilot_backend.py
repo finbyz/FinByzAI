@@ -17,8 +17,9 @@ import frappe
 from frappe.model.db_query import DatabaseQuery
 from frappe.tests.utils import FrappeTestCase
 
-from finbyzai.copilot import access, api, runner, sandbox, setup
-from finbyzai.copilot.tools.data import _group_expression, _period_label, aggregate, permitted_count
+from finbyzai.copilot import access, api, registry, runner, sandbox, setup
+from finbyzai.copilot.ai_tools.aggregate import _group_expression, _period_label, aggregate_tool
+from finbyzai.copilot.ai_tools.count import permitted_count
 
 
 class TestCopilotSetup(FrappeTestCase):
@@ -139,6 +140,68 @@ class TestCopilotResourcePermissions(FrappeTestCase):
 			access.require_read("Knowledge Base", doc.name)
 
 
+class TestCopilotToolAuthorization(FrappeTestCase):
+	def test_every_builtin_tool_requires_copilot_access(self):
+		registry.load_tools()
+		with patch("finbyzai.copilot.access.has_copilot", return_value=False):
+			for name in registry.TOOLS:
+				with self.subTest(tool=name):
+					outcome = registry.call(name, {})
+					self.assertFalse(outcome["ok"])
+					self.assertEqual(outcome["error_type"], "PermissionError")
+
+	def test_read_tools_check_doctype_before_querying(self):
+		from finbyzai.copilot.ai_tools.aggregate import aggregate_tool
+		from finbyzai.copilot.ai_tools.count import count_tool
+		from finbyzai.copilot.ai_tools.read import read_tool
+
+		with (
+			patch("frappe.has_permission", return_value=False),
+			patch("frappe.get_list") as get_list,
+		):
+			for fn, kwargs in (
+				(read_tool, {"doctype": "Customer"}),
+				(aggregate_tool, {"doctype": "Customer", "group_by": "territory", "agg": "count"}),
+				(count_tool, {"doctype": "Customer"}),
+			):
+				with self.subTest(tool=fn.__name__), self.assertRaises(frappe.PermissionError):
+					fn(**kwargs)
+		get_list.assert_not_called()
+
+	def test_scoped_search_checks_requested_doctype_first(self):
+		from finbyzai.copilot.ai_tools.search import search_tool
+
+		with (
+			patch("frappe.has_permission", return_value=False),
+			patch("finbyzai.copilot.ai_tools.search._internal") as internal,
+			self.assertRaises(frappe.PermissionError),
+		):
+			search_tool("acme", doctype="Customer")
+		internal.assert_not_called()
+
+	def test_report_tools_check_reference_doctype_first(self):
+		from finbyzai.copilot.ai_tools.list_reports import list_reports_tool
+
+		with (
+			patch("frappe.has_permission", return_value=False),
+			patch("frappe.get_all") as get_all,
+			self.assertRaises(frappe.PermissionError),
+		):
+			list_reports_tool(ref_doctype="Customer")
+		get_all.assert_not_called()
+
+	def test_send_email_requires_communication_create_permission(self):
+		from finbyzai.copilot.ai_tools.send_email import send_email_tool
+
+		with (
+			patch("frappe.has_permission", return_value=False),
+			patch("finbyzai.copilot.ai_tools.send_email._queue_mail") as queue_mail,
+			self.assertRaises(frappe.PermissionError),
+		):
+			send_email_tool(["user@example.com"], "Subject", "Body")
+		queue_mail.assert_not_called()
+
+
 class TestCopilotPermissionScopedCount(FrappeTestCase):
 	FIXTURE_USER = "sandeep.ambala@finbyz.tech"
 	FIXTURE_DOCTYPE = "Employee"
@@ -228,10 +291,10 @@ class TestCopilotAggregatePeriods(FrappeTestCase):
 			frappe._dict(month=202610, value=10),
 		]
 		with (
-			patch("finbyzai.copilot.tools.data.scope_to_live", return_value=({}, None)),
+			patch("finbyzai.copilot.ai_tools.aggregate.scope_to_live", return_value=({}, None)),
 			patch("frappe.get_list", return_value=rows) as get_list,
 		):
-			result = aggregate("ToDo", "month:creation", agg="count", chart="line")
+			result = aggregate_tool("ToDo", "month:creation", agg="count", chart="line")
 
 		self.assertEqual(
 			[row["month"] for row in result["rows"]],

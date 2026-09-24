@@ -1,18 +1,14 @@
 # Copyright (c) 2026, Finbyz Tech Pvt Ltd and contributors
 # For license information, please see license.txt
 
-"""Ground-truth tools: resolve exact DocType and field names before acting.
-
-Discover -> verify -> act. The model must never invent a DocType, fieldname or
-record name; these two tools are how it finds out, and the system prompt requires
-them before any read or write.
-"""
+"""Native implementation of the ``describe`` AI Tool."""
 
 import frappe
 
+from finbyzai.copilot import access
+
 from finbyzai.copilot.registry import tool
 
-# Layout-only fieldtypes: they carry no data and only waste context.
 SKIP_FIELDTYPES = {
     "Section Break",
     "Column Break",
@@ -26,50 +22,7 @@ SKIP_FIELDTYPES = {
 
 PERMISSION_TYPES = ("read", "write", "create", "delete", "submit", "cancel", "amend", "report")
 
-FIND_LIMIT = 50
 FIELD_LIMIT = 200
-
-
-@tool(
-    "find_doctypes",
-    """Find the exact DocType name for something the user described. Always call this
-    before any other tool when you are not certain a DocType name is exactly right.
-    Returns only DocTypes the current user may read.""",
-    tags=["discovery"],
-    label="Finding relevant DocTypes",
-)
-def find_doctypes(search: str, module: str | None = None, limit: int = 20) -> dict:
-    limit = max(1, min(int(limit or 20), FIND_LIMIT))
-    filters = {"name": ("like", f"%{search.strip()}%")}
-    if module:
-        filters["module"] = module
-
-    rows = frappe.get_all(
-        "DocType",
-        filters=filters,
-        fields=["name", "module", "istable", "issingle", "is_submittable"],
-        limit=limit * 5,
-    )
-    # Shortest name first: "Sales Invoice" should beat "Sales Invoice Advance".
-    rows.sort(key=lambda r: (bool(r.istable), len(r.name or "")))
-
-    out = []
-    for row in rows:
-        if not frappe.has_permission(row.name, "read"):
-            continue
-        entry = {"name": row.name, "module": row.module}
-        if row.istable:
-            entry["child_table"] = True
-        if row.issingle:
-            entry["single"] = True
-        if row.is_submittable:
-            entry["submittable"] = True
-        out.append(entry)
-        if len(out) >= limit:
-            break
-
-    return {"doctypes": out, "count": len(out)}
-
 
 @tool(
     "describe",
@@ -79,9 +32,8 @@ def find_doctypes(search: str, module: str | None = None, limit: int = 20) -> di
     tags=["discovery"],
     label="Reading DocType Meta",
 )
-def describe(doctype: str, name: str | None = None) -> dict:
-    if not frappe.has_permission(doctype, "read"):
-        raise frappe.PermissionError(f"No permission to read {doctype}")
+def describe_tool(doctype: str, name: str | None = None) -> dict:
+    access.require_permission(doctype, "read")
 
     meta = frappe.get_meta(doctype)
     fields = []
@@ -117,7 +69,6 @@ def describe(doctype: str, name: str | None = None) -> dict:
 
     return out
 
-
 def _record_actions(doctype: str, name: str, meta) -> dict:
     """What the current user can actually do to this one record."""
     doc = frappe.get_doc(doctype, name)
@@ -146,7 +97,6 @@ def _record_actions(doctype: str, name: str, meta) -> dict:
 
     return out
 
-
 def _workflow_transitions(doc) -> list:
     from frappe.model.workflow import get_transitions
 
@@ -155,7 +105,6 @@ def _workflow_transitions(doc) -> list:
     except Exception:
         # No workflow on this doctype, or the user holds no role in it — not an error.
         return []
-
 
 def _workflow_state_field(doctype: str):
     return frappe.db.get_value("Workflow", {"document_type": doctype, "is_active": 1}, "workflow_state_field")
