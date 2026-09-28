@@ -17,6 +17,7 @@ class OpenRouterEmbedding(BaseEmbedding):
             model=model_name,
             api_key=api_key,
             base_url=OPENROUTER_API_BASE,
+            check_embedding_ctx_length=False
         )
 
     def embed_query(self, text: str):

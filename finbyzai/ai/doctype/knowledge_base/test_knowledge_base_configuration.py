@@ -98,6 +98,7 @@ class TestOpenRouterEmbedding(TestCase):
             model="openai/text-embedding-3-small",
             api_key="secret",
             base_url=OPENROUTER_API_BASE,
+            check_embedding_ctx_length=False
         )
         self.assertIs(adapter.embedding, embeddings.return_value)
 
