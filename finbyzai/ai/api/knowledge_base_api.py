@@ -46,18 +46,15 @@ def _serialize(kb, *, include_documents: bool = False) -> dict[str, Any]:
         "name": kb.name,
         "title": kb.title,
         "provider": kb.provider,
-        "embedding_model": kb.embedding_model,
+        "embeding_model": kb.embeding_model,
         "vector_store": kb.vector_store,
         "description": kb.description,
-        "chunk_size": kb.chunk_size,
-        "chunk_overlap": kb.chunk_overlap,
     }
     if include_documents:
         data["documents"] = [
             {
                 "name": row.name,
                 "file": row.file or "",
-                "text_content": row.text_content or "",
                 "is_processed": row.is_processed,
             }
             for row in kb.documents
@@ -69,17 +66,13 @@ def _serialize(kb, *, include_documents: bool = False) -> dict[str, Any]:
 def create_knowledge_base(
     title: str,
     provider: str,
-    embedding_model: str | None = None,
+    embeding_model: str,
     vector_store: str | None = None,
     description: str = "",
-    chunk_size: int = 1000,
-    chunk_overlap: int = 200,
-    embeding_model: str | None = None,
 ) -> dict[str, Any]:
-    """Create a Knowledge Base; the misspelled argument remains as a transition alias."""
+    """Create a Knowledge Base."""
     frappe.has_permission("Knowledge Base", "create", throw=True)
-    embedding_model = embedding_model or embeding_model
-    if not embedding_model:
+    if not embeding_model:
         frappe.throw(_("Embedding model is required."))
 
     kb = frappe.get_doc(
@@ -87,11 +80,9 @@ def create_knowledge_base(
             "doctype": "Knowledge Base",
             "title": title,
             "provider": provider,
-            "embedding_model": embedding_model,
+            "embeding_model": embeding_model,
             "vector_store": vector_store,
             "description": description,
-            "chunk_size": cint(chunk_size),
-            "chunk_overlap": cint(chunk_overlap),
         }
     ).insert()
     return {
@@ -116,11 +107,9 @@ def list_knowledge_bases(page: int = 1, page_size: int = 20) -> dict[str, Any]:
             "name",
             "title",
             "provider",
-            "embedding_model",
+            "embeding_model",
             "vector_store",
             "description",
-            "chunk_size",
-            "chunk_overlap",
             "creation",
             "modified",
         ],
@@ -149,17 +138,20 @@ def list_knowledge_bases(page: int = 1, page_size: int = 20) -> dict[str, Any]:
 @frappe.whitelist(methods=["POST"])
 def update_knowledge_base(name: str, **values) -> dict[str, Any]:
     kb = _get_knowledge_base(name, WRITE)
-    if "embeding_model" in values and "embedding_model" not in values:
-        values["embedding_model"] = values.pop("embeding_model")
     allowed_fields = {
         "title",
         "provider",
-        "embedding_model",
+        "embeding_model",
         "vector_store",
         "description",
-        "chunk_size",
-        "chunk_overlap",
     }
+    unknown_fields = values.keys() - allowed_fields
+    if unknown_fields:
+        frappe.throw(
+            _("Unsupported Knowledge Base fields: {0}").format(
+                ", ".join(sorted(unknown_fields))
+            )
+        )
     for fieldname in allowed_fields & values.keys():
         kb.set(fieldname, values[fieldname])
     kb.save()
@@ -178,7 +170,7 @@ def delete_knowledge_base(name: str) -> dict[str, Any]:
 
 
 @frappe.whitelist(methods=["POST"])
-def upload_file_to_knowledge_base(kb_name: str, text_content: str = "") -> dict[str, Any]:
+def upload_file_to_knowledge_base(kb_name: str) -> dict[str, Any]:
     from frappe.utils.file_manager import save_file
 
     kb = _get_knowledge_base(kb_name, WRITE)
@@ -194,7 +186,7 @@ def upload_file_to_knowledge_base(kb_name: str, text_content: str = "") -> dict[
     )
     kb.append(
         "documents",
-        {"file": file_doc.file_url, "text_content": text_content, "is_processed": False},
+        {"file": file_doc.file_url, "is_processed": False},
     )
     kb.save()
     return {
@@ -203,7 +195,6 @@ def upload_file_to_knowledge_base(kb_name: str, text_content: str = "") -> dict[
         "data": {
             "file_url": file_doc.file_url,
             "file_name": file_doc.file_name,
-            "text_content": text_content,
         },
     }
 
@@ -213,7 +204,7 @@ def add_text_document(kb_name: str, text_content: str) -> dict[str, Any]:
     kb = _get_knowledge_base(kb_name, WRITE)
     if not (text_content or "").strip():
         frappe.throw(_("Text content is required."))
-    kb.append("documents", {"text_content": text_content, "is_processed": False})
+    kb.append("notes", {"note": text_content.strip(), "is_processed": False})
     kb.save()
     return {
         "success": True,
@@ -279,28 +270,25 @@ def cleanup_detached_assets(
 
 @frappe.whitelist(methods=["POST"])
 def extract_pdfs(kb_name: str) -> dict[str, Any]:
-    result = _get_knowledge_base(kb_name, WRITE).extract_all_files()
+    """Compatibility endpoint: queue all Knowledge Base sources for reprocessing."""
+    kb = _get_knowledge_base(kb_name, WRITE)
+    kb.reprocess_all_documents()
     return {
         "success": True,
-        "message": _("Extracted {0} files with {1} errors").format(
-            result["extracted"], result["errors"]
-        ),
-        "data": result,
+        "message": _("Knowledge Base reprocessing queued"),
+        "data": {"status": "Queue"},
     }
 
 
 @frappe.whitelist(methods=["POST"])
-def upsert_to_vector_store(
-    kb_name: str, chunk_size: int | None = None, overlap: int | None = None
-) -> dict[str, Any]:
+def upsert_to_vector_store(kb_name: str) -> dict[str, Any]:
+    """Compatibility endpoint: queue all Knowledge Base sources for indexing."""
     kb = _get_knowledge_base(kb_name, WRITE)
-    chunk_size = cint(chunk_size) if chunk_size is not None else kb.chunk_size or 1000
-    overlap = cint(overlap) if overlap is not None else kb.chunk_overlap or 200
-    count = kb.upsert(chunk_size=chunk_size, overlap=overlap)
+    kb.reprocess_all_documents()
     return {
         "success": True,
-        "message": _("Successfully indexed {0} chunks").format(count),
-        "data": {"num_chunks": count},
+        "message": _("Knowledge Base indexing queued"),
+        "data": {"status": "Queue"},
     }
 
 

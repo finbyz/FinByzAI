@@ -393,7 +393,7 @@ def get_knowledge_bases():
     return _picker(
         lambda: frappe.get_list(
             "Knowledge Base",
-            fields=["name", "title", "vector_store", "status", "embedding_model"],
+            fields=["name", "title", "vector_store", "status", "embeding_model"],
             order_by="modified desc",
             limit=50,
         ),

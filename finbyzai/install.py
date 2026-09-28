@@ -70,6 +70,7 @@ LLMS = [
     {"name": "perplexity/r1-1776", "provider": "Perplexity", "title": "Perplexity r1-1776", "size": "Very Small", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
     {"name": "perplexity/sonar-reasoning-pro", "provider": "Perplexity", "title": "Perplexity Sonar Reasoning Pro", "size": "Very Small", "is_reasoning": 1, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
     # ── OpenRouter ──
+    {"name": "openrouter/openai/text-embedding-3-small", "provider": "OpenRouter", "title": "OpenRouter Text Embedding 3 Small", "size": "Small", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 1, "enabled": 1},
     # Free Models (:free)
     {"name": "openrouter/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "provider": "OpenRouter", "title": "Nemotron 3 Nano Omni Audio/Vision (Free)", "size": "Medium", "is_reasoning": 1, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
     {"name": "openrouter/nvidia/nemotron-3-super-120b-a12b:free", "provider": "OpenRouter", "title": "Nemotron 3 Super 120B (Free)", "size": "Large", "is_reasoning": 1, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 0, "enabled": 1},
@@ -169,30 +170,11 @@ def after_install():
 
 def after_migrate():
     """Synchronize AI defaults and Workflow Builder runtime invariants."""
-    _migrate_embedding_model_field()
     _sync_ai_defaults()
 
     from finbyzai.workflow_builder.setup import after_migrate as setup_workflow_builder
 
     setup_workflow_builder()
-
-
-def _migrate_embedding_model_field():
-    """Copy data from the former misspelled Knowledge Base field."""
-    if not (
-        frappe.db.has_column("Knowledge Base", "embeding_model")
-        and frappe.db.has_column("Knowledge Base", "embedding_model")
-    ):
-        return
-    knowledge_base = frappe.qb.DocType("Knowledge Base")
-    (
-        frappe.qb.update(knowledge_base)
-        .set(knowledge_base.embedding_model, knowledge_base.embeding_model)
-        .where(
-            knowledge_base.embedding_model.isnull()
-            | (knowledge_base.embedding_model == "")
-        )
-    ).run()
 
 
 def _sync_ai_defaults():

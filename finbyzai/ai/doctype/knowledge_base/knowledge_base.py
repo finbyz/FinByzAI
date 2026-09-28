@@ -113,14 +113,11 @@ class KnowledgeBase(Document):
                 "Please set an embedding model on the Knowledge Base."
             )
 
-        api_key = _get_provider_api_key(self)
-
         return create_vector_store(
             store_name=store_name,
             kb_name=self.name,
             description=self.description or "",
             embeddings=emb,
-            api_key=api_key,
         )
 
     def reprocess_all_documents(self) -> None:
@@ -265,7 +262,8 @@ class KnowledgeBase(Document):
                         metadatas.append(meta)
                         ids.append(f"{source_id}_{i}")
 
-                    # 5. Upsert into vector store
+                    # 5. Replace every prior chunk for this source before upserting.
+                    store.delete({"source_id": source_id})
                     store.upsert(texts=chunks, metadatas=metadatas, ids=ids)
 
                     # 6. Mark row as processed
@@ -324,12 +322,12 @@ class KnowledgeBase(Document):
 # Private helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _get_provider_api_key(kb: KnowledgeBase):
-    """Return the plaintext API key for the KB's LLM provider, or None."""
+def _get_provider_api_key(provider_name: str):
+    """Return the plaintext API key for an LLM provider, or None."""
     try:
-        if not kb.provider:
+        if not provider_name:
             return None
-        provider = frappe.get_doc("LLM Provider", kb.provider)
+        provider = frappe.get_doc("LLM Provider", provider_name)
         return provider.get_password("api_key")
     except Exception:
         return None
@@ -343,7 +341,7 @@ def _get_embeddings(kb: KnowledgeBase):
     - An embedding model is set on the KB.
     - The selected LLM has `is_embedding_model = 1`.
     """
-    llm_name = getattr(kb, "embedding_model", None)
+    llm_name = getattr(kb, "embeding_model", None)
     if not llm_name:
         return None
 
@@ -374,10 +372,17 @@ def _get_embeddings(kb: KnowledgeBase):
             f"Please select a model with 'Is Embedding Model' enabled on the Knowledge Base."
         )
 
+    provider_name = (llm_doc.provider or "").strip()
+    if provider_name != (kb.provider or "").strip():
+        frappe.throw(
+            f"Embedding model '{llm_name}' belongs to provider '{provider_name}', "
+            f"but the Knowledge Base uses provider '{kb.provider}'."
+        )
+
     return create_embedding(
-        llm_doc.provider or "",
+        provider_name,
         model=llm_doc.name,
-        api_key=_get_provider_api_key(kb),
+        api_key=_get_provider_api_key(provider_name),
     )
 
 
