@@ -315,31 +315,46 @@ class ImageGeneration:
         )
 
     def _invoke_openrouter(self, prompt: str, **kwargs) -> ImageResponse:
-        """OpenRouter image generation using LiteLLM"""
-        from litellm import image_generation
+        """OpenRouter image generation via chat completions with image modality"""
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
 
-        response = image_generation(
-            prompt=prompt,
-            model=self.full_model,
-            api_key=self.api_key,
-            **kwargs
+        data = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "modalities": ["image", "text"]
+        }
+
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            json=data,
+            timeout=300
         )
+        response.raise_for_status()
+
+        result = response.json()
+        message = (result.get("choices") or [{}])[0].get("message") or {}
         images = []
-        data_items = getattr(response, "data", []) or []
-        for item in data_items:
-            if hasattr(item, "b64_json") and item.b64_json:
-                images.append(item.b64_json)
-            elif hasattr(item, "url") and item.url:
-                images.append(item.url)
-            elif isinstance(item, dict):
-                images.append(item.get("b64_json") or item.get("url"))
+        for item in message.get("images") or []:
+            url = (item.get("image_url") or {}).get("url") or ""
+            # Strip data URL prefix so callers get raw base64
+            if url.startswith("data:") and "," in url:
+                url = url.split(",", 1)[1]
+            if url:
+                images.append(url)
+
+        if not images:
+            raise Exception(f"No image returned by {self.full_model}: {message.get('content') or result}")
 
         return ImageResponse(
             images=images,
             model=self.full_model,
             provider="openrouter",
             prompt=prompt,
-            metadata={"created": getattr(response, "created", None)}
+            metadata={"created": result.get("created")}
         )
 
 
