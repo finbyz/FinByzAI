@@ -359,6 +359,68 @@ class TestAutomationSchema(IntegrationTestCase):
 		codes = {issue["code"] for issue in validate_graph(graph)["issues"]}
 		self.assertIn("MISSING_DELAY_DATETIME", codes)
 
+	def test_event_filter_rejects_a_form_that_no_longer_exists(self):
+		"""A deleted form leaves a filter no payload can satisfy."""
+		from finbyzai.workflow_builder.schema import _validate_event_filter
+
+		issues = _validate_event_filter(
+			{"kind": "predicate", "field": "form", "operator": "eq", "value": "NO-SUCH-FORM"},
+			"crm.form.submitted",
+			"trigger.config.event_filter",
+			"Customer",
+			"trigger",
+		)
+		self.assertEqual([issue["code"] for issue in issues], ["EVENT_FILTER_RECORD_MISSING"])
+
+	def test_event_filter_rejects_a_form_that_writes_another_doctype(self):
+		"""A Lead form in a Customer workflow can never raise the event."""
+		from finbyzai.workflow_builder.schema import _validate_event_filter
+
+		team = frappe.db.get_value("FP Team", {}, "name") or frappe.get_doc(
+			{"doctype": "FP Team", "team_name": "Schema guard team"}
+		).insert(ignore_permissions=True).name
+		form = frappe.new_doc("Form")
+		form.title = "Schema guard form"
+		form.target_doctype = "Lead"
+		form.record_strategy = "Create New"
+		form.linked_team_id = team
+		form.insert(ignore_permissions=True)
+		issues = _validate_event_filter(
+			{"kind": "predicate", "field": "form", "operator": "eq", "value": form.name},
+			"crm.form.submitted",
+			"trigger.config.event_filter",
+			"Customer",
+			"trigger",
+		)
+		self.assertEqual([issue["code"] for issue in issues], ["EVENT_FILTER_RECORD_INELIGIBLE"])
+		# The same form is fine in a workflow built on the DocType it writes.
+		self.assertEqual(
+			_validate_event_filter(
+				{"kind": "predicate", "field": "form", "operator": "eq", "value": form.name},
+				"crm.form.submitted",
+				"trigger.config.event_filter",
+				"Lead",
+				"trigger",
+			),
+			[],
+		)
+
+	def test_event_filter_link_check_ignores_non_literal_operators(self):
+		"""Only an equality against one id names a record to verify."""
+		from finbyzai.workflow_builder.schema import _validate_event_filter
+
+		for operator in ("is_set", "is_not_set"):
+			self.assertEqual(
+				_validate_event_filter(
+					{"kind": "predicate", "field": "form", "operator": operator, "value": None},
+					"crm.form.submitted",
+					"trigger.config.event_filter",
+					"Customer",
+					"trigger",
+				),
+				[],
+			)
+
 	def test_event_trigger_v2_supports_or_groups_and_event_specific_filters(self):
 		graph = empty_graph("Lead", "trigger.event")
 		graph["nodes"][0].update(
@@ -374,7 +436,7 @@ class TestAutomationSchema(IntegrationTestCase):
 						{
 							"id": "form",
 							"event_topic": "crm.form.submitted",
-							"event_filter": predicate("form_name", "eq", "Contact Us"),
+							"event_filter": predicate("route", "eq", "contact-us"),
 						},
 					],
 					"condition": predicate("status", "eq", "Lead"),

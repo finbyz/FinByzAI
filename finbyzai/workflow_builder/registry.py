@@ -78,9 +78,18 @@ BUSINESS_EVENT_CATALOG = [
 		"topic": "crm.form.submitted",
 		"label": "Form submitted",
 		"category": "Contact",
-		"description": "A supported form was submitted and resolved to a contact.",
+		"description": "A form was submitted and its record was saved.",
 		"filter_fields": [
-			{"fieldname": "form_name", "label": "Form", "fieldtype": "Link", "options": "Web Form"},
+			{"fieldname": "form", "label": "Form", "fieldtype": "Link", "options": "Form"},
+			{"fieldname": "form_source", "label": "Built with", "fieldtype": "Select", "options": "Forms Pro\nFrappe Web Form"},
+			{"fieldname": "web_form", "label": "Frappe Web Form", "fieldtype": "Link", "options": "Web Form"},
+			{"fieldname": "route", "label": "Form route", "fieldtype": "Data"},
+			{"fieldname": "operation", "label": "Record operation", "fieldtype": "Select", "options": "Create\nCreate New\nUpdate\nUpdate Existing\nCollect Only"},
+			{"fieldname": "utm_source", "label": "UTM source", "fieldtype": "Data"},
+			{"fieldname": "utm_medium", "label": "UTM medium", "fieldtype": "Data"},
+			{"fieldname": "utm_campaign", "label": "UTM campaign", "fieldtype": "Data"},
+			{"fieldname": "gclid", "label": "Google click ID", "fieldtype": "Data"},
+			{"fieldname": "submission", "label": "Form submission", "fieldtype": "Link", "options": "FP Form Submission"},
 		],
 	},
 	{
@@ -246,8 +255,8 @@ BUSINESS_EVENT_CONTEXT = {
 		"wait_traits": {"record"},
 		"source_modes": ["enrolled_record"],
 		"producer_status": "native",
-		"source_app": "Frappe Web Form",
-		"setup_note": "Frappe Web Form submissions emit the event for the exact target record after its authoritative save.",
+		"source_app": "Forms Pro",
+		"setup_note": "A Forms Pro submission emits this event for the record the form wrote, once that record is saved and linked to the submission. Choose a form built on this workflow's DocType. A form that only collects submissions writes no record, so it enrols a workflow built on FP Form Submission instead. Frappe Web Form submissions emit the same event after their authoritative save.",
 	},
 	"crm.call.inbound": {
 		"trigger_doctypes": {"Contact", "Lead", "Opportunity", "Customer"},
@@ -1097,6 +1106,22 @@ def business_event_catalog(primary_doctype: str | None = None, usage: str = "all
 			definition["label"] = _("Placed an order")
 		elif doctype and definition["topic"] == "commerce.order.abandoned":
 			definition["label"] = _("Abandoned a cart")
+		if doctype and definition["topic"] == "crm.form.submitted":
+			# Only forms that write this workflow's DocType can ever enrol it.
+			# Scoping the picker is what stops an author choosing a Lead form in
+			# a Customer workflow and waiting for an event that cannot arrive.
+			for field in definition["filter_fields"]:
+				if field["fieldname"] == "form":
+					field["link_filters"] = {"target_doctype": doctype}
+			if doctype == "FP Form Submission":
+				# A collect-only form has no target record, so the submission is
+				# the enrolled record and a target-scoped picker would be empty.
+				for field in definition["filter_fields"]:
+					if field["fieldname"] == "form":
+						field["link_filters"] = {"record_strategy": "Collect Submission Only"}
+				definition["filter_fields"] = [
+					field for field in definition["filter_fields"] if field["fieldname"] != "submission"
+				]
 		if doctype and definition["topic"] == "email.unsubscribed" and doctype != "Lead":
 			definition["filter_fields"] = [
 				field for field in definition["filter_fields"] if field["fieldname"] != "subscription_topic"

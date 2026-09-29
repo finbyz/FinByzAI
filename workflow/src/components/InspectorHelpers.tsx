@@ -196,9 +196,10 @@ export function TypedValueInput({ field, value, onChange, referenceDoctype, mult
     return searchLink(linkDoctype, search, {
       referenceDoctype: field?.fieldtype === 'Table MultiSelect' ? field.child_doctype : referenceDoctype,
       linkFieldname: field?.fieldtype === 'Table MultiSelect' ? field.link_fieldname : field?.fieldname,
+      filters: field?.link_filters,
     })
       .then((rows) => rows.map((row) => ({ value: row.value, label: row.label || row.value, description: row.description })))
-  }, [field?.child_doctype, field?.fieldname, field?.fieldtype, field?.link_doctype, field?.link_fieldname, field?.options, referenceDoctype])
+  }, [field?.child_doctype, field?.fieldname, field?.fieldtype, field?.link_doctype, field?.link_fieldname, field?.link_filters, field?.options, referenceDoctype])
   if (multiple || field?.fieldtype === 'Table MultiSelect') {
     const values = Array.isArray(value) ? value.map(String) : []
     const searchable = field?.fieldtype === 'Link' || field?.fieldtype === 'Table MultiSelect'

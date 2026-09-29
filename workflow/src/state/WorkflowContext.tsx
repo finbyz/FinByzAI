@@ -12,7 +12,7 @@ import {
   useRef,
 } from 'react'
 import { call, mutationEnvelope, WorkflowApiError } from '../lib/api'
-import { arrangeWorkflowGraph, canonicalValue, catalogNode, createWorkflowClipboard, insertWorkflowNode, pasteWorkflowClipboard, relocateWorkflowNode, removeWorkflowNodes, replaceWorkflowTrigger, sameExecutionGraph, suggestedNodePlacement, upgradeLegacyIfElseBranches, workflowSectionNodeIds, type NodePlacement, type WorkflowClipboardPayload } from '../lib/workflowGraphCommands'
+import { arrangeWorkflowGraph, canonicalValue, catalogNode, createWorkflowClipboard, insertWorkflowNode, pasteWorkflowClipboard, relocateWorkflowNode, relocateWorkflowNodeToPlacement, removeWorkflowNodes, replaceWorkflowTrigger, sameExecutionGraph, suggestedNodePlacement, upgradeLegacyIfElseBranches, workflowSectionNodeIds, type NodePlacement, type WorkflowClipboardPayload } from '../lib/workflowGraphCommands'
 import type {
   NodeCatalogItem,
   SimulationResult,
@@ -396,6 +396,7 @@ interface WorkflowActions {
   replaceGraph(graph: WorkflowGraph, commandKey?: string): void
   moveNode(nodeId: string, position: { x: number; y: number }): void
   relocateNode(nodeId: string, edgeId: string, position: { x: number; y: number }): void
+  relocateNodeToPlacement(nodeId: string, placement: NodePlacement): void
   removeNode(nodeId: string): void
   removeNodes(nodeIds: string[]): void
   removeSection(nodeId: string): void
@@ -787,6 +788,11 @@ export function WorkflowProvider({ workflowId, children }: { workflowId: string;
 		const current = documentRef.current.graph
 		if (!current) return
 		mutate(arrangeWorkflowGraph(relocateWorkflowNode(current, nodeId, edgeId, position, crypto.randomUUID())), `relocate:${nodeId}`)
+	},
+	relocateNodeToPlacement(nodeId, placement) {
+		const current = documentRef.current.graph
+		if (!current) return
+		mutate(arrangeWorkflowGraph(relocateWorkflowNodeToPlacement(current, nodeId, placement, crypto.randomUUID())), `move-action:${nodeId}`)
 	},
     removeNode(nodeId) {
       const current = documentRef.current.graph

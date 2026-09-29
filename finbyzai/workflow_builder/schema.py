@@ -145,6 +145,72 @@ def _validate_event_filter(
 				path,
 			)
 		)
+	issues.extend(_validate_event_filter_links(expression, definition, path))
+	return issues
+
+
+def _validate_event_filter_links(expression: Any, definition: dict, path: str) -> list[dict]:
+	"""Reject a filter pinned to a record that cannot produce the event.
+
+	An event filter is stored inside the graph, so Frappe's link integrity never
+	sees it: deleting the referenced Form leaves a filter that no payload can
+	satisfy, and the workflow stays ACTIVE while silently enrolling nobody. That
+	is the worst failure this builder can have, because it looks like success.
+
+	``link_filters`` is the same declaration the authoring picker narrows by, so
+	a value the picker could never have offered is refused here too.
+	"""
+	link_fields = {
+		str(field.get("fieldname")): field
+		for field in definition.get("filter_fields") or []
+		if isinstance(field, dict) and field.get("fieldtype") == "Link" and field.get("options")
+	}
+	if not link_fields:
+		return []
+	issues = []
+	for predicate in condition_predicates(expression):
+		field = link_fields.get(str(predicate.get("field") or ""))
+		if not field:
+			continue
+		# Only a literal scalar names one record. "is set", "in", and value
+		# bindings are checked by the operator rules instead.
+		if str(predicate.get("operator") or "") not in {"eq", "neq"}:
+			continue
+		value = predicate.get("value")
+		if not isinstance(value, str) or not value.strip():
+			continue
+		doctype = str(field["options"])
+		try:
+			exists = frappe.db.exists(doctype, value)
+		except Exception:
+			continue
+		if not exists:
+			issues.append(
+				_issue(
+					"EVENT_FILTER_RECORD_MISSING",
+					f"{field.get('label') or field['fieldname']} {value} no longer exists, so this trigger can never match.",
+					path,
+				)
+			)
+			continue
+		link_filters = field.get("link_filters")
+		if not isinstance(link_filters, dict) or not link_filters:
+			continue
+		mismatched = {
+			key: frappe.db.get_value(doctype, value, key)
+			for key, expected in link_filters.items()
+			if frappe.db.get_value(doctype, value, key) != expected
+		}
+		if mismatched:
+			detail = ", ".join(f"{key} is {found!r}" for key, found in sorted(mismatched.items()))
+			expected = ", ".join(f"{key}={value!r}" for key, value in sorted(link_filters.items()))
+			issues.append(
+				_issue(
+					"EVENT_FILTER_RECORD_INELIGIBLE",
+					f"{field.get('label') or field['fieldname']} {value} can never raise this event here ({detail}; this workflow needs {expected}).",
+					path,
+				)
+			)
 	return issues
 
 
@@ -1320,6 +1386,22 @@ def evaluate_expression(expression: Any, record: Any, outputs: dict[str, Any] | 
 		matched = str(right or "").casefold() in str(left or "").casefold()
 		return matched if operator == "contains" else not matched
 	return False
+
+
+def condition_predicates(expression: Any) -> list[dict]:
+	"""Every predicate in an expression tree, so a caller can inspect its value."""
+	predicates = []
+	stack = [expression]
+	while stack:
+		current = stack.pop()
+		if not isinstance(current, dict):
+			continue
+		if current.get("kind") == "predicate" and isinstance(current.get("field"), str) and current.get("field"):
+			predicates.append(current)
+		children = current.get("children")
+		if isinstance(children, list):
+			stack.extend(children)
+	return predicates
 
 
 def condition_fields(expression: Any) -> set[str]:

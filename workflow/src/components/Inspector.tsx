@@ -202,8 +202,9 @@ export function SendEmailEditor({
 	const sendTest = async () => {
 		setTestState('Sending…')
 		try {
-			const result = await call<{ recipient: string; email_queue: string }>('send_workflow_test_email', { workflow_id: workflowId, config, recipient: testRecipient, record_name: sampleRecord || undefined }, true)
-			setTestState(`Queued for ${result.recipient}`)
+			const result = await call<{ recipient: string; email_queue: string; queue_status?: string; error?: string }>('send_workflow_test_email', { workflow_id: workflowId, config, recipient: testRecipient, record_name: sampleRecord || undefined }, true)
+			const status = result.queue_status || 'Queued'
+			setTestState(`Queued for ${result.recipient} · Email Queue ${result.email_queue} · ${status}${result.error ? ` · ${result.error}` : ''}`)
 		} catch (error) {
 			setTestState(error instanceof Error ? error.message : 'Test email failed')
 		}

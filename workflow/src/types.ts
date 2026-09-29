@@ -200,7 +200,7 @@ export interface BusinessEventType {
   label: string
   category: string
   description: string
-	filter_fields?: Array<Pick<FieldCatalogItem, 'fieldname' | 'label' | 'fieldtype' | 'options'>>
+	filter_fields?: Array<Pick<FieldCatalogItem, 'fieldname' | 'label' | 'fieldtype' | 'options' | 'link_filters'>>
 	available_for?: Array<'trigger' | 'wait'>
 	source_modes?: Array<'enrolled_record' | 'action_output'>
 	source_node_types?: NodeType[]
@@ -252,6 +252,8 @@ export interface FieldCatalogItem {
   child_fields?: Array<Pick<FieldCatalogItem, 'fieldname' | 'label' | 'fieldtype' | 'options' | 'required'>>
   link_fieldname?: string
   link_doctype?: string
+  /** Server-supplied filters narrowing a Link picker to the rows that can actually apply here. */
+  link_filters?: Record<string, unknown>
   unsupported_reason?: string
 }
 
