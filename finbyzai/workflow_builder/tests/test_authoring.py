@@ -341,9 +341,8 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		self.assertTrue(saved["draft_revision"])
 
 	def test_publish_only_demands_ai_paths_that_can_actually_fire(self):
-		"""low-confidence never fires for plain text, and failure never fires when
-		the node is set to fail the workflow. Demanding those edges forced the
-		author to draw wiring the engine can never reach."""
+		"""Authors choose which AI outcomes continue; an unconnected outcome
+			ends its path, while provider errors require explicit handling."""
 		created = create_workflow_record("AI path reachability", "Lead", trigger_type="trigger.document_insert")
 
 		def build(output_format, failure_mode, handles):
@@ -373,12 +372,13 @@ class TestAutomationAuthoring(IntegrationTestCase):
 
 		# Unreachable paths are not demanded.
 		self.assertFalse(ai_issues(build("text", "fail_workflow", ["success"])))
-		# A reachable failure branch still is.
+		# A reachable provider failure needs either a connected Failed path or
+		# fail_workflow, so it cannot silently complete the run.
 		self.assertTrue(ai_issues(build("text", "branch", ["success"])))
 		self.assertFalse(ai_issues(build("text", "branch", ["success", "failure"])))
-		# Structured output can report low confidence, so that one is demanded too.
-		self.assertTrue(ai_issues(build("json", "branch", ["success", "failure"])))
-		self.assertFalse(ai_issues(build("json", "branch", ["success", "failure", "low_confidence"])))
+		# Low confidence may end its path without an extra action.
+		self.assertFalse(ai_issues(build("json", "branch", ["success", "failure"])))
+		self.assertFalse(ai_issues(build("json", "fail_workflow", ["low_confidence"])))
 
 	def test_a_cleanly_validating_node_stops_being_a_placeholder(self):
 		"""``placeholder`` is how the AI marks a step it could not finish. Nothing

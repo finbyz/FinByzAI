@@ -60,20 +60,23 @@ class TestWorkflowAISupport(IntegrationTestCase):
 			)
 		return graph
 
-	def test_ai_generate_requires_all_explicit_outcome_paths_for_publication(self):
-		incomplete = validate_graph(
-			self._ai_graph(handles=["success", "failure"]),
-			primary_doctype="Issue",
-			publish=True,
-		)
-		self.assertIn("AI_PATHS_INCOMPLETE", {issue["code"] for issue in incomplete["issues"]})
+	def test_ai_generate_allows_selected_outcome_paths_without_silent_provider_failure(self):
+		one_path = self._ai_graph(handles=["success"])
+		one_path["nodes"][1]["config"]["failure_mode"] = "fail_workflow"
+		validation = validate_graph(one_path, primary_doctype="Issue", publish=True)
+		self.assertNotIn("AI_PATHS_INCOMPLETE", {issue["code"] for issue in validation["issues"]})
 
-		complete = validate_graph(
+		for handles in ([], ["success"]):
+			unhandled_failure = validate_graph(
+				self._ai_graph(handles=handles), primary_doctype="Issue", publish=True,
+			)
+			self.assertIn("AI_PATHS_INCOMPLETE", {issue["code"] for issue in unhandled_failure["issues"]})
+
+		all_paths = validate_graph(
 			self._ai_graph(handles=["success", "low_confidence", "failure"]),
-			primary_doctype="Issue",
-			publish=True,
+			primary_doctype="Issue", publish=True,
 		)
-		self.assertNotIn("AI_PATHS_INCOMPLETE", {issue["code"] for issue in complete["issues"]})
+		self.assertNotIn("AI_PATHS_INCOMPLETE", {issue["code"] for issue in all_paths["issues"]})
 
 	def test_ai_support_requires_response_handoff_and_failure_paths(self):
 		validation = validate_graph(

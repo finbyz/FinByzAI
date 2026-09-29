@@ -218,43 +218,93 @@ export function workflowNodeVisualWidth(node: WorkflowNode): number {
 	return outputs.length > 3 ? Math.min(1440, Math.max(252, outputs.length * 84)) : node.type.startsWith('trigger.') ? 310 : 252
 }
 
-/** Produce a readable top-down journey without requiring authors to manually
- * line up branches. Missing branch outputs reserve their own lane so END points
- * do not overlap connected children. Legacy unreachable nodes are moved into a
- * separate column where their disconnected state is visually honest.
+/** Lay out the journey in rows. Reserve a lane for every branch output,
+ * including an unfinished path, and keep shared downstream steps below all
+ * of their incoming paths. A final width-aware pass prevents wide cards from
+ * covering their neighbours on the same row.
  */
 export function arrangeWorkflowGraph(graph: WorkflowGraph): WorkflowGraph {
 	const nodeById = new Map(graph.nodes.map((node) => [node.id, node]))
 	if (!nodeById.has(graph.start_node_id)) return graph
-	const horizontalGap = 320
-	const verticalGap = 250
-	const positions = new Map<string, Position>()
-	const visiting = new Set<string>()
-	let leafIndex = 0
-
-	const place = (nodeId: string, depth: number): number => {
-		const existing = positions.get(nodeId)
-		if (existing) return existing.x + workflowNodeVisualWidth(nodeById.get(nodeId) as WorkflowNode) / 2
-		const node = nodeById.get(nodeId)
-		if (!node || visiting.has(nodeId)) return leafIndex++ * horizontalGap
-		visiting.add(nodeId)
-		const handles = workflowNodeSourceHandles(node)
-		const centers = handles.length ? handles.map((handle) => {
-			const edge = graph.edges.find((candidate) => candidate.source === nodeId && candidate.source_handle === handle)
-			return edge && !visiting.has(edge.target) ? place(edge.target, depth + 1) : leafIndex++ * horizontalGap
-		}) : [leafIndex++ * horizontalGap]
-		visiting.delete(nodeId)
-		const center = (centers[0] + centers[centers.length - 1]) / 2
-		positions.set(nodeId, { x: center - workflowNodeVisualWidth(node) / 2, y: 80 + depth * verticalGap })
-		return center
+	const reachable = reachableWorkflowNodeIds(graph)
+	const outgoing = new Map<string, typeof graph.edges>()
+	const incomingCount = new Map<string, number>()
+	for (const id of reachable) {
+		outgoing.set(id, [])
+		incomingCount.set(id, 0)
+	}
+	for (const edge of graph.edges) {
+		if (!reachable.has(edge.source) || !reachable.has(edge.target)) continue
+		outgoing.get(edge.source)?.push(edge)
+		incomingCount.set(edge.target, (incomingCount.get(edge.target) || 0) + 1)
 	}
 
+	// Longest-path depth keeps a shared step below every parent in a diamond.
+	// Cycles are tolerated: nodes left by the topological pass use their first
+	// discovered depth, while the horizontal walk below guards its own recursion.
+	const depths = new Map<string, number>([[graph.start_node_id, 0]])
+	const queue = [...reachable].filter((id) => (incomingCount.get(id) || 0) === 0)
+	for (let index = 0; index < queue.length; index++) {
+		const id = queue[index]
+		for (const edge of outgoing.get(id) || []) {
+			depths.set(edge.target, Math.max(depths.get(edge.target) || 0, (depths.get(id) || 0) + 1))
+			const remaining = (incomingCount.get(edge.target) || 0) - 1
+			incomingCount.set(edge.target, remaining)
+			if (remaining === 0) queue.push(edge.target)
+		}
+	}
+
+	const centers = new Map<string, number>()
+	const visiting = new Set<string>()
+	let nextLane = 0
+	const reserveLane = (width = 252) => {
+		const laneWidth = Math.max(340, width + 88)
+		const center = nextLane + laneWidth / 2
+		nextLane += laneWidth
+		return center
+	}
+	const place = (id: string, depth: number): number => {
+		const existing = centers.get(id)
+		if (existing !== undefined) return existing
+		const node = nodeById.get(id)
+		if (!node || visiting.has(id)) return reserveLane()
+		if (!depths.has(id)) depths.set(id, depth)
+		visiting.add(id)
+		const handles = workflowNodeSourceHandles(node)
+		const children = handles.map((handle) => {
+			const edge = outgoing.get(id)?.find((candidate) => candidate.source_handle === handle)
+			return edge && !visiting.has(edge.target) ? place(edge.target, depth + 1) : reserveLane()
+		})
+		visiting.delete(id)
+		const center = children.length
+			? (children[0] + children[children.length - 1]) / 2
+			: reserveLane(workflowNodeVisualWidth(node))
+		centers.set(id, center)
+		return center
+	}
 	place(graph.start_node_id, 0)
-	const reachable = reachableWorkflowNodeIds(graph)
-	const reachablePositions = [...positions.values()]
-	const minimumX = Math.min(...reachablePositions.map((position) => position.x), 80)
+	for (const id of reachable) if (!centers.has(id)) place(id, depths.get(id) || 0)
+
+	const positions = new Map<string, Position>()
+	const rows = new Map<number, string[]>()
+	for (const id of reachable) {
+		const depth = depths.get(id) || 0
+		rows.set(depth, [...(rows.get(depth) || []), id])
+	}
+	for (const [depth, ids] of rows) {
+		let right = Number.NEGATIVE_INFINITY
+		for (const id of ids.sort((left, rightId) => (centers.get(left) || 0) - (centers.get(rightId) || 0))) {
+			const node = nodeById.get(id) as WorkflowNode
+			const width = workflowNodeVisualWidth(node)
+			const preferredX = (centers.get(id) || 0) - width / 2
+			const x = Math.max(preferredX, right + 88)
+			positions.set(id, { x, y: 80 + depth * 280 })
+			right = x + width
+		}
+	}
+	const minimumX = Math.min(...[...positions.values()].map((position) => position.x), 80)
 	const shiftX = minimumX < 80 ? 80 - minimumX : 0
-	const maximumX = Math.max(...graph.nodes.filter((node) => reachable.has(node.id)).map((node) => (positions.get(node.id)?.x || 0) + workflowNodeVisualWidth(node) + shiftX), 332)
+	const maximumX = Math.max(...[...reachable].map((id) => (positions.get(id)?.x || 0) + workflowNodeVisualWidth(nodeById.get(id) as WorkflowNode) + shiftX), 332)
 	graph.nodes.filter((node) => !reachable.has(node.id)).forEach((node, index) => {
 		positions.set(node.id, { x: maximumX + 220, y: 80 + index * 220 })
 	})

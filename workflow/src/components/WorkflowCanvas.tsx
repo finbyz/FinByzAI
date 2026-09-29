@@ -32,7 +32,7 @@ import { nodeLabels, nodeIcons } from './InspectorHelpers'
 
 type WorkflowFlowNode = Node<{ workflowNode: WorkflowNode; primaryDoctype: string; issueCount: number; manualConnections: boolean; connected: boolean; metric?: CanvasMetric; moving?: boolean; beginMove?: (nodeId: string) => void }, 'workflow'>
 type EnrollmentFlowNode = Node<{ workflowNode: WorkflowNode; primaryDoctype: string; issueCount: number; totalEnrollments?: number }, 'enrollment'>
-type VirtualEndFlowNode = Node<{ sourceId: string; sourceHandle: string; label: string; insertPosition: { x: number; y: number }; movingNodeId?: string | null; moveToPlacement?: (placement: NodePlacement) => void }, 'virtualEnd'>
+type VirtualEndFlowNode = Node<{ sourceId: string; sourceHandle: string; label: string; failsWorkflow?: boolean; insertPosition: { x: number; y: number }; movingNodeId?: string | null; moveToPlacement?: (placement: NodePlacement) => void }, 'virtualEnd'>
 type FlowNode = WorkflowFlowNode | EnrollmentFlowNode | VirtualEndFlowNode
 
 function nodeKind(type: NodeType) {
@@ -453,7 +453,7 @@ export const VirtualEndCard = memo(({ data }: NodeProps<VirtualEndFlowNode>) => 
 			<PasteBelowButton placement={placement} className="workflow-path-end__add" />
 		</div>
 		<span className="workflow-path-end__tail" aria-hidden />
-		<span className="workflow-virtual-end"><CheckCircle2 size={12} />END</span>
+		<span className={`workflow-virtual-end${data.failsWorkflow ? " workflow-virtual-end--failure" : ""}`} title={data.failsWorkflow ? "Provider error fails the workflow" : "This path ends the run"}>{data.failsWorkflow ? <AlertTriangle size={12} /> : <CheckCircle2 size={12} />}{data.failsWorkflow ? "FAIL" : "END"}</span>
 	</div>
 })
 VirtualEndCard.displayName = 'VirtualEndCard'
@@ -540,6 +540,7 @@ export function WorkflowCanvas() {
 				sourceId: node.id,
 				sourceHandle: output.handle,
 				label: output.label,
+				failsWorkflow: ['action.ai_generate', 'action.ai_support_agent'].includes(node.type) && output.handle === 'failure' && node.config.failure_mode === 'fail_workflow',
 				position: {
 					x: (node.position?.x || 120) + ((index + 0.5) / outputs.length) * width - 48,
 					y: (node.position?.y || 120) + endpointOffsetY,
@@ -569,7 +570,7 @@ export function WorkflowCanvas() {
 				id: `virtual-end:${endpoint.sourceId}:${endpoint.sourceHandle}`,
 				type: 'virtualEnd',
 				position: endpoint.position,
-				data: { sourceId: endpoint.sourceId, sourceHandle: endpoint.sourceHandle, label: endpoint.label, insertPosition: endpoint.insertPosition, movingNodeId, moveToPlacement: (placement) => { if (!movingNodeId) return; actions.relocateNodeToPlacement(movingNodeId, placement); setMovingNodeId(null) } },
+				data: { sourceId: endpoint.sourceId, sourceHandle: endpoint.sourceHandle, label: endpoint.label, failsWorkflow: endpoint.failsWorkflow, insertPosition: endpoint.insertPosition, movingNodeId, moveToPlacement: (placement) => { if (!movingNodeId) return; actions.relocateNodeToPlacement(movingNodeId, placement); setMovingNodeId(null) } },
 				draggable: false,
 				selectable: false,
 				deletable: false,
