@@ -64,6 +64,26 @@ class TestWorkflowEmailAuthoring(IntegrationTestCase):
 		self.assertEqual(content["email_template"], template.name)
 		self.assertTrue(content["content_hash"])
 
+	def test_inline_message_line_breaks_survive_email_rendering(self):
+		config = {
+			"content_mode": "inline",
+			"subject": {"kind": "literal", "value": "Welcome"},
+			"message": {"kind": "literal", "value": "Hello Ada\r\n\r\nWelcome aboard."},
+		}
+		content = resolve_email_content(
+			config,
+			record=frappe._dict(doctype="Lead"),
+			outputs={},
+			primary_doctype="Lead",
+		)
+		self.assertEqual(content["message"], "Hello Ada<br><br>Welcome aboard.")
+		self.assertFalse(content["raw_html"])
+		config["raw_html"] = 1
+		self.assertEqual(
+			resolve_email_content(config, record=frappe._dict(doctype="Lead"), outputs={}, primary_doctype="Lead")["message"],
+			"Hello Ada\r\n\r\nWelcome aboard.",
+		)
+
 	def test_template_reference_doctype_must_match_workflow(self):
 		template = self._template(reference_doctype="Opportunity")
 		with self.assertRaisesRegex(AutomationError, "designed for Opportunity, not Lead"):

@@ -46,6 +46,7 @@ from finbyzai.workflow_builder.principal import (
 	execution_principal,
 )
 from finbyzai.workflow_builder.errors import AutomationConflictError, AutomationError, AutomationPermissionError
+from finbyzai.workflow_builder.folders import create_folder, delete_folder, ensure_folder_path, list_folders
 from finbyzai.workflow_builder.registry import field_catalog_result
 from finbyzai.workflow_builder.schema import empty_graph, validate_graph
 from finbyzai.workflow_builder.setup import (
@@ -93,6 +94,9 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		self.assertEqual(kwargs["or_filters"]["primary_doctype"], ["like", "%invoice%"])
 		self.assertEqual(get_list.call_count, 2)
 		self.assertEqual(get_list.call_args_list[1].kwargs["group_by"], "status")
+		with patch.object(frappe, "get_list", side_effect=[[], []]) as unfiled_list:
+			list_workflow_records(folder="")
+		self.assertEqual(unfiled_list.call_args_list[0].kwargs["filters"]["folder"], ["is", "not set"])
 
 	def test_workflow_folder_is_created_moved_and_filterable(self):
 		created = create_workflow_record("Folder contract", "Lead", folder="Sales/Nurture")
@@ -102,6 +106,23 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		self.assertIn(created["workflow"], {row.name for row in rows})
 		with self.assertRaisesRegex(AutomationError, "dot path"):
 			set_workflow_folder(created["workflow"], "../Unsafe")
+
+	def test_workflow_folder_tree_preserves_paths_and_guards_deletion(self):
+		root = f"Folder test {frappe.generate_hash(length=8)}"
+		child = f"{root}/Nurture"
+		self.assertEqual(create_folder(root)["path"], root)
+		self.assertEqual(create_folder("Nurture", root)["path"], child)
+		self.assertEqual(ensure_folder_path(child), child)
+		self.assertEqual(frappe.db.get_value("Automation Workflow Folder", child, "parent_folder"), root)
+		self.assertIn(child, {row.name for row in list_folders()})
+		with self.assertRaisesRegex(AutomationError, "subfolders"):
+			delete_folder(root)
+		created = create_workflow_record("Folder member", "Lead", folder=child)
+		with self.assertRaisesRegex(AutomationError, "workflows"):
+			delete_folder(child)
+		self.assertEqual(set_workflow_folder(created["workflow"], "")["folder"], "")
+		self.assertEqual(delete_folder(child)["deleted"], child)
+		self.assertEqual(delete_folder(root)["deleted"], root)
 
 	def test_workflow_list_bulk_loads_published_graphs(self):
 		graph = empty_graph("Lead", "trigger.record_created")
