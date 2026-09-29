@@ -13,6 +13,8 @@ import {
   Copy,
   Ellipsis,
   FileCheck2,
+  Folder,
+  FolderOpen,
   FlaskConical,
   Gauge,
   GitCompareArrows,
@@ -182,9 +184,9 @@ function safeJsonEvidence(value?: string) {
 
 interface CreateForm { title: string; primary_doctype: string; folder: string }
 
-function CreateDialog({ close, created }: { close(): void; created(id: string): void }) {
+function CreateDialog({ close, created, folders, initialFolder }: { close(): void; created(id: string): void; folders: WorkflowFolder[]; initialFolder: string }) {
   const dialogRef = useDialogA11y(true, close)
-  const { register, control, handleSubmit, formState: { isSubmitting } } = useForm<CreateForm>({ defaultValues: { primary_doctype: '', folder: '' } })
+  const { register, control, handleSubmit, formState: { isSubmitting } } = useForm<CreateForm>({ defaultValues: { primary_doctype: '', folder: initialFolder } })
   const [error, setError] = useState('')
   const loadDoctypes = useCallback((search: string) => searchDoctypes('read', search).then((rows) => rows.map((row) => ({ value: row.name, label: row.label || row.name, description: row.module }))), [])
   const submit = handleSubmit(async (values) => {
@@ -218,7 +220,7 @@ function CreateDialog({ close, created }: { close(): void; created(id: string): 
           <div className="mt-6 space-y-4">
             <label className="text-heading block text-xs font-semibold">Workflow name<input className={`${field} mt-1.5`} placeholder="e.g. Qualify new enterprise leads" {...register('title', { required: true })} /></label>
             <label className="text-heading block text-xs font-semibold">Business DocType<span className="mt-1.5 block"><Controller control={control} name="primary_doctype" rules={{ required: true }} render={({ field: doctypeField }) => <AsyncCombobox ariaLabel="Business DocType" value={doctypeField.value} onChange={doctypeField.onChange} loadOptions={loadDoctypes} placeholder="Search DocTypes by name or module…" />}/></span><span className="text-muted mt-1.5 block text-[10px] font-normal">Only readable, automation-safe DocTypes appear here.</span></label>
-			<label className="text-heading block text-xs font-semibold">Folder <span className="text-muted font-normal">(optional)</span><input className={`${field} mt-1.5`} placeholder="e.g. Sales / Lead nurture" {...register('folder', { maxLength: 140 })} /><span className="text-muted mt-1.5 block text-[10px] font-normal">Use slash-separated names to organize workflows.</span></label>
+			<label className="text-heading block text-xs font-semibold">Folder <span className="text-muted font-normal">(optional)</span><select className={`${field} mt-1.5`} {...register('folder')}><option value="">Unfiled</option>{folders.map((folder) => <option value={folder.name} key={folder.name}>{folder.name}</option>)}</select><span className="text-muted mt-1.5 block text-[10px] font-normal">Create nested folders from the workflow list.</span></label>
             {error && <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">{error}</p>}
           </div>
           <div className="mt-7 flex justify-end gap-2"><button type="button" className={secondary} onClick={close}>Cancel</button><button className={primary} disabled={isSubmitting}>{isSubmitting ? <LoaderCircle className="animate-spin" size={15} /> : <Plus size={15} />}Create workflow</button></div>
@@ -256,10 +258,10 @@ const AI_STARTERS = [
   },
 ]
 
-export function CreateWithAiDialog({ close, created }: { close(): void; created(id: string): void }) {
+export function CreateWithAiDialog({ close, created, folders = [], initialFolder = '' }: { close(): void; created(id: string): void; folders?: WorkflowFolder[]; initialFolder?: string }) {
   const dialogRef = useDialogA11y(true, close, 'Create workflow with AI')
   const { register, control, handleSubmit, setValue, watch, formState: { isSubmitting } } = useForm<CreateAiForm>({
-    defaultValues: { title: '', primary_doctype: '', folder: '', prompt: '' },
+    defaultValues: { title: '', primary_doctype: '', folder: initialFolder, prompt: '' },
   })
   const [error, setError] = useState('')
   const promptVal = watch('prompt') || ''
@@ -421,11 +423,10 @@ export function CreateWithAiDialog({ close, created }: { close(): void; created(
 
               <label className="text-heading block text-xs font-semibold">
                 Folder <span className="text-muted font-normal">(optional)</span>
-                <input
-                  className={`${field} mt-1.5`}
-                  placeholder="e.g. Operations / Finance"
-                  {...register('folder', { maxLength: 140 })}
-                />
+                <select className={`${field} mt-1.5`} {...register('folder')}>
+                  <option value="">Unfiled</option>
+                  {folders.map((folder) => <option value={folder.name} key={folder.name}>{folder.name}</option>)}
+                </select>
               </label>
             </div>
 
@@ -487,7 +488,7 @@ export function DeleteWorkflowDialog({ workflow, close, deleted }: { workflow: W
   )
 }
 
-export function MoveWorkflowDialog({ workflow, close, moved }: { workflow: WorkflowSummary; close(): void; moved(folder: string): Promise<void> | void }) {
+export function MoveWorkflowDialog({ workflow, folders = [], close, moved }: { workflow: WorkflowSummary; folders?: WorkflowFolder[]; close(): void; moved(folder: string): Promise<void> | void }) {
   const dialogRef = useDialogA11y(true, close)
   const [folder, setFolder] = useState(workflow.folder || '')
   const [saving, setSaving] = useState(false)
@@ -518,8 +519,8 @@ export function MoveWorkflowDialog({ workflow, close, moved }: { workflow: Workf
         <h2 id="move-workflow-title" className="text-heading mt-4 text-lg font-bold">Move workflow</h2>
         <p className="text-muted mt-1 text-xs leading-5">Choose a folder for <strong className="text-heading">{workflow.title}</strong>. Leave it empty to show the workflow as Unfiled.</p>
         <div className="mt-5"><label htmlFor="move-workflow-folder" className="text-heading block text-xs font-semibold">Folder</label>
-          <input id="move-workflow-folder" className={`${field} mt-1.5`} value={folder} onChange={(event) => setFolder(event.target.value)} placeholder="e.g. Sales / Lead nurture" maxLength={140} autoFocus />
-          <span className="text-muted mt-1.5 block text-[10px] font-normal">Slash-separated folder names are supported.</span>
+          <select id="move-workflow-folder" className={`${field} mt-1.5`} value={folder} onChange={(event) => setFolder(event.target.value)} autoFocus><option value="">Unfiled</option>{workflow.folder && !folders.some((item) => item.name === workflow.folder) && <option value={workflow.folder}>{workflow.folder}</option>}{folders.map((item) => <option value={item.name} key={item.name}>{item.name}</option>)}</select>
+          <span className="text-muted mt-1.5 block text-[10px] font-normal">Choose an existing folder from the tree.</span>
         </div>
         {error && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-500/10 dark:text-red-300">{error}</p>}
         <div className="mt-6 flex justify-end gap-2"><button type="button" className={secondary} onClick={close} disabled={saving}>Cancel</button><button type="submit" className={primary} disabled={saving || unchanged}>{saving ? <LoaderCircle className="animate-spin" size={14} /> : <Layers3 size={14} />}Move</button></div>
@@ -529,8 +530,19 @@ export function MoveWorkflowDialog({ workflow, close, moved }: { workflow: Workf
   )
 }
 
+interface WorkflowFolder { name: string; folder_name: string; parent_folder?: string | null }
+
 export function WorkflowListPage() {
   const [rows, setRows] = useState<WorkflowSummary[]>([])
+  const [folders, setFolders] = useState<WorkflowFolder[]>([])
+  const [selectedFolder, setSelectedFolder] = useState<string | null>(null)
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
+  const [folderName, setFolderName] = useState('')
+  const [folderParent, setFolderParent] = useState('')
+  const [addingFolder, setAddingFolder] = useState(false)
+  const folderDialogRef = useDialogA11y(addingFolder, () => setAddingFolder(false), 'Create folder')
+  const [savingFolder, setSavingFolder] = useState(false)
+  const [folderError, setFolderError] = useState('')
   const [runtime, setRuntime] = useState<RuntimeHealth>()
   const [creating, setCreating] = useState(false)
   const [creatingAi, setCreatingAi] = useState(false)
@@ -540,6 +552,12 @@ export function WorkflowListPage() {
   const [workflowSearch, setWorkflowSearch] = useState('')
   const [appliedWorkflowSearch, setAppliedWorkflowSearch] = useState('')
   const workflowRequestSequence = useRef(0)
+  const loadFolders = useCallback(async () => {
+    const value = await call<{ rows: WorkflowFolder[] }>('list_workflow_folders')
+    setFolders(value.rows)
+    setExpandedFolders((current) => new Set([...current, ...value.rows.map((row) => row.name)]))
+  }, [])
+  useEffect(() => { void loadFolders().catch(() => setFolderError('Unable to load workflow folders')) }, [loadFolders])
   const [error, setError] = useState('')
   const [deleting, setDeleting] = useState<WorkflowSummary>()
   const [moving, setMoving] = useState<WorkflowSummary>()
@@ -552,7 +570,7 @@ export function WorkflowListPage() {
     setError('')
     try {
       const [value, health] = await Promise.all([
-		call<{ rows: WorkflowSummary[]; has_more: boolean }>('list_workflows', { search: appliedWorkflowSearch, start, page_length: 50 }, false, signal),
+		call<{ rows: WorkflowSummary[]; has_more: boolean }>('list_workflows', { search: appliedWorkflowSearch, folder: selectedFolder === null ? undefined : selectedFolder, start, page_length: 50 }, false, signal),
 		call<RuntimeHealth>('get_runtime_health', {}, false, signal),
       ])
 	  if (sequence !== workflowRequestSequence.current) return
@@ -564,7 +582,7 @@ export function WorkflowListPage() {
     } finally {
 	  if (sequence === workflowRequestSequence.current) { setLoading(false); setLoadingMore(false) }
     }
-  }, [appliedWorkflowSearch])
+  }, [appliedWorkflowSearch, selectedFolder])
   useEffect(() => {
 	const controller = new AbortController()
 	void load(0, false, controller.signal)
@@ -574,6 +592,46 @@ export function WorkflowListPage() {
 	const timer = window.setTimeout(() => setAppliedWorkflowSearch(workflowSearch.trim()), 300)
 	return () => window.clearTimeout(timer)
   }, [workflowSearch])
+  const saveNewFolder = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!folderName.trim()) return
+    setSavingFolder(true)
+    setFolderError('')
+    try {
+      const result = await call<{ path: string }>('create_workflow_folder', { folder_name: folderName.trim(), parent_folder: folderParent || undefined }, true)
+      setFolderName('')
+      setAddingFolder(false)
+      await loadFolders()
+      setSelectedFolder(result.path)
+    } catch (reason) {
+      setFolderError(reason instanceof Error ? reason.message : 'Unable to create folder')
+    } finally {
+      setSavingFolder(false)
+    }
+  }
+  const removeFolder = async (path: string) => {
+    if (!await confirmation.ask({ title: 'Delete this folder?', description: 'The folder must contain no workflows or subfolders.', confirmLabel: 'Delete folder', tone: 'danger' })) return
+    try {
+      await call('delete_workflow_folder', { path }, true)
+      if (selectedFolder === path) setSelectedFolder(null)
+      await loadFolders()
+    } catch (reason) {
+      setFolderError(reason instanceof Error ? reason.message : 'Unable to delete folder')
+    }
+  }
+  const renderFolder = (item: WorkflowFolder, depth: number): ReactNode => {
+    const children = folders.filter((row) => row.parent_folder === item.name)
+    const expanded = expandedFolders.has(item.name)
+    return <div key={item.name}>
+      <div className={`group flex items-center rounded-lg ${selectedFolder === item.name ? 'bg-brand-50 text-brand-700 dark:bg-brand-500/10 dark:text-brand-300' : 'text-body hover:bg-[var(--subtle-fg)]'}`} style={{ paddingLeft: depth * 13 }}>
+        <button type="button" className="grid size-6 shrink-0 place-items-center" aria-label={`${expanded ? 'Collapse' : 'Expand'} ${item.folder_name}`} onClick={() => setExpandedFolders((current) => { const next = new Set(current); if (expanded) next.delete(item.name); else next.add(item.name); return next })}>{children.length ? <ChevronRight size={13} className={expanded ? 'rotate-90' : ''} /> : null}</button>
+        <button type="button" className="flex min-w-0 flex-1 items-center gap-2 py-2 text-left text-xs" onClick={() => setSelectedFolder(item.name)}>{expanded ? <FolderOpen size={14} /> : <Folder size={14} />}<span className="truncate" title={item.name}>{item.folder_name}</span></button>
+        {canBuild && <button type="button" className="icon-button !size-6 opacity-0 group-hover:opacity-100 focus:opacity-100" aria-label={`Add subfolder in ${item.name}`} onClick={() => { setFolderParent(item.name); setFolderName(''); setFolderError(''); setAddingFolder(true) }}><Plus size={12} /></button>}
+        {canBuild && <button type="button" className="icon-button !size-6 text-red-500 opacity-0 group-hover:opacity-100 focus:opacity-100" aria-label={`Delete folder ${item.name}`} onClick={() => void removeFolder(item.name)}><Trash2 size={12} /></button>}
+      </div>
+      {expanded && children.map((child) => renderFolder(child, depth + 1))}
+    </div>
+  }
   const canBuild = hasRole('Automation Builder', 'Automation Publisher')
   const canOperate = hasRole('Automation Operator', 'Automation Publisher')
   const isSystemManager = hasRole('System Manager')
@@ -613,7 +671,7 @@ export function WorkflowListPage() {
           {canBuild && <button className={primary} onClick={() => setCreating(true)}><Plus size={15} /><span className="hidden sm:inline">Create workflow</span></button>}
         </div>
       </Header>
-      <main className="mx-auto max-w-7xl px-4 pb-12 pt-4 sm:px-6 lg:px-8">
+      <main className="mx-auto w-full max-w-[1840px] px-4 pb-12 pt-4 sm:px-6 lg:px-8">
         {runtime && <Link className="runtime-summary" data-healthy={runtime.healthy ? 'true' : 'false'} to="/operations" aria-label="Open automation runtime">
           <span className="runtime-summary__icon">{runtime.healthy ? <ShieldCheck size={16} /> : <AlertTriangle size={16} />}</span>
           <span className="min-w-0 flex-1"><span className="flex items-center gap-2"><strong className="text-heading text-[11px]">Automation runtime</strong><Status value={runtime.enabled ? 'ACTIVE' : 'DISABLED'} /></span><small>{runtime.healthy ? `${runtime.active_subscriptions} active subscriptions · no operational attention needed` : runtime.reasons.length ? runtime.reasons.join(', ') : 'Runtime needs attention'}</small></span>
@@ -626,6 +684,15 @@ export function WorkflowListPage() {
 			<div><h2 className="text-heading text-base font-bold">Your workflows</h2><p className="text-muted mt-0.5 text-xs">Drafts, active automations, and operational controls.</p></div>
 			<div className="flex items-center gap-3"><div className="relative w-56"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-light)]" size={13} /><input className="frappe-control h-9 w-full pl-9 text-xs" type="search" value={workflowSearch} onChange={(event) => setWorkflowSearch(event.target.value)} placeholder="Search workflows…" /></div><span className="text-light text-[10px]">{rows.length} shown</span></div>
           </div>
+          <div className="grid items-start gap-4 lg:grid-cols-[232px_minmax(0,1fr)]">
+            <aside className="surface-flat self-start rounded-xl border border-[var(--border-color)] p-3" aria-label="Workflow folders">
+              <div className="mb-2 flex items-center justify-between px-2"><strong className="text-heading text-xs">Folders</strong>{canBuild && <button type="button" className="icon-button !size-7" aria-label="Create folder" onClick={() => { setFolderParent(selectedFolder || ''); setFolderName(''); setFolderError(''); setAddingFolder(true) }}><Plus size={15} /></button>}</div>
+              <button type="button" className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs ${selectedFolder === null ? 'bg-brand-50 font-semibold text-brand-700 dark:bg-brand-500/10 dark:text-brand-300' : 'text-body hover:bg-[var(--subtle-fg)]'}`} onClick={() => setSelectedFolder(null)}><FolderOpen size={14} />All workflows</button>
+              <button type="button" className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs ${selectedFolder === '' ? 'bg-brand-50 font-semibold text-brand-700 dark:bg-brand-500/10 dark:text-brand-300' : 'text-body hover:bg-[var(--subtle-fg)]'}`} onClick={() => setSelectedFolder('')}><Folder size={14} />Unfiled</button>
+              <div className="mt-1 max-h-[430px] overflow-y-auto">{folders.filter((item) => !item.parent_folder).map((item) => renderFolder(item, 0))}</div>
+              {folderError && !addingFolder && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-2 text-[10px] text-red-700 dark:bg-red-500/10 dark:text-red-300">{folderError}</p>}
+            </aside>
+            <div className="min-w-0">
           <div className="surface-flat overflow-hidden rounded-xl">
             {loading ? (
               <div className="grid min-h-52 place-items-center"><LoaderCircle className="animate-spin text-brand-500" /></div>
@@ -633,7 +700,7 @@ export function WorkflowListPage() {
               <div className="px-6 py-12 text-center"><AlertTriangle className="mx-auto text-red-500" size={22} /><h3 className="text-heading mt-3 text-sm font-bold">Unable to load workflows</h3><p className="text-muted mx-auto mt-1 max-w-md text-xs">{error}</p><button className={`${primary} mt-4`} onClick={() => void load()}>Try again</button></div>
             ) : rows.length ? (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[780px] text-left text-xs">
+                <table className="w-full min-w-[1050px] text-left text-xs">
                   <thead className="bg-[var(--subtle-fg)] text-[9px] font-bold uppercase tracking-[0.11em] text-[var(--text-light)]"><tr><th className="px-5 py-3">Workflow</th><th className="px-5 py-3">Folder</th><th className="px-5 py-3">Business object</th><th className="px-5 py-3">Status</th><th className="px-5 py-3">Last updated</th><th className="px-5 py-3">Controls</th><th className="w-12" /></tr></thead>
                   <tbody>{rows.map((row) => (
                     <tr className="table-row" key={row.name}>
@@ -641,8 +708,8 @@ export function WorkflowListPage() {
                       <td className="px-5 py-4"><button className="rounded-md border border-[var(--border-color)] bg-[var(--subtle-fg)] px-2 py-1 text-[10px] font-semibold hover:border-brand-300 hover:text-brand-600" disabled={!canBuild} onClick={() => setMoving(row)} title={canBuild ? 'Move to another folder' : undefined}>{row.folder || 'Unfiled'}</button></td>
                       <td className="px-5 py-4"><span className="rounded-md border border-[var(--border-color)] bg-[var(--subtle-fg)] px-2 py-1 text-[10px] font-semibold">{row.primary_doctype}</span></td>
                       <td className="px-5 py-4"><Status value={row.status} /></td>
-                      <td className="text-muted px-5 py-4 text-[10px]">{formatDate(row.modified)}</td>
-                      <td className="px-5 py-4"><div className="flex gap-1.5">{canBuild && <button className={secondary} onClick={() => void cloneWorkflow(row)} title="Create an independent draft with fresh node and edge IDs"><Copy size={13} />Clone</button>}{canOperate && row.active_version && <>{row.trigger_type === 'trigger.manual' ? <Link className={secondary} to={`/${row.name}/runs`} title="Enroll a record manually and inspect runs"><Play size={13} />Enroll</Link> : <Link className={secondary} to={`/${row.name}/enrollment`} title={row.trigger_type === 'trigger.schedule' ? 'Manage schedules and backfills' : 'Run version-pinned backfills'}><CalendarClock size={13} />{row.trigger_type === 'trigger.schedule' ? 'Schedules' : 'Backfill'}</Link>}{row.status === 'ACTIVE' ? <button className={secondary} title="Stop new enrollments while preserving resumable runtime state" onClick={() => void setWorkflowState(row.name, 'PAUSED')}><Pause size={13} />Pause</button> : row.status === 'PAUSED' ? <button className={primary} title="Revalidate the pinned version and resume execution" onClick={() => void setWorkflowState(row.name, 'ACTIVE')}><Play size={13} />Resume</button> : null}{row.status !== 'DISABLED' && <button className={ghost} title="Cancel active runs and timers; published history remains" onClick={() => void setWorkflowState(row.name, 'DISABLED')}><Ban size={13} />Disable</button>}</>}{canBuild && ((row.status === 'DRAFT' && !row.latest_version && (row.owner === window.frappe?.boot?.user || isSystemManager)) || (isSystemManager && row.status === 'DISABLED')) && <button className="btn-core btn-ghost text-red-600 hover:!bg-red-50 dark:hover:!bg-red-500/10" title={row.latest_version ? 'Permanently delete this disabled workflow and all history' : 'Delete this unpublished draft'} onClick={() => setDeleting(row)}><Trash2 size={13} />Delete</button>}</div></td>
+                      <td className="text-muted whitespace-nowrap px-5 py-4 text-[10px]">{formatDate(row.modified)}</td>
+                      <td className="px-5 py-4"><div className="flex flex-wrap gap-1.5">{canBuild && <button className={secondary} onClick={() => void cloneWorkflow(row)} title="Create an independent draft with fresh node and edge IDs"><Copy size={13} />Clone</button>}{canOperate && row.active_version && <>{row.trigger_type === 'trigger.manual' ? <Link className={secondary} to={`/${row.name}/runs`} title="Enroll a record manually and inspect runs"><Play size={13} />Enroll</Link> : <Link className={secondary} to={`/${row.name}/enrollment`} title={row.trigger_type === 'trigger.schedule' ? 'Manage schedules and backfills' : 'Run version-pinned backfills'}><CalendarClock size={13} />{row.trigger_type === 'trigger.schedule' ? 'Schedules' : 'Backfill'}</Link>}{row.status === 'ACTIVE' ? <button className={secondary} title="Stop new enrollments while preserving resumable runtime state" onClick={() => void setWorkflowState(row.name, 'PAUSED')}><Pause size={13} />Pause</button> : row.status === 'PAUSED' ? <button className={primary} title="Revalidate the pinned version and resume execution" onClick={() => void setWorkflowState(row.name, 'ACTIVE')}><Play size={13} />Resume</button> : null}{row.status !== 'DISABLED' && <button className={ghost} title="Cancel active runs and timers; published history remains" onClick={() => void setWorkflowState(row.name, 'DISABLED')}><Ban size={13} />Disable</button>}</>}{canBuild && ((row.status === 'DRAFT' && !row.latest_version && (row.owner === window.frappe?.boot?.user || isSystemManager)) || (isSystemManager && row.status === 'DISABLED')) && <button className="btn-core btn-ghost text-red-600 hover:!bg-red-50 dark:hover:!bg-red-500/10" title={row.latest_version ? 'Permanently delete this disabled workflow and all history' : 'Delete this unpublished draft'} onClick={() => setDeleting(row)}><Trash2 size={13} />Delete</button>}</div></td>
                       <td><Link className="icon-button" aria-label={`Open ${row.title}`} to={canBuild ? `/${row.name}` : `/${row.name}/runs`}><ChevronRight size={17} /></Link></td>
                     </tr>
                   ))}</tbody>
@@ -652,8 +719,8 @@ export function WorkflowListPage() {
             ) : (
               <div className="px-6 py-16 text-center">
                 <span className="magic-orb mx-auto"><Sparkles size={20} /></span>
-                <h3 className="text-heading mt-4 text-base font-bold">Your first automation starts here</h3>
-                <p className="text-muted mx-auto mt-1 max-w-sm text-xs leading-5">Choose a Frappe DocType, define an enrollment trigger, and build the journey visually or generate it with AI.</p>
+                <h3 className="text-heading mt-4 text-base font-bold">{selectedFolder === null && !appliedWorkflowSearch ? 'Your first automation starts here' : 'No workflows found'}</h3>
+                <p className="text-muted mx-auto mt-1 max-w-sm text-xs leading-5">{selectedFolder === null && !appliedWorkflowSearch ? 'Choose a Frappe DocType, define an enrollment trigger, and build the journey visually or generate it with AI.' : 'Try another folder or search term, or create a workflow here.'}</p>
                 {canBuild && (
                   <div className="mt-5 flex items-center justify-center gap-2">
                     <button className={magic} onClick={() => setCreatingAi(true)}><Sparkles size={15} />New with AI</button>
@@ -663,12 +730,28 @@ export function WorkflowListPage() {
               </div>
             )}
           </div>
+            </div>
+          </div>
         </section>
       </main>
-      {creating && <CreateDialog close={() => setCreating(false)} created={(id) => navigate(`/${id}`)} />}
-      {creatingAi && <CreateWithAiDialog close={() => setCreatingAi(false)} created={(id) => navigate(`/${id}`)} />}
+      {creating && <CreateDialog folders={folders} initialFolder={selectedFolder || ''} close={() => setCreating(false)} created={(id) => navigate(`/${id}`)} />}
+      {creatingAi && <CreateWithAiDialog folders={folders} initialFolder={selectedFolder || ''} close={() => setCreatingAi(false)} created={(id) => navigate(`/${id}`)} />}
       {deleting && <DeleteWorkflowDialog workflow={deleting} close={() => setDeleting(undefined)} deleted={() => { setDeleting(undefined); void load() }} />}
-      {moving && <MoveWorkflowDialog workflow={moving} close={() => setMoving(undefined)} moved={async (folder) => { await call('set_workflow_folder', mutationEnvelope(moving.name, { folder }), true); setMoving(undefined); await load() }} />}
+      {moving && <MoveWorkflowDialog workflow={moving} folders={folders} close={() => setMoving(undefined)} moved={async (folder) => { await call('set_workflow_folder', mutationEnvelope(moving.name, { folder }), true); setMoving(undefined); await load() }} />}
+      {addingFolder && createPortal(<div className="dialog-backdrop fixed inset-0 z-50 grid place-items-center p-4" role="dialog" aria-modal="true" aria-labelledby="create-folder-title" onClick={(event) => { if (event.target === event.currentTarget) setAddingFolder(false) }}>
+        <div ref={folderDialogRef} tabIndex={-1} className="dialog-card relative w-full max-w-md rounded-2xl p-5 sm:p-6">
+          <button type="button" className="icon-button absolute right-4 top-4" aria-label="Close create folder dialog" onClick={() => setAddingFolder(false)}><X size={17} /></button>
+          <span className="grid size-10 place-items-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-500/10"><Folder size={18} /></span>
+          <h2 id="create-folder-title" className="text-heading mt-4 text-lg font-bold">Create folder</h2>
+          <p className="text-muted mt-1 text-xs">Organize workflows into folders and subfolders.</p>
+          <form className="mt-5 space-y-4" onSubmit={(event) => void saveNewFolder(event)}>
+            <label className="text-heading block text-xs font-semibold">Parent folder<select className={`${field} mt-1.5`} value={folderParent} onChange={(event) => setFolderParent(event.target.value)}><option value="">Top level</option>{folders.map((item) => <option value={item.name} key={item.name}>{item.name}</option>)}</select></label>
+            <label className="text-heading block text-xs font-semibold">Folder name<input className={`${field} mt-1.5`} value={folderName} maxLength={140} onChange={(event) => setFolderName(event.target.value)} autoFocus /></label>
+            {folderError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-xs text-red-700 dark:bg-red-500/10 dark:text-red-300">{folderError}</p>}
+            <div className="flex justify-end gap-2"><button type="button" className={secondary} disabled={savingFolder} onClick={() => setAddingFolder(false)}>Cancel</button><button type="submit" className={primary} disabled={savingFolder || !folderName.trim()}>{savingFolder ? <LoaderCircle className="animate-spin" size={14} /> : <Plus size={14} />}Create folder</button></div>
+          </form>
+        </div>
+      </div>, document.body)}
       {confirmation.dialog}
     </div>
   )

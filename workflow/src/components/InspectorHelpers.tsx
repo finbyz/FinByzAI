@@ -277,7 +277,7 @@ export function ConditionEditor({ config, fields, update, primaryDoctype, title 
   )
 }
 
-export function ValueSourceEditor({ assignment, targetField, sourceFields, outputNodes, outputPaths, referenceDoctype, onChange }: { assignment: WorkflowAssignment; targetField?: FieldCatalogItem; sourceFields: FieldCatalogItem[]; outputNodes: WorkflowNode[]; outputPaths: NodeOutputCatalog; referenceDoctype?: string; onChange(assignment: WorkflowAssignment): void }) {
+export function ValueSourceEditor({ assignment, targetField, sourceFields, outputNodes, outputPaths, referenceDoctype, multiline = false, onChange }: { assignment: WorkflowAssignment; targetField?: FieldCatalogItem; sourceFields: FieldCatalogItem[]; outputNodes: WorkflowNode[]; outputPaths: NodeOutputCatalog; referenceDoctype?: string; multiline?: boolean; onChange(assignment: WorkflowAssignment): void }) {
   const spec = assignment.value
   const changeKind = (kind: WorkflowValueSpec['kind']) => onChange({ ...assignment, value: kind === 'literal' ? { kind, value: '' } : kind === 'record_field' ? { kind, field: '' } : { kind, node_id: '', path: 'name' } })
   const selectedOutputNode = spec.kind === 'node_output' ? outputNodes.find((node) => node.id === spec.node_id) : undefined
@@ -290,7 +290,9 @@ export function ValueSourceEditor({ assignment, targetField, sourceFields, outpu
         <option value="record_field">Copy from enrolled record</option>
         <option value="node_output" disabled={!outputNodes.length}>Use prior step output{outputNodes.length ? '' : ' (none available)'}</option>
       </select>
-      {spec.kind === 'literal' && <TypedValueInput field={targetField} value={spec.value} onChange={(value) => onChange({ ...assignment, value: { kind: 'literal', value } })} referenceDoctype={referenceDoctype} />}
+      {spec.kind === 'literal' && (multiline
+        ? <textarea className={`${inputClass} min-h-32 resize-y leading-5`} aria-label="Message" rows={6} placeholder="Write your message…" value={String(spec.value ?? '')} onChange={(event) => onChange({ ...assignment, value: { kind: 'literal', value: event.target.value } })} />
+        : <TypedValueInput field={targetField} value={spec.value} onChange={(value) => onChange({ ...assignment, value: { kind: 'literal', value } })} referenceDoctype={referenceDoctype} />)}
       {spec.kind === 'record_field' && <FieldPicker fields={compatibleSourceFields} value={spec.field} onChange={(field) => onChange({ ...assignment, value: { kind: 'record_field', field } })} />}
       {spec.kind === 'node_output' && (
         <div className="grid gap-1.5 sm:grid-cols-2">
