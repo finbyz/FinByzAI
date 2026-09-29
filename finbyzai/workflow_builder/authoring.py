@@ -12,6 +12,7 @@ from frappe import _
 from frappe.utils import cint, now_datetime, validate_email_address
 
 from . import emailing
+from .folders import ensure_folder_path, normalize_folder_path
 from .errors import AutomationConflictError, AutomationError, AutomationPermissionError
 from .registry import assert_field_access, doctype_eligibility, field_catalog_result, is_eligible_doctype, round_robin_assignment
 from .schema import (
@@ -706,7 +707,7 @@ def create_workflow_record(
 			"doctype": "Automation Workflow",
 			"title": str(title or "").strip(),
 			"description": description,
-			"folder": str(folder or "").strip()[:140],
+			"folder": ensure_folder_path(folder),
 			"primary_doctype": primary_doctype,
 			"status": "DRAFT",
 			"execution_user": execution_user,
@@ -755,7 +756,7 @@ def list_workflow_records(
 	if exclude_workflow:
 		filters["name"] = ["!=", exclude_workflow]
 	if folder is not None:
-		filters["folder"] = str(folder).strip()
+		filters["folder"] = ["is", "not set"] if not str(folder).strip() else normalize_folder_path(folder)
 	needle = str(search or "").strip()
 	or_filters = (
 		{
@@ -826,9 +827,9 @@ def list_workflow_records(
 
 def set_workflow_folder(workflow_name: str, folder: str | None) -> dict:
 	workflow = _workflow(workflow_name, "write", for_update=True)
-	value = str(folder or "").strip()
-	if len(value) > 140 or any(part in {".", ".."} for part in value.split("/")):
-		raise AutomationError(_("Folder names must be at most 140 characters and cannot contain dot path segments."))
+	value = normalize_folder_path(folder)
+	if value:
+		ensure_folder_path(value)
 	workflow.folder = value
 	workflow.save()
 	create_audit(workflow.name, "WORKFLOW_FOLDER_CHANGED", {"folder": value})
@@ -1497,6 +1498,7 @@ def clone_workflow_record(workflow_name: str, title: str, version_name: str | No
 		primary_doctype=source.primary_doctype,
 		description=source.description or "",
 		execution_user=source.execution_user,
+		folder=source.folder or "",
 		idempotency_key=idempotency_key,
 		operation="clone",
 		source=f"{source.name}:{version_name or 'DRAFT'}",

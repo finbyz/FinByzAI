@@ -123,12 +123,18 @@ def resolve_email_content(config: dict, *, record, outputs: dict[str, Any], prim
 		}
 	if content_mode != "inline":
 		raise AutomationError(_("Choose Email Template or quick inline content."))
+	raw_html = bool(config.get("raw_html"))
+	message = str(resolve_value(config.get("message"), record=record, outputs=outputs) or "")
+	if not raw_html:
+		# Frappe wraps inline content in an HTML email; raw newline characters
+		# collapse there, so retain the line breaks from the message editor.
+		message = message.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br>")
 	return {
 		"content_mode": "inline",
 		"email_template": None,
 		"subject": str(resolve_value(config.get("subject"), record=record, outputs=outputs) or "")[:998],
-		"message": str(resolve_value(config.get("message"), record=record, outputs=outputs) or ""),
+		"message": message,
 		"preheader": "",
-		"raw_html": bool(config.get("raw_html")),
+		"raw_html": raw_html,
 		"content_hash": None,
 	}
