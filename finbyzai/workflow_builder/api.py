@@ -400,7 +400,20 @@ def send_workflow_test_email(
 	)
 	if not queue or not getattr(queue, "name", None):
 		raise AutomationError(_("Frappe did not create an Email Queue record."))
-	return {"status": "queued", "email_queue": queue.name, "recipient": recipient, "subject": content["subject"]}
+	queue_status, error, sender_from_queue = frappe.db.get_value(
+		"Email Queue",
+		queue.name,
+		["status", "error", "sender"],
+	) or (None, None, None)
+	return {
+		"status": "queued",
+		"queue_status": queue_status or "Not Sent",
+		"email_queue": queue.name,
+		"recipient": recipient,
+		"subject": content["subject"],
+		"sender": sender_from_queue or sender,
+		"error": error,
+	}
 
 
 @frappe.whitelist()

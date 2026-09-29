@@ -213,10 +213,160 @@ def capture_web_form_submission(doc, method=None) -> None:
 		return
 	payload = {
 		"event_id": f"web-form:{form_name}:{doc.doctype}:{doc.name}:{doc.get('modified')}",
-		"form_name": form_name,
-		"submission_type": "updated" if doc.get_doc_before_save() else "created",
+		"form_source": "Frappe Web Form",
+		"web_form": form_name,
+		"operation": "Update" if doc.get_doc_before_save() else "Create",
 	}
 	_signal("crm.form.submitted", doc.doctype, doc.name, payload, payload["event_id"])
+
+
+def capture_fp_form_submission(
+	form: str | None = None,
+	submission: str | None = None,
+	route: str | None = None,
+	operation: str | None = None,
+	target_doctype: str | None = None,
+	target_name: str | None = None,
+	metadata: dict | None = None,
+) -> None:
+	"""Enroll a Forms Pro submission through the record the form wrote.
+
+	Subscribed to Forms Pro's ``fp_form_submitted`` hook, which fires once the
+	target record is persisted and linked back onto the submission.
+
+	The enrolled record is the form's own target, so a Customer form reaches
+	Customer workflows and a Lead form reaches Lead workflows with no further
+	configuration: the engine already selects event workflows by
+	``primary_doctype``. A "Collect Submission Only" form writes no target, so
+	the submission itself is the record and a workflow on FP Form Submission
+	picks it up.
+
+	The submission name is carried in the payload so later steps can read the
+	raw answers and tracking data off the row, including answers the form never
+	mapped onto the target record.
+	"""
+	if not submission:
+		return
+	record_doctype = str(target_doctype or "").strip()
+	record_name = str(target_name or "").strip()
+	if not (record_doctype and record_name):
+		record_doctype, record_name = "FP Form Submission", str(submission)
+	tracking = metadata if isinstance(metadata, dict) else {}
+	payload = {
+		# One submission is one occurrence. A retried dispatch of the same
+		# submission must not enroll the record twice.
+		"event_id": f"fp-form:{submission}",
+		"form_source": "Forms Pro",
+		"form": str(form or ""),
+		"submission": str(submission),
+		"route": str(route or ""),
+		"operation": str(operation or ""),
+		"utm_source": str(tracking.get("utm_source") or ""),
+		"utm_medium": str(tracking.get("utm_medium") or ""),
+		"utm_campaign": str(tracking.get("utm_campaign") or ""),
+		"gclid": str(tracking.get("gclid") or ""),
+	}
+	_signal("crm.form.submitted", record_doctype, record_name, payload, payload["event_id"])
+
+
+def guard_form_deletion(doc, method=None) -> None:
+	"""Refuse to delete a Forms Pro form an active workflow still triggers on.
+
+	An event filter lives inside the published graph, not in a Link field, so
+	Frappe's own link integrity cannot see it. Without this guard, deleting a
+	form leaves every workflow pinned to it ACTIVE and enrolling nobody, with
+	nothing in the UI to say why. Refusing the delete keeps that breakage in
+	front of the person causing it.
+	"""
+	if doc.doctype != "Form":
+		return
+	try:
+		blocking = sorted(_workflows_filtering_on_form(doc.name))
+	except Exception:
+		# A fault in this guard must not make forms undeletable.
+		frappe.log_error(title="Workflow form-deletion guard failed", message=frappe.get_traceback())
+		return
+	if not blocking:
+		return
+	frappe.throw(
+		_("{0} still triggers on this form: {1}. Remove the form filter from each workflow first.").format(
+			_("A published workflow") if len(blocking) == 1 else _("Published workflows"),
+			", ".join(blocking),
+		),
+		title=_("Form is in use by automation"),
+	)
+
+
+def guard_form_target_change(doc, method=None) -> None:
+	"""Keep a pinned form pointing at the DocType its workflows expect.
+
+	Repointing a form is the same silent breakage as deleting it: the workflow
+	keeps running, the form keeps collecting, and the two stop meeting. Blocking
+	the change is kinder than letting it publish and fail quietly.
+	"""
+	if doc.doctype != "Form":
+		return
+	previous = doc.get_doc_before_save()
+	if not previous or previous.get("target_doctype") == doc.get("target_doctype"):
+		return
+	try:
+		blocking = sorted(_workflows_filtering_on_form(doc.name))
+	except Exception:
+		frappe.log_error(title="Workflow form-target guard failed", message=frappe.get_traceback())
+		return
+	if not blocking:
+		return
+	frappe.throw(
+		_(
+			"This form writes {0} and is used by {1}, which enrol {0} records. "
+			"Remove the form filter from each workflow before repointing it to {2}."
+		).format(previous.get("target_doctype"), ", ".join(blocking), doc.get("target_doctype")),
+		title=_("Form is in use by automation"),
+	)
+
+
+def _workflows_filtering_on_form(form_name: str) -> set[str]:
+	"""Titles of active workflows whose published graph pins this exact form."""
+	versions = frappe.get_all(
+		"Automation Workflow Version",
+		filters={
+			"name": ("in", frappe.get_all("Automation Workflow", filters={"status": "ACTIVE"}, pluck="active_version")),
+			"graph_json": ("like", f"%{form_name}%"),
+		},
+		fields=["name", "workflow", "graph_json"],
+	)
+	matched = set()
+	for version in versions:
+		# The LIKE only narrows the scan. A hash-like form id can appear
+		# anywhere in the payload, so confirm it is really a form filter.
+		if not _graph_pins_form(frappe.parse_json(version.graph_json or "{}"), form_name):
+			continue
+		matched.add(frappe.db.get_value("Automation Workflow", version.workflow, "title") or version.workflow)
+	return matched
+
+
+def _graph_pins_form(graph: dict, form_name: str) -> bool:
+	from .schema import condition_predicates, event_trigger_entries
+
+	for node in graph.get("nodes") or []:
+		if not isinstance(node, dict):
+			continue
+		config = node.get("config")
+		if not isinstance(config, dict):
+			continue
+		filters = [config.get("event_filter")]
+		try:
+			filters.extend(entry.get("event_filter") for entry in event_trigger_entries(config, node.get("type_version") or 1))
+		except Exception:
+			pass
+		for entry in config.get("triggers") or []:
+			if isinstance(entry, dict) and isinstance(entry.get("config"), dict):
+				filters.append(entry["config"].get("event_filter"))
+		for expression in filters:
+			for predicate in condition_predicates(expression):
+				if str(predicate.get("field")) == "form" and predicate.get("value") == form_name:
+					return True
+	return False
 
 
 def capture_communication_event(doc, method=None) -> None:

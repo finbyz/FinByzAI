@@ -417,7 +417,141 @@ class TestAutomationEvents(FrappeTestCase):
 			frappe.form_dict.pop("web_form", None)
 		emit.assert_called_once()
 		self.assertEqual(emit.call_args.args[:3], ("crm.form.submitted", "Lead", "LEAD-WEB-FORM"))
-		self.assertEqual(emit.call_args.args[3]["form_name"], "Public lead form")
+		self.assertEqual(emit.call_args.args[3]["web_form"], "Public lead form")
+		self.assertEqual(emit.call_args.args[3]["form_source"], "Frappe Web Form")
+
+	def test_forms_pro_adapter_enrolls_the_record_the_form_wrote(self):
+		with patch.object(integrations, "_signal") as emit:
+			integrations.capture_fp_form_submission(
+				form="Contact us",
+				submission="FPS-0001",
+				route="contact-us",
+				operation="Create New",
+				target_doctype="Lead",
+				target_name="LEAD-0007",
+				metadata={"utm_source": "newsletter", "utm_campaign": "spring"},
+			)
+		emit.assert_called_once()
+		self.assertEqual(emit.call_args.args[:3], ("crm.form.submitted", "Lead", "LEAD-0007"))
+		payload = emit.call_args.args[3]
+		self.assertEqual(payload["form"], "Contact us")
+		self.assertEqual(payload["form_source"], "Forms Pro")
+		self.assertEqual(payload["utm_source"], "newsletter")
+		self.assertEqual(payload["utm_campaign"], "spring")
+		# The submission is carried so later steps can read unmapped answers.
+		self.assertEqual(payload["submission"], "FPS-0001")
+
+	def test_collect_only_submission_enrolls_the_submission_itself(self):
+		with patch.object(integrations, "_signal") as emit:
+			integrations.capture_fp_form_submission(
+				form="Newsletter signup",
+				submission="FPS-0002",
+				operation="Collect Only",
+				target_doctype=None,
+				target_name=None,
+			)
+		emit.assert_called_once()
+		self.assertEqual(
+			emit.call_args.args[:3], ("crm.form.submitted", "FP Form Submission", "FPS-0002")
+		)
+
+	def test_form_submission_occurrence_is_the_submission(self):
+		"""A redelivered submission must not enroll the record twice."""
+		with patch.object(integrations, "_signal") as emit:
+			for _attempt in range(2):
+				integrations.capture_fp_form_submission(
+					form="Contact us", submission="FPS-0003", target_doctype="Lead", target_name="LEAD-9"
+				)
+		keys = {call.args[4] for call in emit.call_args_list}
+		self.assertEqual(keys, {"fp-form:FPS-0003"})
+
+	def test_submission_without_an_id_is_ignored(self):
+		with patch.object(integrations, "_signal") as emit:
+			integrations.capture_fp_form_submission(form="Contact us", submission=None)
+		emit.assert_not_called()
+
+	def test_form_deletion_is_blocked_while_a_live_workflow_triggers_on_it(self):
+		graph = {
+			"nodes": [
+				{
+					"id": "trigger-1",
+					"type": "trigger.any",
+					"type_version": 2,
+					"config": {
+						"triggers": [
+							{
+								"id": "t1",
+								"type": "trigger.event",
+								"config": {
+									"event_topic": "crm.form.submitted",
+									"event_filter": {
+										"kind": "predicate",
+										"field": "form",
+										"operator": "eq",
+										"value": "FORM-IN-USE",
+									},
+								},
+							}
+						]
+					},
+				}
+			]
+		}
+		self.assertTrue(integrations._graph_pins_form(graph, "FORM-IN-USE"))
+		self.assertFalse(integrations._graph_pins_form(graph, "SOME-OTHER-FORM"))
+
+	def test_form_id_appearing_elsewhere_in_the_graph_does_not_block_deletion(self):
+		"""The LIKE scan only narrows; a comment mentioning the id must not count."""
+		graph = {
+			"nodes": [
+				{
+					"id": "note",
+					"type": "action.add_comment",
+					"config": {"content": {"kind": "literal", "value": "see form FORM-IN-USE"}},
+				}
+			]
+		}
+		self.assertFalse(integrations._graph_pins_form(graph, "FORM-IN-USE"))
+
+	def test_target_change_guard_only_fires_when_the_doctype_actually_changes(self):
+		doc = frappe._dict(doctype="Form", name="FORM-1", target_doctype="Lead")
+		doc.get_doc_before_save = lambda: frappe._dict(target_doctype="Lead")
+		with patch.object(integrations, "_workflows_filtering_on_form") as scan:
+			integrations.guard_form_target_change(doc)
+		scan.assert_not_called()
+
+	def test_target_change_guard_allows_a_form_no_workflow_pins(self):
+		doc = frappe._dict(doctype="Form", name="FORM-1", target_doctype="Customer")
+		doc.get_doc_before_save = lambda: frappe._dict(target_doctype="Lead")
+		with patch.object(integrations, "_workflows_filtering_on_form", return_value=set()):
+			integrations.guard_form_target_change(doc)
+
+	def test_target_change_guard_blocks_a_pinned_form(self):
+		doc = frappe._dict(doctype="Form", name="FORM-1", target_doctype="Customer")
+		doc.get_doc_before_save = lambda: frappe._dict(target_doctype="Lead")
+		with patch.object(integrations, "_workflows_filtering_on_form", return_value={"Live workflow"}):
+			with self.assertRaises(frappe.ValidationError):
+				integrations.guard_form_target_change(doc)
+
+	def test_a_new_form_has_no_previous_target_to_compare(self):
+		doc = frappe._dict(doctype="Form", name="FORM-1", target_doctype="Lead")
+		doc.get_doc_before_save = lambda: None
+		with patch.object(integrations, "_workflows_filtering_on_form") as scan:
+			integrations.guard_form_target_change(doc)
+		scan.assert_not_called()
+
+	def test_deletion_guard_ignores_other_doctypes(self):
+		doc = frappe._dict(doctype="Lead", name="LEAD-1")
+		with patch.object(integrations, "_workflows_filtering_on_form") as scan:
+			integrations.guard_form_deletion(doc)
+		scan.assert_not_called()
+
+	def test_a_failing_deletion_guard_never_makes_forms_undeletable(self):
+		doc = frappe._dict(doctype="Form", name="FORM-1")
+		with patch.object(integrations, "_workflows_filtering_on_form", side_effect=Exception("boom")):
+			with patch.object(frappe, "log_error") as log_error:
+				integrations.guard_form_deletion(doc)
+		log_error.assert_called_once()
 
 	def test_communication_adapter_normalizes_reply_and_email_delivery_status(self):
 		doc = frappe._dict(

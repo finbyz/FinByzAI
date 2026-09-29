@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { NodeCatalogItem, WorkflowGraph } from '../types'
-import { arrangeWorkflowGraph, catalogNode, createWorkflowClipboard, duplicateWorkflowNode, duplicateWorkflowSection, insertWorkflowNode, pasteWorkflowClipboard, reachableWorkflowNodeIds, relocateWorkflowNode, removeWorkflowNodes, replaceWorkflowTrigger, sameExecutionGraph, suggestedNodePlacement, upgradeLegacyIfElseBranches, workflowNodeContinuationHandle, workflowNodeSourceHandles, workflowNodeVisualWidth, workflowPasteEligibility, workflowSectionNodeIds } from './workflowGraphCommands'
+import { arrangeWorkflowGraph, catalogNode, createWorkflowClipboard, duplicateWorkflowNode, duplicateWorkflowSection, insertWorkflowNode, pasteWorkflowClipboard, reachableWorkflowNodeIds, relocateWorkflowNode, relocateWorkflowNodeToPlacement, removeWorkflowNodes, replaceWorkflowTrigger, sameExecutionGraph, suggestedNodePlacement, upgradeLegacyIfElseBranches, workflowNodeContinuationHandle, workflowNodeSourceHandles, workflowNodeVisualWidth, workflowPasteEligibility, workflowSectionNodeIds } from './workflowGraphCommands'
 
 const graph: WorkflowGraph = {
   schema_version: 1,
@@ -358,6 +358,23 @@ describe('fast graph authoring commands', () => {
     expect(duplicated.nodes.at(-1)?.config).toEqual({ content: 'Follow up' })
     expect(duplicated.edges.at(-1)).toEqual({ id: 'copy-edge', source: source.id, source_handle: 'default', target: 'comment-copy' })
   })
+
+	it('moves a simple action to an explicit empty branch endpoint', () => {
+		const moving = catalogNode(action, 'moving', { x: 200, y: 200 })
+		const branch = { id: 'branch', type: 'condition.if_else', type_version: 2, position: { x: 500, y: 200 }, config: { branches: [{ handle: 'yes', name: 'Yes', condition: {} }] } } as const
+		const sourceGraph: WorkflowGraph = {
+			...graph,
+			nodes: [graph.nodes[0], moving, graph.nodes[1], branch],
+			edges: [
+				{ id: 'before-moving', source: 'trigger-1', source_handle: 'default', target: 'moving' },
+				{ id: 'after-moving', source: 'moving', source_handle: 'default', target: 'end-1' },
+			],
+		}
+		const moved = relocateWorkflowNodeToPlacement(sourceGraph, 'moving', { afterNodeId: 'branch', sourceHandle: 'yes', position: { x: 420, y: 420 } }, 'moved-edge')
+		expect(moved.edges).toContainEqual({ id: 'before-moving', source: 'trigger-1', source_handle: 'default', target: 'end-1' })
+		expect(moved.edges).toContainEqual({ id: 'moved-edge', source: 'branch', source_handle: 'yes', target: 'moving' })
+		expect(moved.nodes.find((node) => node.id === 'moving')?.position).toEqual({ x: 420, y: 420 })
+	})
 
 	it('moves a simple action to another edge and heals its former path', () => {
 		const moving = catalogNode(action, 'moving', { x: 200, y: 200 })

@@ -20,7 +20,7 @@ import {
   getSmoothStepPath,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, ClipboardPaste, Copy, Ellipsis, LayoutTemplate, Network, Plus, Trash2, Unplug, X, Zap } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, ClipboardPaste, Copy, Ellipsis, LayoutTemplate, Move, Network, Plus, Trash2, Unplug, X, Zap } from 'lucide-react'
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent } from 'react'
 import { call } from '../lib/api'
 import { reachableWorkflowNodeIds, workflowNodeSourceHandles, workflowNodeVisualWidth, workflowPasteEligibility, type NodePlacement } from '../lib/workflowGraphCommands'
@@ -30,9 +30,9 @@ import { EnrollmentTriggerChooser, type EnrollmentTriggerChoice } from './Enroll
 import { DeleteWorkflowStepButton } from './DeleteWorkflowStepButton'
 import { nodeLabels, nodeIcons } from './InspectorHelpers'
 
-type WorkflowFlowNode = Node<{ workflowNode: WorkflowNode; primaryDoctype: string; issueCount: number; manualConnections: boolean; connected: boolean; metric?: CanvasMetric }, 'workflow'>
+type WorkflowFlowNode = Node<{ workflowNode: WorkflowNode; primaryDoctype: string; issueCount: number; manualConnections: boolean; connected: boolean; metric?: CanvasMetric; moving?: boolean; beginMove?: (nodeId: string) => void }, 'workflow'>
 type EnrollmentFlowNode = Node<{ workflowNode: WorkflowNode; primaryDoctype: string; issueCount: number; totalEnrollments?: number }, 'enrollment'>
-type VirtualEndFlowNode = Node<{ sourceId: string; sourceHandle: string; label: string; insertPosition: { x: number; y: number } }, 'virtualEnd'>
+type VirtualEndFlowNode = Node<{ sourceId: string; sourceHandle: string; label: string; insertPosition: { x: number; y: number }; movingNodeId?: string | null; moveToPlacement?: (placement: NodePlacement) => void }, 'virtualEnd'>
 type FlowNode = WorkflowFlowNode | EnrollmentFlowNode | VirtualEndFlowNode
 
 function nodeKind(type: NodeType) {
@@ -370,7 +370,7 @@ const WorkflowNodeCard = memo(({ data, selected }: NodeProps<WorkflowFlowNode>) 
   const kind = nodeKind(node.type)
 	const issueLabel = `${data.issueCount} issue${data.issueCount === 1 ? '' : 's'}`
   return (
-	    <article className={`workflow-node workflow-node--${kind}`} style={nodeWidth ? { width: nodeWidth } : undefined} data-invalid={data.issueCount > 0 ? 'true' : 'false'} data-selected={selected ? 'true' : 'false'} data-manual-links={data.manualConnections ? 'true' : 'false'} data-connected={data.connected ? 'true' : 'false'}>
+	    <article className={`workflow-node workflow-node--${kind}`} style={nodeWidth ? { width: nodeWidth } : undefined} data-invalid={data.issueCount > 0 ? 'true' : 'false'} data-selected={selected ? 'true' : 'false'} data-manual-links={data.manualConnections ? 'true' : 'false'} data-connected={data.connected ? 'true' : 'false'} data-moving={data.moving ? 'true' : 'false'}>
       <span className="workflow-node__rail" aria-hidden />
 	  <div className="workflow-node__quick-actions nodrag nopan">
 		{!trigger && <details className="workflow-node-action-menu" onClick={(event) => event.stopPropagation()}>
@@ -378,6 +378,7 @@ const WorkflowNodeCard = memo(({ data, selected }: NodeProps<WorkflowFlowNode>) 
 		  <div className="workflow-node-action-menu__popover">
 			<button type="button" onClick={(event) => { actions.beginCopy(node.id, 'action'); (event.currentTarget.closest('details') as HTMLDetailsElement).open = false }}><Copy size={13} />Copy action</button>
 			<button type="button" onClick={(event) => { actions.beginCopy(node.id, 'following'); (event.currentTarget.closest('details') as HTMLDetailsElement).open = false }}><Network size={13} />Copy all actions from here</button>
+			<button type="button" disabled={!data.connected || workflowNodeSourceHandles(node).length !== 1} onClick={(event) => { data.beginMove?.(node.id); (event.currentTarget.closest('details') as HTMLDetailsElement).open = false }}><Move size={13} />Move action</button>
 		  </div>
 		</details>}
 		<DeleteWorkflowStepButton node={node} title="Delete this action" aria-label={`Delete ${nodeLabels[node.type] || node.type}`}><Trash2 size={12} /></DeleteWorkflowStepButton>
@@ -448,6 +449,7 @@ export const VirtualEndCard = memo(({ data }: NodeProps<VirtualEndFlowNode>) => 
 			>
 				<Plus size={15} /><span className="sr-only">Add step</span>
 			</button>
+			{data.movingNodeId && data.movingNodeId !== data.sourceId && <button type="button" className="workflow-path-end__add workflow-path-end__move nodrag nopan" title={`Move selected action to ${data.label}`} aria-label={`Move selected action to ${data.label}`} onClick={(event) => { event.stopPropagation(); data.moveToPlacement?.(placement) }}><Move size={14} /></button>}
 			<PasteBelowButton placement={placement} className="workflow-path-end__add" />
 		</div>
 		<span className="workflow-path-end__tail" aria-hidden />
@@ -472,7 +474,7 @@ const GuidedEdge = memo((props: EdgeProps) => {
 	return <>
 		<BaseEdge id={props.id} path={edgePath} markerEnd={props.markerEnd} style={props.style} />
 		<EdgeLabelRenderer>
-			<button
+			{!(props.data && (props.data as { movingNodeId?: string }).movingNodeId) && <button
 				type="button"
 				className="workflow-edge-add nodrag nopan"
 				style={{ transform: `translate(-50%, -50%) translate(${labelX - 17}px, ${labelY}px)`, '--workflow-edge-color': edgeColor } as CSSProperties}
@@ -484,8 +486,9 @@ const GuidedEdge = memo((props: EdgeProps) => {
 				}}
 			>
 				<Plus size={13} />
-			</button>
-			<PasteBelowButton placement={{ edgeId: props.id, position: { x: labelX - 126, y: labelY - 70 } }} className="workflow-edge-add" style={{ transform: `translate(-50%, -50%) translate(${labelX + 17}px, ${labelY}px)`, '--workflow-edge-color': edgeColor } as CSSProperties} />
+			</button>}
+			{props.data && (props.data as { movingNodeId?: string; moveToEdge?: (edgeId: string, position: { x: number; y: number }) => void }).movingNodeId && <button type="button" className="workflow-edge-add nodrag nopan" style={{ transform: `translate(-50%, -50%) translate(${labelX + 17}px, ${labelY}px)`, '--workflow-edge-color': edgeColor } as CSSProperties} aria-label="Move selected action here" title="Move selected action here" onClick={(event) => { event.stopPropagation(); (props.data as { moveToEdge?: (edgeId: string, position: { x: number; y: number }) => void })?.moveToEdge?.(props.id, { x: labelX - 126, y: labelY - 70 }) }}><Move size={13} /></button>}
+			{!(props.data && (props.data as { movingNodeId?: string }).movingNodeId) && <PasteBelowButton placement={{ edgeId: props.id, position: { x: labelX - 126, y: labelY - 70 } }} className="workflow-edge-add" style={{ transform: `translate(-50%, -50%) translate(${labelX + 17}px, ${labelY}px)`, '--workflow-edge-color': edgeColor } as CSSProperties} />}
 		</EdgeLabelRenderer>
 	</>
 })
@@ -522,6 +525,7 @@ export function WorkflowCanvas() {
 	const connectedNodeIds = useMemo(() => graph ? reachableWorkflowNodeIds(graph) : new Set<string>(), [graph])
   const dragging = useRef(false)
   const flow = useRef<ReactFlowInstance<FlowNode> | null>(null)
+	const [movingNodeId, setMovingNodeId] = useState<string | null>(null)
 	const implicitEnds = useMemo(() => {
 		const connected = new Set((graph?.edges || []).map((edge) => `${edge.source}:${edge.source_handle}`))
 		return (graph?.nodes || []).flatMap((node) => {
@@ -558,20 +562,20 @@ export function WorkflowCanvas() {
 				id: node.id,
 				type: 'workflow',
 				position: node.position || { x: 120, y: 120 },
-				data: { workflowNode: node, primaryDoctype: graph?.primary_doctype || 'record', issueCount: validation.filter((issue) => issue.node_id === node.id).length, manualConnections, connected: connectedNodeIds.has(node.id), metric: metricsByNode.get(node.id) },
+				data: { workflowNode: node, primaryDoctype: graph?.primary_doctype || 'record', issueCount: validation.filter((issue) => issue.node_id === node.id).length, manualConnections, connected: connectedNodeIds.has(node.id), metric: metricsByNode.get(node.id), moving: movingNodeId === node.id, beginMove: setMovingNodeId },
 				deletable: workflowNodeSourceHandles(node).length <= 1,
 			}),
 			...implicitEnds.map((endpoint): VirtualEndFlowNode => ({
 				id: `virtual-end:${endpoint.sourceId}:${endpoint.sourceHandle}`,
 				type: 'virtualEnd',
 				position: endpoint.position,
-				data: { sourceId: endpoint.sourceId, sourceHandle: endpoint.sourceHandle, label: endpoint.label, insertPosition: endpoint.insertPosition },
+				data: { sourceId: endpoint.sourceId, sourceHandle: endpoint.sourceHandle, label: endpoint.label, insertPosition: endpoint.insertPosition, movingNodeId, moveToPlacement: (placement) => { if (!movingNodeId) return; actions.relocateNodeToPlacement(movingNodeId, placement); setMovingNodeId(null) } },
 				draggable: false,
 				selectable: false,
 				deletable: false,
 			})),
 		],
-		[canvasMetrics?.total_enrollments, connectedNodeIds, graph?.nodes, graph?.primary_doctype, graph?.start_node_id, implicitEnds, manualConnections, metricsByNode, validation],
+		[actions, canvasMetrics?.total_enrollments, connectedNodeIds, graph?.nodes, graph?.primary_doctype, graph?.start_node_id, implicitEnds, manualConnections, metricsByNode, movingNodeId, validation],
   )
   const [nodes, setNodes] = useState(mappedNodes)
 
@@ -602,6 +606,7 @@ export function WorkflowCanvas() {
       animated: selectedNodeId === edge.source || selectedNodeId === edge.target,
 	  deletable: manualConnections,
 	  style: { stroke: edgeColor(edge.source, edge.source_handle), strokeWidth: 1.8 },
+		data: { movingNodeId: movingNodeId && edge.source !== movingNodeId && edge.target !== movingNodeId ? movingNodeId : null, moveToEdge: (edgeId: string, position: { x: number; y: number }) => { if (!movingNodeId) return; actions.relocateNodeToPlacement(movingNodeId, { edgeId, position }); setMovingNodeId(null) } },
 			})), ...implicitEnds.map((endpoint) => ({
 				id: `virtual-end-edge:${endpoint.sourceId}:${endpoint.sourceHandle}`,
 				source: endpoint.sourceId,
@@ -611,7 +616,7 @@ export function WorkflowCanvas() {
 			deletable: false,
 			style: { stroke: edgeColor(endpoint.sourceId, endpoint.sourceHandle), strokeWidth: 1.45, strokeDasharray: '5 5' },
 		}))]
-	}, [graph?.edges, graph?.nodes, implicitEnds, manualConnections, selectedNodeId])
+	}, [actions, graph?.edges, graph?.nodes, implicitEnds, manualConnections, movingNodeId, selectedNodeId])
 
   const onNodesChange = (changes: NodeChange<FlowNode>[]) => {
 	const safeChanges = changes.filter((change) => change.type === 'add' || (!change.id.startsWith('virtual-end:') && (change.type !== 'remove' || change.id !== graph?.start_node_id)))
@@ -688,6 +693,7 @@ export function WorkflowCanvas() {
 		<div className="absolute right-4 top-4 z-20 flex items-center gap-2">
 			<button type="button" className="workflow-canvas-tool" onClick={() => actions.autoArrange()} title="Arrange steps into clear branch lanes"><LayoutTemplate size={12} /> Tidy layout</button>
 			{clipboard && <div className="workflow-copy-mode" role="status"><ClipboardPaste size={13} /><span>{clipboard.mode === 'following' ? `${clipboard.nodes.length} actions copied — choose Paste below` : 'Action copied — choose Paste below'}</span><button type="button" onClick={() => actions.cancelCopy()} title="Cancel copy mode" aria-label="Cancel copy mode"><X size={13} /></button></div>}
+			{movingNodeId && <div className="workflow-copy-mode" role="status"><Move size={13} /><span>Move mode — choose a highlighted position</span><button type="button" onClick={() => setMovingNodeId(null)} title="Cancel move mode" aria-label="Cancel move mode"><X size={13} /></button></div>}
 		</div>
       <ReactFlow<FlowNode>
         nodes={nodes}
@@ -707,20 +713,8 @@ export function WorkflowCanvas() {
         onNodeDragStart={() => { dragging.current = true }}
 			onNodeDragStop={(_, node) => {
 			  dragging.current = false
-			  if (node.type !== 'workflow' || !graph) return
-			  const point = { x: node.position.x + 126, y: node.position.y + 72 }
-			  const nodeById = new Map(graph.nodes.map((item) => [item.id, item]))
-			  const nearestEdge = graph.edges
-				.filter((edge) => edge.source !== node.id && edge.target !== node.id)
-				.map((edge) => {
-				  const sourceNode = nodeById.get(edge.source)
-				  const targetNode = nodeById.get(edge.target)
-				  if (!sourceNode?.position || !targetNode?.position) return { edge, distance: Number.POSITIVE_INFINITY }
-				  return { edge, distance: distanceToSegment(point, { x: sourceNode.position.x + workflowNodeVisualWidth(sourceNode) / 2, y: sourceNode.position.y + 145 }, { x: targetNode.position.x + workflowNodeVisualWidth(targetNode) / 2, y: targetNode.position.y }) }
-				})
-				.sort((left, right) => left.distance - right.distance)[0]
-			  if (nearestEdge?.distance < 70) actions.relocateNode(node.id, nearestEdge.edge.id, node.position)
-			  else actions.moveNode(node.id, node.position)
+			  if (node.type !== 'workflow') return
+			  actions.moveNode(node.id, node.position)
 			}}
 		nodesConnectable={manualConnections}
 		edgesReconnectable={manualConnections}

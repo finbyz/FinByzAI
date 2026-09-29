@@ -47,7 +47,7 @@ describe('SendEmailEditor', () => {
 				})
 			}
 			if (method === 'send_workflow_test_email') {
-				return Promise.resolve({ recipient: 'designer@example.com', email_queue: 'EMAIL-QUEUE-1' })
+				return Promise.resolve({ recipient: 'designer@example.com', email_queue: 'EMAIL-QUEUE-1', queue_status: 'Not Sent' })
 			}
 			if (method === 'list_email_templates') return Promise.resolve({ rows: [] })
 			throw new Error(`Unexpected API call: ${method}`)
@@ -96,7 +96,7 @@ describe('SendEmailEditor', () => {
 		await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Email preview' })).not.toBeInTheDocument())
 
 		fireEvent.click(screen.getByRole('button', { name: 'Send test' }))
-		expect(await screen.findByText('Queued for designer@example.com')).toBeInTheDocument()
+		expect(await screen.findByText(/Queued for designer@example.com · Email Queue EMAIL-QUEUE-1 · Not Sent/)).toBeInTheDocument()
 		expect(mocks.call).toHaveBeenCalledWith(
 			'send_workflow_test_email',
 			expect.objectContaining({

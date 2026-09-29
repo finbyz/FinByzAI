@@ -122,6 +122,29 @@ LLMS = [
     {"name": "openrouter/openai/gpt-5-image-mini", "provider": "OpenRouter", "title": "OpenAI GPT-5 Image Mini", "size": "Small", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 1, "is_embedding_model": 0, "enabled": 1},
     {"name": "openrouter/openai/gpt-5-image", "provider": "OpenRouter", "title": "OpenAI GPT-5 Image", "size": "Large", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 1, "is_embedding_model": 0, "enabled": 1},
     {"name": "openrouter/openrouter/auto", "provider": "OpenRouter", "title": "OpenRouter Auto Router", "size": "Medium", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 1, "is_embedding_model": 0, "enabled": 1},
+
+    # ── OpenRouter Embedding Models ──
+    {"name": "openrouter/openai/text-embedding-3-small", "provider": "OpenRouter", "title": "OpenRouter OpenAI Text Embedding 3 Small", "size": "Small", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 1, "enabled": 1},
+    {"name": "openrouter/openai/text-embedding-3-large", "provider": "OpenRouter", "title": "OpenRouter OpenAI Text Embedding 3 Large", "size": "Large", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 1, "enabled": 1},
+    {"name": "openrouter/qwen/qwen3-embedding-8b", "provider": "OpenRouter", "title": "OpenRouter Qwen3 Embedding 8B", "size": "Medium", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 1, "enabled": 1},
+    {"name": "openrouter/qwen/qwen3-embedding-4b", "provider": "OpenRouter", "title": "OpenRouter Qwen3 Embedding 4B", "size": "Small", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 1, "enabled": 1},
+    {"name": "openrouter/baai/bge-m3", "provider": "OpenRouter", "title": "OpenRouter BAAI BGE-M3", "size": "Small", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 1, "enabled": 1},
+    {"name": "openrouter/perplexity/pplx-embed-v1-0.6b", "provider": "OpenRouter", "title": "OpenRouter Perplexity Embed V1 0.6B", "size": "Very Small", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 1, "enabled": 1},
+    {"name": "openrouter/perplexity/pplx-embed-v1-4b", "provider": "OpenRouter", "title": "OpenRouter Perplexity Embed V1 4B", "size": "Small", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 1, "enabled": 1},
+    {"name": "openrouter/google/gemini-embedding-2", "provider": "OpenRouter", "title": "OpenRouter Google Gemini Embedding 2", "size": "Medium", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 1, "enabled": 1},
+    {"name": "openrouter/google/gemini-embedding-001", "provider": "OpenRouter", "title": "OpenRouter Google Gemini Embedding 001", "size": "Medium", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 1, "enabled": 1},
+    {"name": "openrouter/mistralai/mistral-embed-2312", "provider": "OpenRouter", "title": "OpenRouter Mistral Embed", "size": "Small", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 1, "enabled": 1},
+    {"name": "openrouter/liquid/lfm-2.5-embedding-350m:free", "provider": "OpenRouter", "title": "LiquidAI LFM 2.5 Embedding 350M (Free)", "size": "Very Small", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 1, "enabled": 1},
+    {"name": "openrouter/nvidia/nemotron-3-embed-1b:free", "provider": "OpenRouter", "title": "NVIDIA Nemotron 3 Embed 1B (Free)", "size": "Very Small", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 1, "enabled": 1},
+    {"name": "openrouter/nvidia/llama-nemotron-embed-vl-1b-v2:free", "provider": "OpenRouter", "title": "NVIDIA Llama Nemotron Embed VL 1B V2 (Free)", "size": "Small", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 1, "enabled": 1},
+    {"name": "openrouter/voyageai/voyage-4", "provider": "OpenRouter", "title": "VoyageAI voyage-4", "size": "Medium", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 1, "enabled": 1},
+    {"name": "openrouter/voyageai/voyage-4-large", "provider": "OpenRouter", "title": "VoyageAI voyage-4-large", "size": "Large", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 1, "enabled": 1},
+    {"name": "openrouter/voyageai/voyage-4-lite", "provider": "OpenRouter", "title": "VoyageAI voyage-4-lite", "size": "Small", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 1, "enabled": 1},
+    {"name": "openrouter/voyageai/voyage-code-4", "provider": "OpenRouter", "title": "VoyageAI voyage-code-4 (Code Embeddings)", "size": "Medium", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 1, "enabled": 1},
+    {"name": "openrouter/voyageai/voyage-multimodal-3.5", "provider": "OpenRouter", "title": "VoyageAI voyage-multimodal-3.5 (Multimodal)", "size": "Medium", "is_reasoning": 0, "supports_vision": 1, "supports_image_generation": 0, "is_embedding_model": 1, "enabled": 1},
+    {"name": "openrouter/baai/bge-large-en-v1.5", "provider": "OpenRouter", "title": "OpenRouter BAAI bge-large-en-v1.5", "size": "Medium", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 1, "enabled": 1},
+    {"name": "openrouter/intfloat/multilingual-e5-large", "provider": "OpenRouter", "title": "OpenRouter Intfloat Multilingual-E5-Large", "size": "Medium", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 1, "enabled": 1},
+    {"name": "openrouter/mistralai/codestral-embed-2505", "provider": "OpenRouter", "title": "OpenRouter Mistral Codestral Embed", "size": "Small", "is_reasoning": 0, "supports_vision": 0, "supports_image_generation": 0, "is_embedding_model": 1, "enabled": 1},
 ]
 
 BUILTIN_AI_TOOLS = [
@@ -208,6 +231,7 @@ def _sync_llms():
             **llm_data,
         })
         doc.insert(ignore_permissions=True)
+    frappe.db.commit()
 
 
 def _sync_builtin_ai_tools():

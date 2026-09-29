@@ -597,6 +597,68 @@ export function pasteWorkflowClipboard(graph: WorkflowGraph, payload: WorkflowCl
 	return { graph: { ...graph, nodes: [...graph.nodes, ...clones], edges }, rootId: copiedRootId }
 }
 
+
+export function relocateWorkflowNodeToPlacement(
+  graph: WorkflowGraph,
+  nodeId: string,
+  placement: NodePlacement,
+  newEdgeId: string,
+): WorkflowGraph {
+  const node = graph.nodes.find((item) => item.id === nodeId)
+  if (!node || node.type.startsWith('trigger.') || !canUseDefaultOutput(node)) return graph
+  const downstream = new Set<string>()
+  const pending = graph.edges.filter((edge) => edge.source === nodeId).map((edge) => edge.target)
+  while (pending.length) {
+    const current = pending.shift()
+    if (!current || downstream.has(current)) continue
+    downstream.add(current)
+    for (const edge of graph.edges) if (edge.source === current) pending.push(edge.target)
+  }
+  const requestedTargetEdge = placement.edgeId ? graph.edges.find((edge) => edge.id === placement.edgeId) : undefined
+  if (requestedTargetEdge && (downstream.has(requestedTargetEdge.source) || downstream.has(requestedTargetEdge.target))) return graph
+  if (placement.afterNodeId && downstream.has(placement.afterNodeId)) return graph
+
+  const incoming = graph.edges.filter((edge) => edge.target === nodeId)
+  const outgoing = graph.edges.filter((edge) => edge.source === nodeId)
+  if (incoming.length > 1 || outgoing.length > 1) return {
+    ...graph,
+    nodes: graph.nodes.map((item) => item.id === nodeId ? { ...item, position: placement.position } : item),
+  }
+
+  let edges = graph.edges.filter((edge) => edge.source !== nodeId && edge.target !== nodeId)
+  if (incoming[0] && outgoing[0]) {
+    edges.push({ ...incoming[0], target: outgoing[0].target })
+  }
+
+  const requestedEdge = placement.edgeId ? edges.find((edge) => edge.id === placement.edgeId) : undefined
+  const after = placement.afterNodeId ? graph.nodes.find((item) => item.id === placement.afterNodeId) : undefined
+  const afterHandle = placement.sourceHandle || (canUseDefaultOutput(after) ? 'default' : undefined)
+  const defaultEdge = after && afterHandle
+    ? edges.find((edge) => edge.source === after.id && edge.source_handle === afterHandle)
+    : undefined
+  const insertionEdge = requestedEdge || defaultEdge
+
+  if (insertionEdge) {
+    edges = [
+      ...edges.map((edge) => edge.id === insertionEdge.id ? { ...edge, target: nodeId } : edge),
+      { id: newEdgeId, source: nodeId, source_handle: 'default', target: insertionEdge.target },
+    ]
+  } else if (after && afterHandle && !edges.some((edge) => edge.source === after.id && edge.source_handle === afterHandle)) {
+    edges = [...edges, { id: newEdgeId, source: after.id, source_handle: afterHandle, target: nodeId }]
+  } else {
+    return {
+      ...graph,
+      nodes: graph.nodes.map((item) => item.id === nodeId ? { ...item, position: placement.position } : item),
+    }
+  }
+
+  return {
+    ...graph,
+    nodes: graph.nodes.map((item) => item.id === nodeId ? { ...item, position: placement.position } : item),
+    edges,
+  }
+}
+
 export function relocateWorkflowNode(
   graph: WorkflowGraph,
   nodeId: string,

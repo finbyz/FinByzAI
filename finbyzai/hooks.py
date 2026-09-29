@@ -183,10 +183,21 @@ ignore_links_on_delete = [
 # 	"ToDo": "custom_app.overrides.CustomToDo"
 # }
 
+# Forms Pro announces a completed submission once its target record is saved
+# and linked. Subscribing here keeps the dependency one-way: Forms Pro does not
+# know this app exists.
+fp_form_submitted = ["finbyzai.workflow_builder.integrations.capture_fp_form_submission"]
+
 doc_events = {
 	"*": {
-		"after_insert": "finbyzai.workflow_builder.events.capture_after_insert",
-		"on_update": "finbyzai.workflow_builder.events.capture_on_update",
+		"after_insert": [
+			"finbyzai.workflow_builder.events.capture_after_insert",
+			"finbyzai.workflow_builder.integrations.capture_web_form_submission",
+		],
+		"on_update": [
+			"finbyzai.workflow_builder.events.capture_on_update",
+			"finbyzai.workflow_builder.integrations.capture_web_form_submission",
+		],
 	},
 	"Call Log": {
 		"after_insert": "finbyzai.workflow_builder.integrations.capture_aircall_inbound_call",
@@ -211,6 +222,10 @@ doc_events = {
 	},
 	"Sales Order": {
 		"after_insert": "finbyzai.workflow_builder.integrations.capture_sales_order_created",
+	},
+	"Form": {
+		"on_trash": "finbyzai.workflow_builder.integrations.guard_form_deletion",
+		"before_save": "finbyzai.workflow_builder.integrations.guard_form_target_change",
 	},
 	"Web Page": {
 		"on_update": "finbyzai.ai.doctype.knowledge_base.knowledge_base.update_ai_links_on_route_change"
