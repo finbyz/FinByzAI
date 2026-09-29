@@ -9,3 +9,5 @@ finbyzai.patches.v15_0.set_default_ai_agent_max_iterations
 finbyzai.patches.v15_0.remove_workflow_pilot_mode
 finbyzai.patches.v15_0.migrate_event_wait_sources
 finbyzai.patches.v15_0.link_workflow_email_communications
+
+finbyzai.patches.v15_0.materialize_workflow_folders

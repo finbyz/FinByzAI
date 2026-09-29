@@ -37,6 +37,7 @@ WORKFLOW_DOCTYPES = (
 	"automation_timer",
 	"automation_trigger_subscription",
 	"automation_workflow",
+	"automation_workflow_folder",
 	"automation_workflow_comment",
 	"automation_workflow_draft",
 	"automation_workflow_template",

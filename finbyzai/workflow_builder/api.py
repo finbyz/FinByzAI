@@ -10,7 +10,7 @@ from frappe.email.email_body import get_formatted_html
 from frappe.query_builder.functions import Cast_, Count
 from frappe.utils import cint, validate_email_address
 
-from . import authoring, bulk, collaboration, emailing, engine, events, external, observability, registry, webhooks
+from . import authoring, bulk, collaboration, emailing, engine, events, external, folders, observability, registry, webhooks
 from .configuration import (
 	ai_actions_enabled,
 	automation_enabled,
@@ -467,6 +467,24 @@ def list_workflows(
 ):
 	registry.require_viewer()
 	return authoring.list_workflow_records(start, page_length, status, search, primary_doctype, exclude_workflow, folder)
+
+
+@frappe.whitelist()
+def list_workflow_folders():
+	registry.require_viewer()
+	return {"rows": folders.list_folders()}
+
+
+@frappe.whitelist(methods=["POST"])
+def create_workflow_folder(folder_name: str, parent_folder: str | None = None):
+	registry.require_builder()
+	return folders.create_folder(folder_name, parent_folder)
+
+
+@frappe.whitelist(methods=["POST"])
+def delete_workflow_folder(path: str):
+	registry.require_builder()
+	return folders.delete_folder(path)
 
 
 @frappe.whitelist()
