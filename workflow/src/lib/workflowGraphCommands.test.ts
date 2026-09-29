@@ -350,6 +350,29 @@ describe('fast graph authoring commands', () => {
 		expect(sameExecutionGraph(sourceGraph, arranged)).toBe(true)
 	})
 
+	it('keeps a shared downstream step below both branch paths', () => {
+		const sourceGraph: WorkflowGraph = {
+			...graph,
+			nodes: [
+				graph.nodes[0],
+				{ id: 'split', type: 'condition.if_else', type_version: 2, position: { x: 0, y: 0 }, config: { branches: [{ handle: 'short', name: 'Short', condition: {} }] } },
+				{ id: 'middle', type: 'action.add_comment', type_version: 1, position: { x: 0, y: 0 }, config: {} },
+				{ id: 'shared', type: 'action.send_email', type_version: 1, position: { x: 0, y: 0 }, config: {} },
+			],
+			edges: [
+				{ id: 'start', source: 'trigger-1', source_handle: 'default', target: 'split' },
+				{ id: 'short', source: 'split', source_handle: 'short', target: 'shared' },
+				{ id: 'long', source: 'split', source_handle: 'none', target: 'middle' },
+				{ id: 'join', source: 'middle', source_handle: 'default', target: 'shared' },
+			],
+		}
+		const arranged = arrangeWorkflowGraph(sourceGraph)
+		const positions = Object.fromEntries(arranged.nodes.map((node) => [node.id, node.position]))
+		expect(positions.shared.y).toBeGreaterThan(positions.middle.y)
+		expect(arrangeWorkflowGraph(arranged)).toBe(arranged)
+		expect(sameExecutionGraph(sourceGraph, arranged)).toBe(true)
+	})
+
   it('duplicates configuration with a fresh identity and preserves the journey', () => {
     const source = { id: 'comment-source', type: 'action.add_comment', type_version: 1, position: { x: 200, y: 200 }, config: { content: 'Follow up' } } as const
     const sourceGraph = { ...graph, nodes: [graph.nodes[0], source], edges: [{ id: 'source-edge', source: 'trigger-1', source_handle: 'default', target: source.id }] } as WorkflowGraph

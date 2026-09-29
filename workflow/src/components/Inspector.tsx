@@ -564,7 +564,7 @@ function AiActionEditor({
 			)}
 		</InspectorSection>
 
-		<InspectorSection title="Safety and routing" description="Low confidence, risk, missing evidence, and provider failure use explicit workflow paths.">
+		<InspectorSection title="Safety and routing" description={support ? "Route eligible responses and human review; choose how provider failures are handled." : "Connect only the AI outcomes that should continue through more steps."}>
 			<div className="grid grid-cols-2 gap-2">
 				<div data-config-path="confidence_threshold">
 					<label className={labelClass}>Minimum confidence</label>
@@ -592,6 +592,13 @@ function AiActionEditor({
 					</select>
 				</div>
 			)}
+			<div data-config-path="failure_mode">
+				<label className={labelClass}>Provider failure</label>
+				<select className={inputClass} value={String(config.failure_mode || 'branch')} onChange={(event) => update({ ...config, failure_mode: event.target.value }, 'failure_mode')}>
+					<option value="branch">Follow Failed path (connect a step)</option>
+					<option value="fail_workflow">Fail workflow and apply retry policy</option>
+				</select>
+			</div>
 			<details className="rounded-xl border border-[var(--border-color)] p-3">
 				<summary className="cursor-pointer text-[10.5px] font-semibold text-heading">Advanced limits</summary>
 				<div className="mt-3 grid grid-cols-2 gap-2">
@@ -604,15 +611,10 @@ function AiActionEditor({
 						<input type="number" min="128" max={catalog?.limits.max_output_tokens || 2048} step="128" className={inputClass} value={Number(config.max_tokens || Math.min(1024, catalog?.limits.max_output_tokens || 2048))} onChange={(event) => update({ ...config, max_tokens: Number(event.target.value) }, 'max_tokens')} />
 					</div>
 				</div>
-				<div className="mt-3">
-					<label className={labelClass}>Provider failure</label>
-					<select className={inputClass} value={String(config.failure_mode || 'branch')} onChange={(event) => update({ ...config, failure_mode: event.target.value }, 'failure_mode')}>
-						<option value="branch">Follow Failed path</option>
-						<option value="fail_workflow">Fail and retry workflow action</option>
-					</select>
-				</div>
 			</details>
-			<Hint title="Required outcomes">{support ? 'Connect Response eligible, Human review, and Failed.' : 'Connect Success, Needs review, and Failed.'} Publication is blocked until all three are connected.</Hint>
+			<Hint title="Outcome paths">{support
+				? `Connect Response eligible and Human review. ${String(config.failure_mode || 'branch') === 'branch' ? 'Connect Failed to handle provider errors.' : 'Provider errors fail the workflow.'}`
+				: `Connect any outcomes that should continue. Unconnected Success and Needs review paths end the run. ${String(config.failure_mode || 'branch') === 'branch' ? 'Connect Failed to handle provider errors.' : 'Provider errors fail the workflow.'}`}</Hint>
 		</InspectorSection>
 
 		<InspectorSection title="Test this AI step" description={`Use one real ${primaryDoctype} with the same permissions and provider path as runtime. No record or downstream action is changed.`}>

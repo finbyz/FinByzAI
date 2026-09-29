@@ -466,6 +466,7 @@ button:disabled { cursor: not-allowed; }
 .workflow-path-end__tail { width: 1px; height: 12px; flex: none; background: #a7b4c0; }
 .workflow-virtual-target { width: 1px !important; height: 1px !important; border: 0 !important; opacity: 0; pointer-events: none; }
 .workflow-virtual-end { display: flex; width: 70px; align-items: center; justify-content: center; gap: 5px; border: 1px solid #a7b4c0; border-radius: 999px; padding: 6px 10px; color: #607080; background: color-mix(in srgb, var(--fg-color) 92%, transparent); box-shadow: 0 3px 12px rgb(25 39 51 / 0.08); font-size: 9px; font-weight: 800; letter-spacing: 0.08em; }
+.workflow-virtual-end--failure { border-color: #e7a1a4; color: #be3038; background: color-mix(in srgb, var(--card-bg) 88%, #ffe7e8); }
 
 .workflow-handle {
   width: 18px !important;

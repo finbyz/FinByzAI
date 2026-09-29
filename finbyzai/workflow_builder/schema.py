@@ -1075,9 +1075,9 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 		elif handle != "default":
 			issues.append(_issue("INVALID_SOURCE_HANDLE", "This node supports only the default output", f"{path}.source_handle", source))
 
-	for node_id, handles in branch_handles.items():
-		node = node_map[node_id]
-		node_type = node.get("type")
+	for node_id, node in node_map.items():
+		handles = branch_handles.get(node_id, set())
+		node_type = node.get("type") if isinstance(node.get("type"), str) else None
 		config = node.get("config") or {}
 		expected = {
 			"condition.if_else": {"true", "false"},
@@ -1100,25 +1100,9 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 		if expected is not None and not handles.issubset(expected):
 			issues.append(_issue("INVALID_BRANCH_EDGES", "An edge uses an output that is not available on this branch", node_id=node_id))
 		if publish and node_type in {"action.ai_generate", "action.ai_support_agent"}:
-			# Only demand the paths this configuration can actually take. A
-			# "fail_workflow" node raises instead of branching, and a plain-text
-			# ai_generate never reports low confidence, so requiring those edges
-			# would force the author to draw wiring that can never be reached.
-			if node_type == "action.ai_generate":
-				required_paths = {"success"}
-				# low-confidence is only skipped when the graph proves it cannot
-				# fire. An inline step with no explicit format defaults to text,
-				# but a profile-driven step takes its format from the agent at
-				# run time, so the path stays required there.
-				inline = bool(
-					config.get("prompt_mode") == "inline"
-					or (not config.get("ai_profile") and config.get("model"))
-				)
-				declared_format = str(config.get("output_format") or ("text" if inline else ""))
-				if declared_format != "text":
-					required_paths.add("low_confidence")
-			else:
-				required_paths = {"respond", "handoff"}
+			# Unconnected AI generation outcomes end their path. Provider failure
+			# must be handled explicitly so it cannot silently complete a run.
+			required_paths = set() if node_type == "action.ai_generate" else {"respond", "handoff"}
 			if str(config.get("failure_mode") or "branch") == "branch":
 				required_paths.add("failure")
 			missing_paths = sorted(required_paths - handles)
