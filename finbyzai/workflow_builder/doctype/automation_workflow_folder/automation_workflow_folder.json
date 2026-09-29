@@ -1,0 +1,31 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:path",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": ["folder_name", "path", "parent_folder", "is_group", "lft", "rgt", "old_parent"],
+ "fields": [
+  {"fieldname": "folder_name", "fieldtype": "Data", "label": "Folder Name", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "path", "fieldtype": "Data", "label": "Path", "reqd": 1, "unique": 1, "read_only": 1},
+  {"fieldname": "parent_folder", "fieldtype": "Link", "label": "Parent Folder", "options": "Automation Workflow Folder", "in_list_view": 1},
+  {"fieldname": "is_group", "fieldtype": "Check", "label": "Is Group", "default": "1", "hidden": 1},
+  {"fieldname": "lft", "fieldtype": "Int", "label": "lft", "hidden": 1, "no_copy": 1},
+  {"fieldname": "rgt", "fieldtype": "Int", "label": "rgt", "hidden": 1, "no_copy": 1},
+  {"fieldname": "old_parent", "fieldtype": "Data", "label": "old_parent", "hidden": 1, "no_copy": 1}
+ ],
+ "is_tree": 1,
+ "nsm_parent_field": "parent_folder",
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "module": "Workflow Builder",
+ "name": "Automation Workflow Folder",
+ "permissions": [
+  {"role": "Automation Builder", "read": 1, "write": 1, "create": 1, "delete": 1},
+  {"role": "Automation Publisher", "read": 1, "write": 1, "create": 1, "delete": 1},
+  {"role": "Automation Operator", "read": 1},
+  {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1}
+ ],
+ "sort_field": "name",
+ "sort_order": "ASC"
+}
