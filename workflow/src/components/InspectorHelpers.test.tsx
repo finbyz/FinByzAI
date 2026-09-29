@@ -1,6 +1,6 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { AssignmentEditor, ConditionExpressionEditor } from './InspectorHelpers'
+import { AssignmentEditor, ConditionExpressionEditor, ValueSourceEditor } from './InspectorHelpers'
 import type { FieldCatalogItem } from '../types'
 
 const fields: FieldCatalogItem[] = [
@@ -69,5 +69,25 @@ describe('Condition editor unary operators', () => {
     expect(screen.getByRole('option', { name: 'is blank or zero' })).toBeInTheDocument()
     expect(screen.queryByPlaceholderText('Enter a value')).not.toBeInTheDocument()
     expect(screen.getByText('Frappe stores a blank currency as zero, so zero follows the blank path.')).toBeInTheDocument()
+  })
+})
+
+describe('Email message fixed value', () => {
+  it('keeps entered line breaks in the value binding', () => {
+    const onChange = vi.fn()
+    render(<ValueSourceEditor
+      assignment={{ field: 'message', value: { kind: 'literal', value: '' } }}
+      sourceFields={[]}
+      outputNodes={[]}
+      outputPaths={{}}
+      multiline
+      onChange={onChange}
+    />)
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), { target: { value: 'Hello Ada\n\nWelcome aboard.' } })
+    expect(onChange).toHaveBeenCalledWith({
+      field: 'message',
+      value: { kind: 'literal', value: 'Hello Ada\n\nWelcome aboard.' },
+    })
   })
 })
