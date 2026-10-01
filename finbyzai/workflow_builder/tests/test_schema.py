@@ -436,7 +436,7 @@ class TestAutomationSchema(IntegrationTestCase):
 			)
 			self.assertEqual([issue["code"] for issue in issues], ["EVENT_FILTER_RECORD_MISSING"])
 			exists.reset_mock()
-			for operator, value in (("neq", "MISSING-FORM"), ("not_in", ["MISSING-FORM"])):
+			for operator, value in (("ne", "MISSING-FORM"), ("not_in", ["MISSING-FORM"])):
 				self.assertEqual(
 					_validate_event_filter(predicate("form", operator, value), "crm.form.submitted", "event_filter", "Lead"),
 					[],

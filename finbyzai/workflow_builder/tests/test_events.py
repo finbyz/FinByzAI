@@ -532,7 +532,7 @@ class TestAutomationEvents(IntegrationTestCase):
 			}}}]}
 
 		self.assertTrue(integrations._graph_pins_form(graph("in", ["FORM-1", "FORM-2"]), "FORM-1"))
-		for operator, value in (("neq", "FORM-1"), ("not_in", ["FORM-1"])):
+		for operator, value in (("ne", "FORM-1"), ("not_in", ["FORM-1"])):
 			self.assertFalse(integrations._graph_pins_form(graph(operator, value), "FORM-1"))
 
 	def test_form_id_appearing_elsewhere_in_the_graph_does_not_block_deletion(self):
