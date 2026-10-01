@@ -121,15 +121,17 @@ class AgentService:
                 continue
             
             content_parts = []
-            
-            if msg.content_type == "text":
+            # Rows imported from fixtures can lack content_type; the field default is text.
+            content_type = msg.content_type or "text"
+
+            if content_type == "text":
                 # Text content - preserve template variables
                 content_parts.append({
                     "type": "text",
                     "text": msg.content or ""
                 })
                 
-            elif msg.content_type == "image":
+            elif content_type == "image":
                 input_value = msg.content.strip()
 
                 if input_value.startswith("base64:"):
@@ -151,7 +153,7 @@ class AgentService:
                     parts["mime_type"] = mime_type
                 content_parts.append(parts)
      
-            elif msg.content_type == "file":
+            elif content_type == "file":
                 doc_content = msg.content
                 if doc_content:
                     if doc_content.startswith(("http://", "https://")):

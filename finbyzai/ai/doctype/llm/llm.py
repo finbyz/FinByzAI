@@ -42,6 +42,9 @@ class LLM(Document):
 			"api_base": provider.api_base or None,
 		}
 		
+		if provider.get("api_base"):
+			kwargs["api_base"] = provider.api_base.strip()
+
 		# Override api_base for DeepSeek to avoid deprecated beta endpoint
 		if provider.name == "DeepSeek":
 			kwargs["api_base"] = "https://api.deepseek.com"
@@ -56,7 +59,7 @@ class LLM(Document):
 		return embedding(
 			model=self.name,
 			api_key = api_key,
-			api_base = provider.api_base or None,
+			api_base = provider.get("api_base") or None,
 		)
 
 class ImageLiteLLM:

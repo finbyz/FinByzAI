@@ -8,6 +8,7 @@
  "field_order": [
   "api_key",
   "provider",
+  "api_base",
   "disabled",
   "logo"
  ],
@@ -28,6 +29,12 @@
    "unique": 1
   },
   {
+   "fieldname": "api_base",
+   "fieldtype": "Data",
+   "label": "API Base URL",
+   "description": "Optional. OpenAI-compatible endpoint for self-hosted gateways (e.g. https://gateway.example.com/v1). Leave empty for the provider's default."
+  },
+  {
    "default": "0",
    "fieldname": "disabled",
    "fieldtype": "Check",
@@ -43,7 +50,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-08-05 19:36:35.748758",
+ "modified": "2026-09-29 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "AI",
  "name": "LLM Provider",
