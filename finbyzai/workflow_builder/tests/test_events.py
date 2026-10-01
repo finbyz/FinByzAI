@@ -410,15 +410,40 @@ class TestAutomationEvents(FrappeTestCase):
 		frappe.flags.in_web_form = True
 		frappe.form_dict.web_form = "Public lead form"
 		try:
-			with patch.object(integrations, "_signal") as emit:
+			with patch.object(integrations.frappe, "get_cached_value", return_value="Lead"), patch.object(
+				integrations, "_signal"
+			) as emit:
 				integrations.capture_web_form_submission(doc)
 		finally:
 			frappe.flags.pop("in_web_form", None)
+			frappe.flags.pop("workflow_web_form_occurrences", None)
 			frappe.form_dict.pop("web_form", None)
 		emit.assert_called_once()
 		self.assertEqual(emit.call_args.args[:3], ("crm.form.submitted", "Lead", "LEAD-WEB-FORM"))
 		self.assertEqual(emit.call_args.args[3]["web_form"], "Public lead form")
 		self.assertEqual(emit.call_args.args[3]["form_source"], "Frappe Web Form")
+		self.assertEqual(emit.call_args.args[3]["form_name"], "Public lead form")
+
+	def test_web_form_adapter_skips_attachment_and_repeated_target_save(self):
+		frappe.flags.in_web_form = True
+		frappe.form_dict.web_form = "Public lead form"
+		target = frappe._dict(doctype="Lead", name="LEAD-WEB-FORM", modified="first")
+		target.get_doc_before_save = lambda: None
+		attachment = frappe._dict(doctype="File", name="FILE-1")
+		try:
+			with patch.object(integrations.frappe, "get_cached_value", return_value="Lead"), patch.object(
+				integrations, "_signal"
+			) as emit:
+				integrations.capture_web_form_submission(attachment)
+				integrations.capture_web_form_submission(target)
+				target.modified = "second"
+				integrations.capture_web_form_submission(target)
+			emit.assert_called_once()
+		finally:
+			frappe.flags.pop("in_web_form", None)
+			frappe.flags.pop("workflow_web_form_occurrences", None)
+			frappe.form_dict.pop("web_form", None)
+
 
 	def test_forms_pro_adapter_enrolls_the_record_the_form_wrote(self):
 		with patch.object(integrations, "_signal") as emit:
@@ -500,6 +525,16 @@ class TestAutomationEvents(FrappeTestCase):
 		self.assertTrue(integrations._graph_pins_form(graph, "FORM-IN-USE"))
 		self.assertFalse(integrations._graph_pins_form(graph, "SOME-OTHER-FORM"))
 
+	def test_form_dependency_uses_only_positive_membership_filters(self):
+		def graph(operator, value):
+			return {"nodes": [{"type": "trigger.event", "config": {"event_filter": {
+				"kind": "predicate", "field": "form", "operator": operator, "value": value,
+			}}}]}
+
+		self.assertTrue(integrations._graph_pins_form(graph("in", ["FORM-1", "FORM-2"]), "FORM-1"))
+		for operator, value in (("neq", "FORM-1"), ("not_in", ["FORM-1"])):
+			self.assertFalse(integrations._graph_pins_form(graph(operator, value), "FORM-1"))
+
 	def test_form_id_appearing_elsewhere_in_the_graph_does_not_block_deletion(self):
 		"""The LIKE scan only narrows; a comment mentioning the id must not count."""
 		graph = {
@@ -519,6 +554,13 @@ class TestAutomationEvents(FrappeTestCase):
 		with patch.object(integrations, "_workflows_filtering_on_form") as scan:
 			integrations.guard_form_target_change(doc)
 		scan.assert_not_called()
+
+	def test_strategy_change_guard_blocks_a_pinned_form(self):
+		doc = frappe._dict(doctype="Form", name="FORM-1", target_doctype="Lead", record_strategy="Collect Submission Only")
+		doc.get_doc_before_save = lambda: frappe._dict(target_doctype="Lead", record_strategy="Create New")
+		with patch.object(integrations, "_workflows_filtering_on_form", return_value={"Live workflow"}):
+			with self.assertRaises(frappe.ValidationError):
+				integrations.guard_form_target_change(doc)
 
 	def test_target_change_guard_allows_a_form_no_workflow_pins(self):
 		doc = frappe._dict(doctype="Form", name="FORM-1", target_doctype="Customer")

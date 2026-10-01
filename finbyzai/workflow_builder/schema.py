@@ -137,6 +137,10 @@ def _validate_event_filter(
 		for field in definition.get("filter_fields") or []
 		if isinstance(field, dict) and field.get("fieldname")
 	}
+	# Published Web Form triggers may still use the earlier payload key. Keep
+	# validating those graphs while new authors see only the web_form field.
+	if topic == "crm.form.submitted":
+		allowed_fields.add("form_name")
 	for fieldname in sorted(condition_fields(expression) - allowed_fields):
 		issues.append(
 			_issue(
@@ -172,45 +176,53 @@ def _validate_event_filter_links(expression: Any, definition: dict, path: str) -
 		field = link_fields.get(str(predicate.get("field") or ""))
 		if not field:
 			continue
-		# Only a literal scalar names one record. "is set", "in", and value
-		# bindings are checked by the operator rules instead.
-		if str(predicate.get("operator") or "") not in {"eq", "neq"}:
-			continue
-		value = predicate.get("value")
-		if not isinstance(value, str) or not value.strip():
+		# Only positive, literal form choices require a viable record.
+		operator = str(predicate.get("operator") or "")
+		if operator == "eq":
+			values = [predicate.get("value")]
+		elif operator == "in" and isinstance(predicate.get("value"), list):
+			values = predicate["value"]
+		else:
 			continue
 		doctype = str(field["options"])
-		try:
-			exists = frappe.db.exists(doctype, value)
-		except Exception:
-			continue
-		if not exists:
-			issues.append(
-				_issue(
-					"EVENT_FILTER_RECORD_MISSING",
-					f"{field.get('label') or field['fieldname']} {value} no longer exists, so this trigger can never match.",
-					path,
+		for value in values:
+			if not isinstance(value, str) or not value.strip():
+				continue
+			try:
+				exists = frappe.db.exists(doctype, value)
+			except Exception:
+				continue
+			if not exists:
+				issues.append(
+					_issue(
+						"EVENT_FILTER_RECORD_MISSING",
+						f"{field.get('label') or field['fieldname']} {value} no longer exists, so this trigger can never match.",
+						path,
+					)
 				)
-			)
-			continue
-		link_filters = field.get("link_filters")
-		if not isinstance(link_filters, dict) or not link_filters:
-			continue
-		mismatched = {
-			key: frappe.db.get_value(doctype, value, key)
-			for key, expected in link_filters.items()
-			if frappe.db.get_value(doctype, value, key) != expected
-		}
-		if mismatched:
-			detail = ", ".join(f"{key} is {found!r}" for key, found in sorted(mismatched.items()))
-			expected = ", ".join(f"{key}={value!r}" for key, value in sorted(link_filters.items()))
-			issues.append(
-				_issue(
-					"EVENT_FILTER_RECORD_INELIGIBLE",
-					f"{field.get('label') or field['fieldname']} {value} can never raise this event here ({detail}; this workflow needs {expected}).",
-					path,
+				continue
+			link_filters = field.get("link_filters")
+			if not isinstance(link_filters, dict) or not link_filters:
+				continue
+			mismatched = {}
+			for key, expected in link_filters.items():
+				actual = frappe.db.get_value(doctype, value, key)
+				if isinstance(expected, list) and len(expected) == 2 and expected[0] == "!=":
+					matches = actual != expected[1]
+				else:
+					matches = actual == expected
+				if not matches:
+					mismatched[key] = actual
+			if mismatched:
+				detail = ", ".join(f"{key} is {found!r}" for key, found in sorted(mismatched.items()))
+				expected = ", ".join(f"{key}={value!r}" for key, value in sorted(link_filters.items()))
+				issues.append(
+					_issue(
+						"EVENT_FILTER_RECORD_INELIGIBLE",
+						f"{field.get('label') or field['fieldname']} {value} can never raise this event here ({detail}; this workflow needs {expected}).",
+						path,
+					)
 				)
-			)
 	return issues
 
 

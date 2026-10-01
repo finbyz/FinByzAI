@@ -231,7 +231,6 @@ def _sync_llms():
             **llm_data,
         })
         doc.insert(ignore_permissions=True)
-    frappe.db.commit()
 
 
 def _sync_builtin_ai_tools():

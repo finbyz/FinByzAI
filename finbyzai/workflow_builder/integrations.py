@@ -209,12 +209,22 @@ def capture_web_form_submission(doc, method=None) -> None:
 	if not getattr(frappe.flags, "in_web_form", False):
 		return
 	form_name = str(getattr(frappe.form_dict, "web_form", "") or "").strip()
-	if not form_name:
+	if not form_name or frappe.get_cached_value("Web Form", form_name, "doc_type") != doc.doctype:
 		return
+	# Web Form.accept can save the target again while attaching files. Keep one
+	# occurrence for that target throughout this request, including both hooks.
+	occurrences = getattr(frappe.flags, "workflow_web_form_occurrences", None)
+	if occurrences is None:
+		occurrences = frappe.flags.workflow_web_form_occurrences = {}
+	key = (form_name, doc.doctype, doc.name)
+	if key in occurrences:
+		return
+	occurrences[key] = frappe.generate_hash(length=20)
 	payload = {
-		"event_id": f"web-form:{form_name}:{doc.doctype}:{doc.name}:{doc.get('modified')}",
+		"event_id": f"web-form:{form_name}:{doc.doctype}:{doc.name}:{occurrences[key]}",
 		"form_source": "Frappe Web Form",
 		"web_form": form_name,
+		"form_name": form_name,  # Compatibility for published legacy filters.
 		"operation": "Update" if doc.get_doc_before_save() else "Create",
 	}
 	_signal("crm.form.submitted", doc.doctype, doc.name, payload, payload["event_id"])
@@ -307,7 +317,15 @@ def guard_form_target_change(doc, method=None) -> None:
 	if doc.doctype != "Form":
 		return
 	previous = doc.get_doc_before_save()
-	if not previous or previous.get("target_doctype") == doc.get("target_doctype"):
+	if not previous:
+		return
+	def emitted_doctype(form):
+		return (
+			"FP Form Submission"
+			if form.get("record_strategy") == "Collect Submission Only"
+			else form.get("target_doctype")
+		)
+	if emitted_doctype(previous) == emitted_doctype(doc):
 		return
 	try:
 		blocking = sorted(_workflows_filtering_on_form(doc.name))
@@ -318,9 +336,8 @@ def guard_form_target_change(doc, method=None) -> None:
 		return
 	frappe.throw(
 		_(
-			"This form writes {0} and is used by {1}, which enrol {0} records. "
-			"Remove the form filter from each workflow before repointing it to {2}."
-		).format(previous.get("target_doctype"), ", ".join(blocking), doc.get("target_doctype")),
+			"This form is used by active workflows: {0}. Remove their form filters before changing its target DocType or record strategy."
+		).format(", ".join(blocking)),
 		title=_("Form is in use by automation"),
 	)
 
@@ -364,7 +381,12 @@ def _graph_pins_form(graph: dict, form_name: str) -> bool:
 				filters.append(entry["config"].get("event_filter"))
 		for expression in filters:
 			for predicate in condition_predicates(expression):
-				if str(predicate.get("field")) == "form" and predicate.get("value") == form_name:
+				if str(predicate.get("field")) != "form":
+					continue
+				operator, value = predicate.get("operator"), predicate.get("value")
+				if (operator == "eq" and value == form_name) or (
+					operator == "in" and isinstance(value, list) and form_name in value
+				):
 					return True
 	return False
 

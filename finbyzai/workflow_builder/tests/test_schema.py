@@ -405,6 +405,51 @@ class TestAutomationSchema(FrappeTestCase):
 			[],
 		)
 
+	def test_collect_only_form_is_ineligible_for_target_workflow(self):
+		from finbyzai.workflow_builder.schema import _validate_event_filter
+		from unittest.mock import patch
+
+		form_filter = next(
+			field for row in business_event_catalog("Lead") if row["topic"] == "crm.form.submitted"
+			for field in row["filter_fields"] if field["fieldname"] == "form"
+		)
+		self.assertEqual(form_filter["link_filters"]["record_strategy"], ["!=", "Collect Submission Only"])
+		with patch.object(frappe.db, "exists", return_value=True), patch.object(
+			frappe.db, "get_value", side_effect=lambda doctype, name, field: {
+				"target_doctype": "Lead", "record_strategy": "Collect Submission Only"
+			}[field]
+		):
+			issues = _validate_event_filter(
+				predicate("form", "eq", "COLLECT-ONLY"), "crm.form.submitted",
+				"trigger.config.event_filter", "Lead", "trigger"
+			)
+		self.assertEqual([issue["code"] for issue in issues], ["EVENT_FILTER_RECORD_INELIGIBLE"])
+
+	def test_positive_form_list_is_checked_but_negative_filter_is_not(self):
+		from finbyzai.workflow_builder.schema import _validate_event_filter
+		from unittest.mock import patch
+
+		with patch.object(frappe.db, "exists", return_value=False) as exists:
+			issues = _validate_event_filter(
+				predicate("form", "in", ["MISSING-FORM"]), "crm.form.submitted",
+				"event_filter", "Lead"
+			)
+			self.assertEqual([issue["code"] for issue in issues], ["EVENT_FILTER_RECORD_MISSING"])
+			exists.reset_mock()
+			for operator, value in (("neq", "MISSING-FORM"), ("not_in", ["MISSING-FORM"])):
+				self.assertEqual(
+					_validate_event_filter(predicate("form", operator, value), "crm.form.submitted", "event_filter", "Lead"),
+					[],
+				)
+			exists.assert_not_called()
+
+	def test_legacy_web_form_filter_remains_valid(self):
+		from finbyzai.workflow_builder.schema import _validate_event_filter, event_filter_matches
+
+		expression = predicate("form_name", "eq", "Public lead form")
+		self.assertEqual(_validate_event_filter(expression, "crm.form.submitted", "event_filter", "Lead"), [])
+		self.assertTrue(event_filter_matches(expression, {"form_name": "Public lead form"}))
+
 	def test_event_filter_link_check_ignores_non_literal_operators(self):
 		"""Only an equality against one id names a record to verify."""
 		from finbyzai.workflow_builder.schema import _validate_event_filter
@@ -445,7 +490,7 @@ class TestAutomationSchema(FrappeTestCase):
 		)
 		self.assertTrue(validate_graph(graph, primary_doctype="Lead", publish=True)["valid"])
 
-		graph["nodes"][0]["config"]["events"][0]["event_filter"] = predicate("form_name", "eq", "Wrong source")
+		graph["nodes"][0]["config"]["events"][0]["event_filter"] = predicate("unknown_form_field", "eq", "Wrong source")
 		codes = {issue["code"] for issue in validate_graph(graph)["issues"]}
 		self.assertIn("UNKNOWN_EVENT_FILTER_FIELD", codes)
 
