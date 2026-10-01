@@ -161,10 +161,7 @@ fp_form_submitted = ["finbyzai.workflow_builder.integrations.capture_fp_form_sub
 
 doc_events = {
 	"*": {
-		"after_insert": [
-			"finbyzai.workflow_builder.events.capture_after_insert",
-			"finbyzai.workflow_builder.integrations.capture_web_form_submission",
-		],
+		"after_insert": "finbyzai.workflow_builder.events.capture_after_insert",
 		"on_update": [
 			"finbyzai.workflow_builder.events.capture_on_update",
 			"finbyzai.workflow_builder.integrations.capture_web_form_submission",

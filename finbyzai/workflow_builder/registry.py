@@ -1112,7 +1112,10 @@ def business_event_catalog(primary_doctype: str | None = None, usage: str = "all
 			# a Customer workflow and waiting for an event that cannot arrive.
 			for field in definition["filter_fields"]:
 				if field["fieldname"] == "form":
-					field["link_filters"] = {"target_doctype": doctype}
+					field["link_filters"] = {
+						"target_doctype": doctype,
+						"record_strategy": ["!=", "Collect Submission Only"],
+					}
 			if doctype == "FP Form Submission":
 				# A collect-only form has no target record, so the submission is
 				# the enrolled record and a target-scoped picker would be empty.
