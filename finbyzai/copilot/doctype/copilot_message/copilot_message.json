@@ -34,7 +34,7 @@
   },
   {
    "fieldname": "tool_call_id",
-   "fieldtype": "Data",
+   "fieldtype": "Long Text",
    "label": "Tool Call Id",
    "description": "Tool rows: which call this is the result of."
   },
