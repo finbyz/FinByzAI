@@ -24,7 +24,7 @@ HISTORY_LIMIT = 500
 
 AVAILABLE_RESOURCES = {
     "available_agents": ("AI Agent", {}, "agent"),
-    "available_models": ("LLM", {"enabled": 1, "embeding_model": 0}, "model"),
+    "available_models": ("LLM", {"enabled": 1, "is_embedding_model": 0}, "model"),
 }
 
 @frappe.whitelist(methods=["POST"])
@@ -393,7 +393,7 @@ def get_knowledge_bases():
     return _picker(
         lambda: frappe.get_list(
             "Knowledge Base",
-            fields=["name", "title", "vector_store", "status", "embedding_model"],
+            fields=["name", "title", "vector_store", "status", "embeding_model"],
             order_by="modified desc",
             limit=50,
         ),
@@ -709,7 +709,7 @@ def _model_rows(settings=None, apply_allowlist=True):
     rows = _picker(
         lambda: frappe.get_list(
             "LLM",
-            filters={"enabled": 1, "embeding_model": 0},
+            filters={"enabled": 1, "is_embedding_model": 0},
             fields=["name", "title", "provider", "supports_vision", "is_reasoning", "size"],
             order_by="provider asc, name asc",
         ),

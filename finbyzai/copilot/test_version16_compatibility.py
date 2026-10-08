@@ -1,5 +1,8 @@
 """Regression checks for the Copilot settings port, without a site or API calls."""
 
+import json
+from pathlib import Path
+
 from unittest import TestCase
 from unittest.mock import Mock, patch
 
@@ -15,7 +18,14 @@ class TestVersion16Compatibility(TestCase):
         settings = frappe._dict(available_models=[], default_model=None)
         with patch("frappe.get_list", return_value=[]) as query:
             self.assertEqual(api._model_rows(settings), [])
-        self.assertEqual(query.call_args.kwargs["filters"], {"enabled": 1, "embeding_model": 0})
+        self.assertEqual(query.call_args.kwargs["filters"], {"enabled": 1, "is_embedding_model": 0})
+
+    def test_knowledge_picker_fields_exist_in_the_installed_schema(self):
+        schema = Path(__file__).parents[1] / "ai/doctype/knowledge_base/knowledge_base.json"
+        fields = {field["fieldname"] for field in json.loads(schema.read_text())["fields"]}
+        with patch.object(access, "require_copilot"), patch("frappe.get_list", return_value=[]) as query:
+            self.assertEqual(api.get_knowledge_bases(), [])
+        self.assertLessEqual(set(query.call_args.kwargs["fields"]) - {"name"}, fields)
 
     def test_missing_optional_picker_permission_returns_empty(self):
         with patch("frappe.clear_last_message"), patch("frappe.log_error"), patch(
