@@ -119,6 +119,7 @@ after_migrate = ["finbyzai.install.after_migrate", "finbyzai.copilot.setup.ensur
 # }
 
 permission_query_conditions = {
+    "Copilot Scheduled Task": "finbyzai.copilot.doctype.copilot_scheduled_task.copilot_scheduled_task.get_permission_query_conditions",
     "AI Conversation": (
         "finbyzai.ai.doctype.ai_conversation.ai_conversation."
         "get_permission_query_conditions"
@@ -138,6 +139,7 @@ permission_query_conditions = {
 }
 
 has_permission = {
+    "Copilot Scheduled Task": "finbyzai.copilot.doctype.copilot_scheduled_task.copilot_scheduled_task.has_permission",
     "AI Conversation": (
         "finbyzai.ai.doctype.ai_conversation.ai_conversation.has_permission"
     ),
@@ -239,6 +241,7 @@ doc_events = {
 # ---------------
 
 scheduler_events = {
+    "cron": {"* * * * *": ["finbyzai.copilot.schedules.dispatch_due_tasks"]},
 	"all": [
 		"finbyzai.workflow_builder.events.dispatch_pending_outbox",
 		"finbyzai.workflow_builder.engine.recover_stale_external_effects",

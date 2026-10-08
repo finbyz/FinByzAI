@@ -27,6 +27,7 @@ const store = useStore();
 const { newChat, fullscreen, settingsOpen, sidebarOpen, toggleSidebar } = store;
 
 const menuItems = computed(() => [
+	{ value: "__tasks__", label: __("Scheduled tasks"), icon: "lucide-calendar-clock" },
 	{ value: "__settings__", label: __("Settings"), icon: "lucide-settings" },
 	{
 		value: "__fullscreen__",
@@ -36,7 +37,8 @@ const menuItems = computed(() => [
 ]);
 
 function onSelect(item) {
-	if (item.value === "__settings__") settingsOpen.value = true;
+	if (item.value === "__tasks__") store.tasksOpen.value = true;
+	else if (item.value === "__settings__") settingsOpen.value = true;
 	else if (item.value === "__fullscreen__") props.onToggleFullscreen?.();
 }
 </script>

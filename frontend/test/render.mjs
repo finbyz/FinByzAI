@@ -837,5 +837,60 @@ for (const [name, ok] of [
 	["sources: nothing rendered when there are none", !root.textContent.includes("Sources")],
 ]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
 
+// Scheduled tasks: drive the manager against the same built panel.
+DATA.list_tasks = [];
+let savedTask;
+DATA.save_task = (args) => {
+    savedTask = { ...args.task };
+    return { name: "task-1", next_run: "2030-01-02T09:00:00+05:30" };
+};
+DATA.set_enabled = { name: "task-1", enabled: 0 };
+DATA.delete_task = { deleted: "task-1" };
+store.tasksOpen.value = true;
+await tick();
+for (const [name, ok] of [
+    ["tasks: opens with an accessible dialog", root.querySelector('[aria-labelledby="copilot-tasks-title"]')?.getAttribute("role") === "dialog"],
+    ["tasks: empty state", root.textContent.includes("No scheduled tasks yet")],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+const taskSection = () => root.querySelector(".copilot-tasks");
+const taskButton = text => [...taskSection().querySelectorAll("button")].find(b => b.textContent.trim() === text);
+taskButton("New task")?.click();
+await tick();
+const form = taskSection().querySelector("form");
+const inputs = [...form.querySelectorAll("input")];
+for (const [node, value] of [[inputs[0], "Daily invoices"], [form.querySelector("textarea"), "Summarize overdue invoices"], [inputs[1], "2030-01-02T09:00"], [inputs[2], "Asia/Kolkata"]]) {
+    node.value = value;
+    node.dispatchEvent(new window.Event("input", { bubbles: true }));
+}
+const repeat = form.querySelector("select");
+repeat.value = "Custom";
+repeat.dispatchEvent(new window.Event("change", { bubbles: true }));
+await tick();
+const cron = form.querySelector('input[placeholder="0 9 * * 1-5"]');
+for (const [name, ok] of [["tasks: custom cron field", Boolean(cron)]]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+cron.value = "0 9 * * 1-5";
+cron.dispatchEvent(new window.Event("input", { bubbles: true }));
+DATA.list_tasks = [{ name: "task-1", title: "Daily invoices", prompt: "Summarize overdue invoices", timezone: "Asia/Kolkata", recurrence: "Custom", cron_expression: "0 9 * * 1-5", enabled: 1, completed: 0, next_run: "2030-01-02T09:00:00+05:30" }];
+form.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+await tick();
+for (const [name, ok] of [
+    ["tasks: saves instructions, local time and cron", savedTask?.prompt === "Summarize overdue invoices" && savedTask?.scheduled_for === "2030-01-02T09:00" && savedTask?.cron_expression === "0 9 * * 1-5" && savedTask?.timezone === "Asia/Kolkata"],
+    ["tasks: save returns to task list", !taskSection().querySelector("form") && taskSection().textContent.includes("Daily invoices")],
+    ["tasks: timezone and next run displayed", taskSection().textContent.includes("Asia/Kolkata") && taskSection().textContent.includes("Next run")],
+]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+DATA.list_tasks[0].enabled = 0;
+taskButton("Pause")?.click();
+await tick();
+for (const [name, ok] of [["tasks: pause offers resume", Boolean(taskButton("Resume"))]]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+taskButton("Delete")?.click();
+await tick();
+for (const [name, ok] of [["tasks: delete asks before removing", taskSection().textContent.includes("Delete this schedule?")]]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+DATA.list_tasks = [];
+taskButton("Delete task")?.click();
+await tick();
+for (const [name, ok] of [["tasks: deleted schedule removed", taskSection().textContent.includes("No scheduled tasks yet")]]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
+store.tasksOpen.value = false;
+await tick();
+
 console.log(bad ? `\n${bad} FAILURES` : "\nall checks passed");
 process.exit(bad ? 1 : 0);

@@ -18,6 +18,7 @@ const agents = ref([]);
 const models = ref([]);
 const knowledgeBases = ref([]);
 const settingsOpen = ref(false);
+const tasksOpen = ref(false);
 // True while the user is working in the desk with a run still going: the panel fades
 // so it stops competing for attention, and any click on it brings it back.
 const dimmed = ref(false);
@@ -682,6 +683,7 @@ function requestScroll(force = false) {
 export function useStore() {
 	return {
 		settingsOpen,
+		tasksOpen,
 		dimmed,
 		modelLogo,
 		agentLogo,

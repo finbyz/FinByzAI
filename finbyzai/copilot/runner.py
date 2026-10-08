@@ -736,6 +736,13 @@ def publish(run: str, event: dict):
     the browser has finished subscribing to a channel whose name it only just learned.
     Every event carries `run` so a single stream subscription can route them.
     """
+    if event.get("type") == "done":
+        try:
+            from finbyzai.copilot.schedules import notify_result
+
+            notify_result(run, event)
+        except Exception:
+            frappe.log_error("Copilot task notification failed", frappe.get_traceback())
     payload = {**event, "run": run}
     frappe.publish_realtime(f"copilot:{run}", payload, user=frappe.session.user)
     frappe.publish_realtime(USER_CHANNEL, payload, user=frappe.session.user)

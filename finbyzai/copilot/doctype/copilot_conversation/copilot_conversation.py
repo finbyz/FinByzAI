@@ -9,6 +9,9 @@ from finbyzai.copilot import access
 
 class CopilotConversation(Document):
 	def on_trash(self):
+		if frappe.db.table_exists("Copilot Scheduled Task"):
+			frappe.db.set_value("Copilot Scheduled Task", {"last_conversation": self.name},
+				{"last_conversation": None, "last_run": None}, update_modified=False)
 		# Each turn's Copilot Run links back to this conversation, which blocks
 		# deletion with LinkExistsError unless those runs go first.
 		for name in frappe.get_all("Copilot Run", filters={"conversation": self.name}, pluck="name"):

@@ -4,6 +4,7 @@ import PanelHeader from "./components/PanelHeader.vue";
 import MessageList from "./components/MessageList.vue";
 import Composer from "./components/Composer.vue";
 import ChatHistorySidebar from "./components/ChatHistorySidebar.vue";
+import ScheduledTasks from "./components/ScheduledTasks.vue";
 import SettingsModal from "./components/settings/SettingsModal.vue";
 import { useStore } from "./store";
 
@@ -12,7 +13,7 @@ const props = defineProps({
 	onToggleFullscreen: { type: Function, default: null },
 });
 const store = useStore();
-const { loadInitial, settingsOpen, sidebarOpen, fullscreen } = store;
+const { loadInitial, settingsOpen, tasksOpen, sidebarOpen, fullscreen } = store;
 
 const composer = ref(null);
 
@@ -54,5 +55,6 @@ watch(fullscreen, (wide) => (sidebarOpen.value = wide), { immediate: true });
 		</div>
 
 		<SettingsModal v-model="settingsOpen" :store="store" />
+		<ScheduledTasks v-if="tasksOpen" :store="store" @close="tasksOpen = false" />
 	</div>
 </template>

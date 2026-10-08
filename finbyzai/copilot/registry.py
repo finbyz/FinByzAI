@@ -19,7 +19,7 @@ TOOL_MODULES = (
     "aggregate", "ask_user", "count", "create", "delete", "describe",
     "describe_report", "execute", "extract_file_content", "find_doctypes",
     "list_reports", "read", "remember", "run_action", "run_query",
-    "run_report", "search", "send_email", "update", "visualize",
+    "run_report", "schedule_task", "search", "send_email", "update", "visualize",
 )
 
 

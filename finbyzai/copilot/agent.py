@@ -192,6 +192,11 @@ def _site_context() -> str:
     """
     today = frappe.utils.getdate(frappe.utils.nowdate())
     lines = [f"SITE — today is {today.strftime('%A, %d %B %Y')}."]
+    lines.append(
+        f"The current local time is {frappe.utils.now_datetime().isoformat()} "
+        f"in timezone {frappe.utils.get_system_timezone()}. "
+        "For scheduled tasks use an explicit local date, time and IANA timezone."
+    )
 
     company = frappe.db.get_single_value("Global Defaults", "default_company")
     if company:
