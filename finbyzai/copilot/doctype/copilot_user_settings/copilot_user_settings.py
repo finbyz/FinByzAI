@@ -34,22 +34,22 @@ class CopilotUserSettings(Document):
 		self.instructions = text
 
 
-def can_manage_others() -> bool:
-	roles = set(frappe.get_roles())
+def can_manage_others(user: str | None = None) -> bool:
+	roles = set(frappe.get_roles(user or frappe.session.user))
 	return bool(roles & {"System Manager", "Copilot Admin"})
 
 
 def get_permission_query_conditions(user: str | None = None) -> str:
 	"""List view: a user sees their own row; an admin sees every row."""
 	user = user or frappe.session.user
-	if can_manage_others():
+	if can_manage_others(user):
 		return ""
 	return f"""`tabCopilot User Settings`.`user` = {frappe.db.escape(user)}"""
 
 
 def has_permission(doc, ptype=None, user: str | None = None) -> bool:
 	user = user or frappe.session.user
-	return bool(doc.user == user or can_manage_others())
+	return bool(doc.user == user or can_manage_others(user))
 
 
 def for_user(user: str | None = None) -> str:

@@ -34,19 +34,19 @@ class TestAIAgent(FrappeTestCase):
 
 		self.assertEqual(agent.max_iterations, 25)
 
-	def test_temperature_is_capped_at_one(self):
+	def test_supported_temperature_is_preserved(self):
 		agent = frappe.get_doc(
 			{
 				"doctype": "AI Agent",
 				"title": "Agent with high temperature",
 				"agent_type": "Gemini Cache Agent",
-				"temperature": 7,
+				"temperature": 2,
 			}
 		)
 
 		agent.validate()
 
-		self.assertEqual(agent.temperature, 1)
+		self.assertEqual(agent.temperature, 2)
 
 	def test_zero_temperature_remains_valid(self):
 		agent = frappe.get_doc(

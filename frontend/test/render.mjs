@@ -35,6 +35,7 @@ const $ = () => ({ on: (ev, fn) => (handlers[ev] = fn) });
 $.fn = {};
 
 const DATA = {
+	get_suggestions: { prompts: ["How are sales doing this year?"] },
 	get_agents: [{ name: "Copilot", title: "Copilot", llm: "gpt" }, { name: "Nayla", title: "Nayla BI" }],
 	get_models: [{ name: "m1", title: "Sonnet", provider: "Anthropic" }],
 	get_knowledge_bases: [],
@@ -53,7 +54,7 @@ const DATA = {
 };
 
 window.frappe = {
-	boot: { user: { first_name: "Sandeep" }, sysdefaults: { currency: "IDR" } },
+	boot: { copilot_enabled: true, user: { first_name: "Sandeep" }, sysdefaults: { currency: "IDR" } },
 	provide(path) {
 		let node = window.frappe;
 		for (const part of path.split(".").slice(1)) node = node[part] ||= {};
@@ -111,6 +112,12 @@ window.Element.prototype.scrollTo = function (options) {
 };
 
 window.eval(js);
+window.frappe.boot.copilot_enabled = false;
+handlers["app_ready"]?.();
+if (window.frappe.copilot.panel || window.document.getElementById("copilot-launcher")) {
+	throw new Error("Copilot mounted without access");
+}
+window.frappe.boot.copilot_enabled = true;
 handlers["app_ready"]?.();
 
 const store = window.frappe.copilot.panel.store;
@@ -262,7 +269,7 @@ store.messages.value.splice(0);
 await tick();
 for (const [name, ok] of [
 	["empty: greeting", root.textContent.includes("Hi Sandeep")],
-	["empty: suggestion from live tools", root.textContent.includes("sales doing this year")],
+	["empty: personalized suggestion from the API", root.textContent.includes("sales doing this year")],
 ]) { console.log(`${ok ? "ok  " : "FAIL"} ${name}`); if (!ok) bad++; }
 
 store.settingsOpen.value = true;
