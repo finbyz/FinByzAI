@@ -94,3 +94,45 @@ class TestAgentToolSelection(TestCase):
             outcome = runner._resolve_pending_call(doc)
         self.assertIn("delete", outcome)
         call.assert_not_called()
+
+    def test_enabled_tool_definitions_reach_provider_requests(self):
+        from langchain_core.messages import HumanMessage
+
+        from finbyzai.ai.generation import ProviderChatLiteLLM
+
+        model = ProviderChatLiteLLM(
+            model="openai/gpt-4o-mini", api_key="test", disable_streaming=False,
+        )
+        selected = registry.langchain_tools(["read"])
+        response = {
+            "choices": [{"message": {"role": "assistant", "content": "Done"}}],
+        }
+        chunk = {
+            "choices": [{"delta": {"role": "assistant", "content": "Done"}}],
+        }
+        for streaming in (False, True):
+            model.streaming = streaming
+            with (
+                self.subTest(streaming=streaming),
+                patch.object(agent, "model", return_value=model),
+                patch.object(agent, "tools", return_value=selected),
+                patch.object(
+                    ProviderChatLiteLLM, "completion_with_retry",
+                    return_value=iter([chunk]) if streaming else response,
+                ) as completion,
+            ):
+                bound = runner._bound_model(None, Mock())
+                messages = [HumanMessage(content="Find a customer")]
+                if streaming:
+                    list(bound.stream(messages))
+                else:
+                    bound.invoke(messages)
+
+                definitions = completion.call_args.kwargs["tools"]
+                self.assertEqual(len(definitions), 1)
+                definition = definitions[0]["function"]
+                self.assertEqual(definition["name"], "read")
+                self.assertEqual(definition["description"], selected[0].description)
+                self.assertIn("doctype", definition["parameters"]["properties"])
+                self.assertIn("doctype", definition["parameters"]["required"])
+                self.assertEqual(set(frappe.local.copilot_tools), {"read"})
