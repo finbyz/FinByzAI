@@ -67,7 +67,6 @@ const modelItems = computed(() => [
 function setAvailableAgents(agents) {
 	emit("edit", "available_agents", agents);
 	if (agents.length && !agents.includes(value("default_agent"))) emit("edit", "default_agent", null);
-	if (agents.length && !agents.includes(value("suggestion_agent"))) emit("edit", "suggestion_agent", null);
 }
 
 function setAvailableModels(models) {

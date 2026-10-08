@@ -78,7 +78,6 @@ class TestAgentToolSelection(TestCase):
         with (
             patch.object(setup, "_ensure_role_permissions"),
             patch.object(setup, "_ensure_agent"),
-            patch.object(setup, "_ensure_suggestion_agent"),
             patch.object(setup, "sync_ai_tools"),
             patch.object(setup, "_ensure_settings"),
             patch("frappe.get_doc") as get_doc,

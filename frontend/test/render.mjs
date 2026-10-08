@@ -53,7 +53,7 @@ const DATA = {
 };
 
 window.frappe = {
-	boot: { user: { first_name: "Sandeep" }, sysdefaults: { currency: "IDR" } },
+	boot: { copilot_enabled: true, user: { first_name: "Sandeep" }, sysdefaults: { currency: "IDR" } },
 	provide(path) {
 		let node = window.frappe;
 		for (const part of path.split(".").slice(1)) node = node[part] ||= {};
@@ -111,6 +111,12 @@ window.Element.prototype.scrollTo = function (options) {
 };
 
 window.eval(js);
+window.frappe.boot.copilot_enabled = false;
+handlers["app_ready"]?.();
+if (window.frappe.copilot.panel || window.document.getElementById("copilot-launcher")) {
+	throw new Error("Copilot mounted without access");
+}
+window.frappe.boot.copilot_enabled = true;
 handlers["app_ready"]?.();
 
 const store = window.frappe.copilot.panel.store;

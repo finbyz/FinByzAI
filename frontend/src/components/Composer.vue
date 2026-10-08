@@ -46,7 +46,7 @@ const {
 	removeAttachment,
 } = useStore();
 
-// What extract_file_content can actually read (copilot/tools/files.py).
+// What extract_file_content can actually read (copilot/ai_tools/extract_file_content.py).
 const ACCEPT = [
 	"pdf", "docx", "doc", "pptx", "xlsx", "xlsm", "xls", "csv",
 	"html", "htm", "txt", "md", "json", "xml",
