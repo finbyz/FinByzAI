@@ -261,7 +261,7 @@ import { PromptVariableEditor } from './PromptVariableEditor'
 
 interface AiAuthoringCatalog {
 	profiles: Array<{ name: string; title?: string; agent_type?: string; llm?: string; knowledge_base?: string }>
-	models?: Array<{ name: string; title?: string; model_name?: string; provider: string; modified?: string }>
+	models?: Array<{ name: string; title?: string; model_name?: string; provider: string; modified?: string; thinking_levels?: string[]; ignores_sampling?: boolean }>
 	providers?: string[]
 	knowledge_bases: Array<{ name: string; title?: string; description?: string }>
 	support_agent_available: boolean
@@ -334,7 +334,7 @@ function AiActionEditor({
 	// Profile mode remains for action.ai_support_agent, which has no inline form.
 	const isInline = !support
 	const selectedProfile = profiles.find((profile) => profile.name === String(config.ai_profile || ''))
-	const selectedModel = models.find((m) => m.name === String(config.model || ''))
+	const selectedModel = models.find((m) => m.name === String(config.model || models[0]?.name || ''))
 	const fieldValues = (Array.isArray(config.field_allowlist) ? config.field_allowlist : []).map(String)
 	const mode = support ? 'grounded_answer' : String(config.mode || 'summarize')
 	const outputFormat = String(config.output_format || 'text')
@@ -576,10 +576,20 @@ function AiActionEditor({
 						<input type="number" min="1" max="20" step="1" className={inputClass} value={Number(config.max_automatic_turns || 3)} onChange={(event) => update({ ...config, max_automatic_turns: Number(event.target.value) }, 'max_automatic_turns')} />
 					</div>
 				) : (
-					<div data-config-path="temperature">
-						<label className={labelClass}>Temperature (Creativity)</label>
-						<input type="number" min="0" max="1" step="0.1" className={inputClass} value={Number(config.temperature ?? 0.2)} onChange={(event) => update({ ...config, temperature: Number(event.target.value) }, 'temperature')} />
-					</div>
+					<>
+						<div data-config-path="thinking_level">
+							<label className={labelClass}>Thinking Level</label>
+							<select className={inputClass} value={String(config.thinking_level || 'Default')} onChange={(event) => update({ ...config, thinking_level: event.target.value }, 'thinking_level')}>
+								{['Default', 'Low', 'Medium', 'High'].map((level) => <option key={level} value={level} disabled={!(selectedModel?.thinking_levels || ['Default']).includes(level)}>{level}</option>)}
+							</select>
+							<Hint>Default uses the model's own thinking setting. Available levels depend on the model.</Hint>
+						</div>
+						<div data-config-path="temperature">
+							<label className={labelClass}>Temperature (Creativity)</label>
+							<input type="number" min="0" max="1" step="0.1" className={inputClass} value={Number(config.temperature ?? 0.2)} disabled={selectedModel?.ignores_sampling} onChange={(event) => update({ ...config, temperature: Number(event.target.value) }, 'temperature')} />
+							{selectedModel?.ignores_sampling && <Hint>This model uses its default sampling settings; temperature is ignored.</Hint>}
+						</div>
+					</>
 				)}
 			</div>
 			{support && (

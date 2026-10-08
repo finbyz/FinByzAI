@@ -6,6 +6,8 @@ import time
 from copy import deepcopy
 from typing import Any
 
+from finbyzai.ai.generation import GenerationPolicy, validate_generation
+
 import frappe
 from frappe import _
 from frappe.query_builder.functions import Sum
@@ -188,6 +190,7 @@ def build_profile_snapshot(
 		if cint(getattr(provider, "disabled", 0)):
 			raise AutomationError(_("The selected LLM Provider is disabled."))
 		
+		validate_generation(model.name, inline_config.get("thinking_level"), cint(inline_config.get("max_tokens")) or 1024)
 		system_prompt = str(inline_config.get("system_prompt") or "You are an intelligent ERP automation assistant.")[:20000]
 		user_prompt = str(inline_config.get("user_prompt") or "")[:20000]
 		for text in (system_prompt, user_prompt):
@@ -210,7 +213,8 @@ def build_profile_snapshot(
 			"user_prompt": user_prompt,
 			"output_format": str(inline_config.get("output_format") or "text"),
 			"messages": messages,
-			"temperature": min(max(flt(inline_config.get("temperature", 0.2)), 0), 0.7),
+			"thinking_level": inline_config.get("thinking_level") or "Default",
+			"temperature": min(max(flt(inline_config.get("temperature", 0.2)), 0), 2),
 			"max_tokens": cint(inline_config.get("max_tokens")) or 1024,
 			"knowledge": _knowledge_snapshot(selected_kb, execution_user),
 			"tools": [],
@@ -240,6 +244,7 @@ def build_profile_snapshot(
 		raise frappe.PermissionError(_("The workflow execution user cannot read the selected LLM Provider."))
 	if cint(getattr(provider, "disabled", 0)):
 		raise AutomationError(_("The selected LLM Provider is disabled."))
+	validate_generation(model.name, getattr(agent, "thinking_level", None), agent.max_tokens)
 	messages = []
 	for row in agent.messages or []:
 		if row.content_type != "text":
@@ -263,7 +268,8 @@ def build_profile_snapshot(
 		"provider": model.provider,
 		"model": model.name,
 		"messages": messages,
-		"temperature": min(max(flt(agent.temperature), 0), 0.7),
+		"thinking_level": getattr(agent, "thinking_level", None) or "Default",
+		"temperature": min(max(flt(agent.temperature), 0), 2),
 		"max_tokens": cint(agent.max_tokens) or None,
 		"knowledge": _knowledge_snapshot(selected_kb, execution_user),
 		"tools": [],
@@ -377,17 +383,20 @@ def validate_ai_node_binding(
 			raise AutomationError(_("Maximum automatic turns must be between 1 and 20."))
 	
 	if is_inline:
-		build_profile_snapshot(
+		snapshot = build_profile_snapshot(
 			execution_user=execution_user,
 			knowledge_base=str(config.get("knowledge_base") or "").strip() or None,
 			inline_config=config,
 		)
 	else:
-		build_profile_snapshot(
+		snapshot = build_profile_snapshot(
 			str(config.get("ai_profile") or ""),
 			execution_user=execution_user,
 			knowledge_base=str(config.get("knowledge_base") or "").strip() or None,
 		)
+	max_site_tokens = min(max(int_setting("ai_max_output_tokens", 2048), 128), 8192)
+	effective_tokens = min(cint(config.get("max_tokens") or snapshot.get("max_tokens") or max_site_tokens), max_site_tokens)
+	validate_generation(snapshot["model"], snapshot.get("thinking_level"), effective_tokens)
 	if (mode == "grounded_answer" or node_type == "action.ai_support_agent") and not (
 		str(config.get("knowledge_base") or "").strip()
 		or (config.get("ai_profile") and frappe.db.get_value("AI Agent", config.get("ai_profile"), "knowledge_base"))
@@ -422,7 +431,8 @@ def ai_authoring_catalog(*, execution_user: str, primary_doctype: str) -> dict:
 		):
 			provider_disabled = cint(frappe.db.get_value("LLM Provider", row.provider, "disabled") or 0)
 			if not provider_disabled:
-				models.append(dict(row))
+				policy = GenerationPolicy(row.name)
+				models.append({**dict(row), "thinking_levels": policy.levels, "ignores_sampling": policy.ignores_sampling})
 				if row.provider not in providers:
 					providers.append(row.provider)
 	except Exception:
@@ -837,7 +847,9 @@ def _invoke_profile(snapshot: dict, config: dict, context: dict, sources: list[d
 	max_site_tokens = min(max(int_setting("ai_max_output_tokens", 2048), 128), 8192)
 	max_tokens = min(cint(config.get("max_tokens") or snapshot.get("max_tokens") or max_site_tokens), max_site_tokens)
 	timeout = min(max(cint(config.get("timeout_seconds") or int_setting("ai_default_timeout_seconds", 60)), 10), 300)
+	validate_generation(snapshot["model"], snapshot.get("thinking_level"), max_tokens)
 	updates = {
+		"thinking_level": snapshot.get("thinking_level") or "Default",
 		"temperature": min(max(flt(snapshot.get("temperature")), 0), 2),
 		"max_tokens": max_tokens,
 		"request_timeout": timeout,

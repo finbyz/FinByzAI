@@ -4,7 +4,7 @@
 # import frappe
 from frappe.model.document import Document
 import frappe
-from langchain_litellm import ChatLiteLLM
+from finbyzai.ai.generation import ProviderChatLiteLLM
 from langchain_core.language_models.base import (
 	LanguageModelInput,
 )
@@ -37,8 +37,9 @@ class LLM(Document):
           		api_key=api_key
         	)
 		kwargs = {
-			"api_key": provider.get_password("api_key"),
+			"api_key": api_key,
 			"model": self.name,
+			"api_base": provider.api_base or None,
 		}
 		
 		# Override api_base for DeepSeek to avoid deprecated beta endpoint
@@ -46,7 +47,7 @@ class LLM(Document):
 			kwargs["api_base"] = "https://api.deepseek.com"
 			os.environ["DEEPSEEK_API_KEY"] = provider.get_password("api_key")
 			
-		return ChatLiteLLM(**kwargs)
+		return ProviderChatLiteLLM(**kwargs)
 
 
 	def get_embeding_function(self):

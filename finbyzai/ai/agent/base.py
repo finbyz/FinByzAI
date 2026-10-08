@@ -195,10 +195,17 @@ class FrappeAgentLLM(BaseAgentLLM):
         try:
             if self.agent_doc.agent_type == "Gemini Cache Agent":
                 cache_doc = frappe.get_doc("Gemini Cache", self.agent_doc.gemini_cache)
-                return cache_doc._llm
+                llm = cache_doc._llm
             else:
                 llm_doc = frappe.get_doc("LLM", self.agent_doc.llm)
-                return llm_doc.llm
+                llm = llm_doc.llm
+            if not hasattr(llm, "model_copy"):
+                return llm
+            return llm.model_copy(update={
+                "thinking_level": getattr(self.agent_doc, "thinking_level", None) or "Default",
+                "temperature": self.agent_doc.temperature,
+                "max_tokens": self.agent_doc.max_tokens or None,
+            })
         except Exception as e:
             frappe.log_error(f"Failed to get LLM for agent {self.agent_doc.name}: {e}")
             raise
