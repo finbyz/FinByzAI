@@ -20,6 +20,13 @@ class AIAgent(Document):
         super().__init__(*args, **kwargs)
     
     def validate(self):
+        from finbyzai.ai.generation import validate_generation
+
+        model = self.llm
+        if self.agent_type == "Gemini Cache Agent" and self.gemini_cache:
+            model = frappe.db.get_value("Gemini Cache", self.gemini_cache, "llm")
+        if model and self.agent_type != "Image Generation Agent":
+            validate_generation(model, self.get("thinking_level"), self.max_tokens)
         selected_tools = [row.tool for row in self.tools or [] if row.tool]
         if len(selected_tools) != len(set(selected_tools)):
             frappe.throw("Each AI Tool can only be selected once")

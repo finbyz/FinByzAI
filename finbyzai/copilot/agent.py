@@ -60,7 +60,13 @@ def model(agent, settings, override: str | None = None):
 
     # AI Agent's generation limits, when the underlying client accepts them.
     options = {}
-    if agent and agent.temperature:
+    if agent:
+        from finbyzai.ai.generation import validate_generation
+
+        level = getattr(agent, "thinking_level", None) or "Default"
+        validate_generation(name, level, agent.max_tokens)
+        options["thinking_level"] = level
+    if agent and agent.temperature is not None:
         options["temperature"] = float(agent.temperature)
     if agent and agent.max_tokens:
         options["max_tokens"] = int(agent.max_tokens)
@@ -261,7 +267,7 @@ def _summarize(agent, messages: list) -> list:
         return messages
 
     try:
-        llm = frappe.get_doc("LLM", agent.llm).llm
+        llm = model(agent, None)
         summary = _text(
             llm.invoke(
                 [

@@ -51,6 +51,7 @@ function applySchemaDefaults(schema, current = {}) {
 
 frappe.ui.form.on("AI Agent", {
     refresh(frm) {
+        frm.trigger("generation_controls");
         if (frm.doc.name) {
             frm.add_custom_button(__("Test Agent"), function() {
                 frm.trigger("show_test_dialog");
@@ -68,6 +69,7 @@ frappe.ui.form.on("AI Agent", {
             frm.set_value("llm_provider", null);
             frm.set_value("llm", null);
         }
+        frm.trigger("generation_controls");
         let fields_to_hide_and_clear = ['output_schema', 'lc_agent_type', 'tools'];
 
         let hide_fields = ["Image Generation Agent"].includes(frm.doc.agent_type);
@@ -77,6 +79,46 @@ frappe.ui.form.on("AI Agent", {
         });
     },
     
+    llm(frm) {
+        frm.trigger("generation_controls");
+    },
+
+    gemini_cache(frm) {
+        frm.trigger("generation_controls");
+    },
+
+    async generation_controls(frm) {
+        const request = (frm.generation_request || 0) + 1;
+        frm.generation_request = request;
+        let model = frm.doc.llm;
+        if (frm.doc.agent_type === "Gemini Cache Agent" && frm.doc.gemini_cache) {
+            const result = await frappe.db.get_value("Gemini Cache", frm.doc.gemini_cache, "llm");
+            model = result.message?.llm;
+        }
+        if (!model || frm.doc.agent_type === "Image Generation Agent") {
+            frm.set_df_property("thinking_level", "options", "Default\nLow\nMedium\nHigh");
+            frm.set_df_property("temperature", "read_only", false);
+            return;
+        }
+        const result = await frappe.call({
+            method: "finbyzai.ai.generation.generation_capabilities",
+            args: { model },
+        });
+        if (frm.generation_request !== request) return;
+        const controls = result.message;
+        const levels = [...controls.thinking_levels];
+        const selected = frm.doc.thinking_level || "Default";
+        if (!levels.includes(selected)) levels.push(selected);
+        frm.set_df_property("thinking_level", "options", levels.join("\n"));
+        frm.set_df_property("thinking_level", "description", controls.thinking_levels.includes(selected)
+            ? __("Default uses the model default. Available levels depend on the selected model.")
+            : __("The selected thinking level is unsupported. Choose a supported level before saving."));
+        frm.set_df_property("temperature", "read_only", controls.ignores_sampling);
+        frm.set_df_property("temperature", "description", controls.ignores_sampling
+            ? __("This model uses its default sampling settings; temperature is ignored.")
+            : __("Controls creativity where supported. Thinking models may ignore temperature."));
+    },
+
     llm_provider: function (frm) {
         frm.set_query('llm', function () {
             return {

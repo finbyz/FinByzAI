@@ -414,7 +414,10 @@ class AgentService:
                             }
                         },
                     )
-            model_updates = {"temperature": self.agent_doc.temperature}
+            model_updates = {
+                "temperature": self.agent_doc.temperature,
+                "thinking_level": getattr(self.agent_doc, "thinking_level", None) or "Default",
+            }
             if self.agent_doc.max_tokens:
                 model_updates["max_tokens"] = self.agent_doc.max_tokens
             if hasattr(llm, "model_copy"):

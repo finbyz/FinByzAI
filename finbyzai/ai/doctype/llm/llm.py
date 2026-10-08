@@ -4,7 +4,7 @@
 # import frappe
 from frappe.model.document import Document
 import frappe
-from langchain_litellm import ChatLiteLLM
+from finbyzai.ai.generation import ProviderChatLiteLLM
 from langchain_core.language_models.base import (
 	LanguageModelInput,
 )
@@ -34,7 +34,7 @@ class LLM(Document):
        			self.name,
           		api_key=api_key
         	)
-		return ChatLiteLLM(
+		return ProviderChatLiteLLM(
 			api_key = api_key,
 			model = self.name,
 			api_base = provider.api_base or None,

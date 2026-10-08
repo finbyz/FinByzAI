@@ -5,7 +5,7 @@ import frappe
 from frappe.model.document import Document
 from frappe.utils.file_manager import get_file_path
 from finbyzai.ai.doctype.gemini_cache.cache import create_gemini_cache,delete_cache
-from langchain_google_genai.chat_models import ChatGoogleGenerativeAI
+from finbyzai.ai.generation import ProviderChatLiteLLM
 
 class GeminiCache(Document):
     @property 
@@ -13,11 +13,12 @@ class GeminiCache(Document):
         provider = frappe.get_value("LLM", self.llm,'provider') 
         provider = frappe.get_doc("LLM Provider", provider) 
         
-        model_name = self.llm.split('/',2)[1]
-        return ChatGoogleGenerativeAI(
-            model = model_name,
-            google_api_key = provider.get_password("api_key"),
-            cached_content=self.cache_name
+        model_name = self.llm.removeprefix("gemini/")
+        return ProviderChatLiteLLM(
+            model="gemini/" + model_name,
+            api_key=provider.get_password("api_key"),
+            api_base=provider.api_base or None,
+            model_kwargs={"cached_content": self.cache_name},
         )
     
     @frappe.whitelist()

@@ -22,6 +22,7 @@
   "advanced_section",
   "verbose_mode",
   "max_iterations",
+  "thinking_level",
   "temperature",
   "max_tokens",
   "chat_messages_section",
@@ -157,6 +158,15 @@
    "fieldname": "max_tokens",
    "fieldtype": "Int",
    "label": "Max Tokens"
+  },
+  {
+   "fieldname": "thinking_level",
+   "fieldtype": "Select",
+   "label": "Thinking Level",
+   "options": "Default\nLow\nMedium\nHigh",
+   "default": "Default",
+   "depends_on": "eval:doc.agent_type != 'Image Generation Agent'",
+   "description": "Default uses the model default. Available levels depend on the selected model."
   }
  ],
  "grid_page_length": 50,
