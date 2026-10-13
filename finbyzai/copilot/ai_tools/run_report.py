@@ -33,8 +33,18 @@ def run_report_tool(report: str, filters: dict | None = None, limit: int = BLOCK
     limit = max(1, min(int(limit or BLOCK_ROWS), BLOCK_ROWS))
     filters = _apply_filter_defaults(report, dict(filters or {}))
     result = run_query_report(
-        report, filters=filters, user=frappe.session.user, are_default_filters=False
+        report, filters=dict(filters), user=frappe.session.user, are_default_filters=False
     )
+    # Prepared results belong to a user and an exact filter set. A cache miss
+    # means the report must be executed, not that its data is empty.
+    if result.get("prepared_report") and not result.get("doc"):
+        result = run_query_report(
+            report,
+            filters=dict(filters),
+            user=frappe.session.user,
+            are_default_filters=False,
+            ignore_prepared_report=True,
+        )
 
     columns = _normalize_columns(result.get("columns") or [])
     rows = _normalize_rows(result.get("result") or [], columns)

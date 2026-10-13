@@ -4,7 +4,7 @@
 """Direct tool authorization tests; no site or database writes required."""
 
 from unittest import TestCase
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 import frappe
 
@@ -64,6 +64,55 @@ class TestReportPermissions(TestCase):
             self.report.name, filters={}, user="restricted@example.com", are_default_filters=False
         )
         self.assertEqual(result["row_count"], 0)
+
+    def test_missing_prepared_result_runs_live_as_current_user(self):
+        self.defaults.return_value = {"from_date": "2026-08-01", "to_date": "2026-10-13"}
+        self.run.side_effect = [
+            {"prepared_report": True, "doc": None},
+            {
+                "columns": [{"fieldname": "customer", "label": "Customer"}],
+                "result": [{"customer": "Allowed Customer"}],
+            },
+        ]
+        with patch.object(frappe, "session", frappe._dict(user="restricted@example.com")):
+            result = run_report.run_report_tool(self.report.name)
+        self.assertEqual(self.run.call_args_list, [
+            call(
+                self.report.name, filters=self.defaults.return_value,
+                user="restricted@example.com", are_default_filters=False,
+            ),
+            call(
+                self.report.name, filters=self.defaults.return_value,
+                user="restricted@example.com", are_default_filters=False,
+                ignore_prepared_report=True,
+            ),
+        ])
+        self.assertEqual(result["row_count"], 1)
+        self.assertEqual(result["rows"], [{"customer": "Allowed Customer"}])
+        self.assertEqual(result["_blocks"][0]["rows"], result["rows"])
+
+    def test_completed_empty_prepared_result_is_not_rerun(self):
+        self.run.return_value = {
+            "prepared_report": True,
+            "doc": {"name": "completed-prepared-report"},
+            "columns": [{"fieldname": "customer", "label": "Customer"}],
+            "result": [],
+        }
+        with patch.object(frappe, "session", frappe._dict(user="restricted@example.com")):
+            result = run_report.run_report_tool(self.report.name)
+        self.run.assert_called_once()
+        self.assertEqual(result["row_count"], 0)
+        self.assertEqual(result["columns"][0]["key"], "customer")
+
+    def test_live_fallback_permission_error_is_not_hidden(self):
+        self.run.side_effect = [
+            {"prepared_report": True, "doc": None},
+            frappe.PermissionError("Report data is restricted"),
+        ]
+        with patch.object(frappe, "session", frappe._dict(user="restricted@example.com")):
+            with self.assertRaises(frappe.PermissionError):
+                run_report.run_report_tool(self.report.name)
+        self.assertEqual(self.run.call_count, 2)
 
     def test_discovery_hides_report_without_read_permission(self):
         self.permission.side_effect = lambda dt, ptype, **kwargs: ptype != "read"
