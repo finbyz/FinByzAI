@@ -11,6 +11,9 @@ from langchain_core.language_models.base import (
 )
 from langchain_core.runnables import RunnableConfig
 
+# Tried in order when the chosen OpenRouter image model is rate-limited or unavailable.
+OPENROUTER_IMAGE_FALLBACKS = ["google/gemini-3-pro-image", "google/gemini-3.1-flash-image"]
+
 
 @dataclass
 class ImageResponse:
@@ -321,8 +324,12 @@ class ImageGeneration:
             "Content-Type": "application/json"
         }
 
+        # OpenRouter moves to the next model when one is rate-limited or down,
+        # which happens often with newly released image models.
+        fallbacks = [m for m in OPENROUTER_IMAGE_FALLBACKS if m != self.model]
         data = {
             "model": self.model,
+            "models": [self.model, *fallbacks][:3],
             "messages": [{"role": "user", "content": prompt}],
             "modalities": ["image", "text"]
         }
@@ -354,7 +361,7 @@ class ImageGeneration:
             model=self.full_model,
             provider="openrouter",
             prompt=prompt,
-            metadata={"created": result.get("created")}
+            metadata={"created": result.get("created"), "served_by": result.get("model")}
         )
 
 
