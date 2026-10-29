@@ -50,7 +50,7 @@ class GenerationPolicy:
             return False
         if self.info.get("supports_none_reasoning_effort"):
             return False
-        return bool(re.search(r"(?:^|/)openai/(?:o[134](?:-|$)|gpt-5(?:[.-]|$))", self.native))
+        return bool(re.search(r"(?:^|/)openai/(?:o[134](?:-|$)|gpt-[56](?:[.-]|$))", self.native))
 
     def validate(self, level):
         level = normalize_level(level)
@@ -105,7 +105,7 @@ class GenerationPolicy:
 
     def _known_reasoning_model(self):
         return bool(re.search(
-            r"gemini-(?:2\.5|[3-9])(?:[.-]|$)|(?:^|/)openai/(?:o[134](?:-|$)|gpt-5(?:[.-]|$))"
+            r"gemini-(?:2\.5|[3-9])(?:[.-]|$)|(?:^|/)openai/(?:o[134](?:-|$)|gpt-[56](?:[.-]|$))"
             r"|anthropic/claude-(?:3-7|(?:sonnet|opus)-4)", self.native
         ))
 
