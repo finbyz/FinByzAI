@@ -12,6 +12,7 @@ from finbyzai.ai.memory.base import (
 import frappe
 from frappe.model.document import Document
 from langchain_litellm.chat_models import ChatLiteLLM
+from langchain_core.exceptions import OutputParserException
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
@@ -215,6 +216,29 @@ class AgentService:
             output_parser = PydanticOutputParser(pydantic_object=dynamic_model)
             return output_parser
         return None
+
+    # Sent once when a structured reply could not be parsed (see _invoke_with_json_retry).
+    # No braces: the text goes through ChatPromptTemplate.
+    JSON_RETRY_REMINDER = (
+        "Your previous reply was not valid JSON. Reply again with only the JSON object "
+        "described in the format instructions: no other text, no explanation, no code fences."
+    )
+
+    def _invoke_with_json_retry(self, chain, messages, llm, output_parser, format_instructions, input_vars, invoke_kwargs):
+        """Invoke the chain; if a structured (JSON) reply can't be parsed, ask once more.
+
+        Models occasionally answer in prose (e.g. translating a transcript) or return an
+        empty reply instead of the requested JSON. One retry with an explicit reminder
+        usually succeeds, so a single bad reply no longer fails the whole run.
+        """
+        try:
+            return chain.invoke(input_vars, **invoke_kwargs)
+        except OutputParserException:
+            if not format_instructions:
+                raise
+            frappe.logger().warning(f"[AI] {self.agent_doc.name}: reply was not valid JSON, retrying once")
+            retry_prompt = ChatPromptTemplate.from_messages([*messages, ("human", self.JSON_RETRY_REMINDER)])
+            return (retry_prompt | llm | output_parser).invoke(input_vars, **invoke_kwargs)
 
     def _get_output_parser_and_instructions(self):
         """Return (output_parser, format_instructions) tuple for structured output."""
@@ -583,7 +607,9 @@ class AgentService:
                 **kwargs,
             }
             invoke_kwargs = {"config": config} if config else {}
-            response = chain.invoke(input_vars, **invoke_kwargs)
+            response = self._invoke_with_json_retry(
+                chain, messages, llm, output_parser, format_instructions, input_vars, invoke_kwargs
+            )
 
             # Auto-save to memory
             if memory and query and response:
@@ -614,7 +640,8 @@ class AgentService:
             prompt = ChatPromptTemplate.from_messages(messages)
 
             output_parser, format_instructions = self._get_output_parser_and_instructions()
-            chain = prompt | self.get_llm() | output_parser
+            llm = self.get_llm()
+            chain = prompt | llm | output_parser
 
             input_vars = {
                 "format_instructions": format_instructions,
@@ -623,7 +650,9 @@ class AgentService:
             }
 
             invoke_kwargs = {"config": config} if config else {}
-            response = chain.invoke(input_vars, **invoke_kwargs)
+            response = self._invoke_with_json_retry(
+                chain, messages, llm, output_parser, format_instructions, input_vars, invoke_kwargs
+            )
 
             # Auto-save to memory
             if memory and query and response:
