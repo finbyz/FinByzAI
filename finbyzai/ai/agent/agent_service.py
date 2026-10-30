@@ -1,5 +1,6 @@
 from enum import Enum
 import json
+import time
 from typing import Any, Optional, Union
 from finbyzai.ai.agent.agent_as_tool import AgentAsTool
 from finbyzai.ai.agent.builtin_tools import BuiltinToolCompiler
@@ -224,6 +225,8 @@ class AgentService:
         "described in the format instructions: no other text, no explanation, no code fences."
     )
 
+    EMPTY_REPLY_RETRY_DELAY_SECONDS = 10
+
     def _invoke_with_json_retry(self, chain, messages, llm, output_parser, format_instructions, input_vars, invoke_kwargs):
         """Invoke the chain; if a structured (JSON) reply can't be parsed, ask once more.
 
@@ -233,10 +236,14 @@ class AgentService:
         """
         try:
             return chain.invoke(input_vars, **invoke_kwargs)
-        except OutputParserException:
+        except OutputParserException as exc:
             if not format_instructions:
                 raise
             frappe.logger().warning(f"[AI] {self.agent_doc.name}: reply was not valid JSON, retrying once")
+            if not (getattr(exc, "llm_output", None) or "").strip():
+                # an empty reply is the provider dropping the request; an instant retry
+                # usually gets another empty one
+                time.sleep(self.EMPTY_REPLY_RETRY_DELAY_SECONDS)
             retry_prompt = ChatPromptTemplate.from_messages([*messages, ("human", self.JSON_RETRY_REMINDER)])
             return (retry_prompt | llm | output_parser).invoke(input_vars, **invoke_kwargs)
 

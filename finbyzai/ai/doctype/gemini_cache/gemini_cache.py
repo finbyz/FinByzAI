@@ -76,7 +76,7 @@ class GeminiCache(Document):
                         text_content.append(file.read())
 
                 elif file_path.endswith(".pdf"):
-                    from PyPDF2 import PdfReader
+                    from pypdf import PdfReader
                     reader = PdfReader(file_path)
                     pdf_text = "\n".join([page.extract_text() or "" for page in reader.pages])
                     text_content.append(pdf_text)
