@@ -264,7 +264,7 @@ class TestCopilotAggregatePeriods(FrappeTestCase):
 			month, alias = _group_expression("ToDo", "month:creation")
 			week, week_alias = _group_expression("ToDo", "week:creation")
 			query = DatabaseQuery("ToDo").execute(
-				fields=[f"{month} as {alias}", "count(name) as value"],
+				fields=[f"{month} as {alias}", {"COUNT": "name", "as": "value"}],
 				group_by=alias,
 				order_by=f"{alias} asc",
 				ignore_permissions=True,
