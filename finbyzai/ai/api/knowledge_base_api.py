@@ -1,7 +1,6 @@
 # Copyright (c) 2025, Finbyz Tech Pvt Ltd and contributors
 # For license information, please see license.txt
 
-from finbyzai.ai.doctype.knowledge_base.knowledge_base import get_absolute_file_path
 import frappe
 from frappe import _
 import json
@@ -471,19 +470,14 @@ def delete_document(kb_name: str, row_name: str, delete_from_vector_store: bool 
 					indicator="orange"
 				)
 		
-		# Delete the file from file system if it exists
+		# Delete the File record; Frappe removes the file from disk unless another File uses it
 		file_deleted = False
 		if doc_to_delete.file:
 			try:
-				file_path = get_absolute_file_path(doc_to_delete.file)
-				if os.path.exists(file_path):
-					os.remove(file_path)
-					file_deleted = True
-				
-				# Also delete the File doctype record
 				file_doc_name = frappe.db.get_value("File", {"file_url": doc_to_delete.file})
 				if file_doc_name:
 					frappe.delete_doc("File", file_doc_name, ignore_permissions=True)
+					file_deleted = True
 			except Exception as e:
 				frappe.log_error(
 					f"Error deleting file: {str(e)}", 

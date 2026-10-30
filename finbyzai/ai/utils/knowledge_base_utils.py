@@ -7,7 +7,7 @@ These functions are decoupled from the Knowledge Document class for reusability.
 """
 from pathlib import Path
 import tempfile
-import fitz
+import pymupdf
 import frappe
 import os
 import csv
@@ -368,7 +368,7 @@ def extract_pdf_to_text(file_path: str) -> Tuple[bool, Optional[str], Optional[s
         
         doc = None
         try:
-            doc = fitz.open(file_path)
+            doc = pymupdf.open(file_path)
             text_content = []
             
             for page_num in range(len(doc)):
