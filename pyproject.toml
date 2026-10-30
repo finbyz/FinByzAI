@@ -15,10 +15,13 @@ dependencies = [
     "langchain-community~=0.4.2",
     "langchain-protocol~=0.0.20",
 
-    "langchain-litellm~=0.11.2",
-    "litellm>=1.106.6,<2",
-    "langchain-google-genai~=4.3.7",
-    "langchain-openai~=1.7.3",
+    "langchain-litellm~=0.6.6",
+    "litellm>=1.95.0,<2",
+    # litellm.completion() lazily imports its MCP handler, which hard-imports
+    # mcp.types; mcp ships only as a litellm extra, so pin it explicitly.
+    "mcp>=2.2.0,<3",
+    "langchain-google-genai~=2.1.12",
+    "langchain-openai~=1.2.2",
 
     "langchain-chroma~=1.1.0",
     "langchain-pinecone~=0.2.13",
