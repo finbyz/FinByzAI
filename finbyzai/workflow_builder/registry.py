@@ -595,39 +595,6 @@ def is_eligible_doctype(doctype: str, *, permission_type: str = "read", user: st
 	return bool(doctype_eligibility(doctype, permission_type=permission_type, user=user)["available"])
 
 
-def eligible_doctypes(
-	*,
-	permission_type: str = "read",
-	user: str | None = None,
-	search: str | None = None,
-) -> list[dict]:
-	needle = str(search or "").strip()
-	or_filters = None
-	if needle:
-		like = f"%{needle}%"
-		or_filters = [["DocType", "name", "like", like], ["DocType", "module", "like", like]]
-	rows = frappe.get_list(
-		"DocType",
-		filters={"istable": 0, "issingle": 0},
-		or_filters=or_filters,
-		fields=["name", "module", "is_submittable", "is_virtual"],
-		order_by="name asc",
-		ignore_permissions=True,
-		limit=0,
-	)
-	return [
-		{
-			"name": row.name,
-			"label": _(row.name),
-			"module": row.module,
-			"is_submittable": bool(row.is_submittable),
-			"permission_type": permission_type,
-		}
-		for row in rows
-		if not row.is_virtual and is_eligible_doctype(row.name, permission_type=permission_type, user=user)
-	]
-
-
 def eligible_doctype_page(
 	*,
 	permission_type: str = "read",

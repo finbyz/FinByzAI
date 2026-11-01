@@ -31,10 +31,6 @@ def get_adapter(store_name: str) -> Type[BaseVectorStore]:
         raise ValueError(f"No adapter registered for vector store '{store_name}'")
     return adapter_cls
 
-def available_vector_stores() -> List[str]:
-    """Return list of registered store names."""
-    return list(_VECTOR_STORE_REGISTRY.keys())
-
 
 def create_vector_store(store_name: str, kb_name: str, description: str, embeddings: Any, api_key: str = None, **kwargs) -> BaseVectorStore:
     """

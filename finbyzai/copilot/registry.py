@@ -66,10 +66,6 @@ def call(name, arguments=None):
     return run_guarded(name, spec["fn"], arguments or {})
 
 
-def needs_confirmation(name):
-    return get(name)["confirm"]
-
-
 def label_for(name):
     """Present-tense activity label, e.g. "Reading DocType Meta". The panel shows this
     on the collapsible activity line; it lives here so a live run and a reloaded

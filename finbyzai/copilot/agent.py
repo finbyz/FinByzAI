@@ -123,20 +123,6 @@ def confirming_tools(configured: dict) -> set:
     }
 
 
-def knowledge_tool(agent, knowledge_base=None):
-    """A Knowledge Base as a tool, via finbyzai's own vector-store adapter."""
-    name = knowledge_base or (agent.knowledge_base if agent else None)
-    if not name:
-        return None
-    try:
-        name = access.require_read("Knowledge Base", name, label="knowledge base")
-        store = frappe.get_doc("Knowledge Base", name).get_vector_store()
-        return store.as_tool()
-    except Exception:
-        frappe.log_error(f"Copilot: knowledge base {name} unavailable", frappe.get_traceback())
-        return None
-
-
 def limits(agent, settings):
     return {
         "max_iterations": int(

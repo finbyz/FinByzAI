@@ -362,11 +362,22 @@ def _get_embeddings(kb: KnowledgeBase):
 @frappe.whitelist()
 def process_knowledge_base(kb_name):
     """
-    Whitelisted endpoint: enqueue a background job to process a Knowledge Base.
+    Whitelisted endpoint (Knowledge Base form): queue processing of a Knowledge Base.
+    Processing calls paid embedding APIs, so the caller needs write access to it.
     """
     if not frappe.db.exists("Knowledge Base", kb_name):
         frappe.throw(f"Knowledge Base '{kb_name}' not found.")
+    frappe.has_permission("Knowledge Base", "write", kb_name, throw=True)
 
+    return queue_knowledge_base_processing(kb_name)
+
+
+def queue_knowledge_base_processing(kb_name):
+    """
+    Internal: mark the Knowledge Base queued and enqueue the processing job.
+    Used by the form endpoint above and by copilot's remember tool, which checks
+    the user's access itself before adding a note.
+    """
     current_status = frappe.db.get_value("Knowledge Base", kb_name, "status")
 
     if current_status == STATUS_IN_PROGRESS:
@@ -525,11 +536,27 @@ def fetch_sitemap_urls(sitemap_url):
     """
     Fetch all page URLs from a sitemap XML.
     Recursively follows sub-sitemaps in sitemap index files.
+
+    The server makes these requests, so only users who can edit Knowledge Bases may
+    call it, and every URL (including sub-sitemaps and redirects) must resolve to a
+    public address: no localhost, private networks or the cloud metadata service.
     """
     import requests
     import xml.etree.ElementTree as ET
+    from frappe.utils.data import validate_egress_url
 
+    frappe.has_permission("Knowledge Base", "write", throw=True)
     visited = set()
+
+    def _get_public(url, max_redirects=3):
+        for _ in range(max_redirects + 1):
+            validate_egress_url(url)
+            response = requests.get(url, timeout=10, allow_redirects=False)
+            if response.is_redirect and response.headers.get("location"):
+                url = requests.compat.urljoin(url, response.headers["location"])
+                continue
+            return response
+        raise ValueError("Too many redirects")
 
     def _fetch(url):
         if not url or url in visited:
@@ -537,7 +564,7 @@ def fetch_sitemap_urls(sitemap_url):
         visited.add(url)
 
         try:
-            response = requests.get(url, timeout=10)
+            response = _get_public(url)
             response.raise_for_status()
         except Exception as e:
             frappe.log_error(

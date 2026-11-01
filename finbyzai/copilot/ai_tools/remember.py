@@ -47,7 +47,7 @@ def remember_tool(fact: str, category: str | None = None) -> dict:
 
     # finbyzai's pipeline embeds unprocessed notes; queue it so recall works soon.
     frappe.enqueue(
-        "finbyzai.ai.doctype.knowledge_base.knowledge_base.process_knowledge_base",
+        "finbyzai.ai.doctype.knowledge_base.knowledge_base.queue_knowledge_base_processing",
         queue="long",
         enqueue_after_commit=True,
         kb_name=kb_name,

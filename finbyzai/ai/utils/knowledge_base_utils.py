@@ -37,20 +37,6 @@ def get_file_extension(file_path: str) -> Optional[str]:
     return os.path.splitext(file_path.lower())[1]
 
 
-def is_supported_file_type(file_path: str) -> bool:
-    """
-    Check if the file type is supported for text extraction.
-    
-    Args:
-        file_path: Path or URL of the file
-        
-    Returns:
-        True if file type is supported, False otherwise
-    """
-    ext = get_file_extension(file_path)
-    return ext in SUPPORTED_FILE_EXTENSIONS
-
-
 def is_web_url(file_path: str) -> bool:
     """
     Check if the given path is a web URL.
@@ -525,24 +511,5 @@ def extract_text_from_source(source: str, source_type: Optional[str] = None) -> 
             'source_type': 'file',
             'file_type': file_type
         }
-
-
-def extract_text_from_url(file_url: str, file_type: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Legacy function - maintained for backward compatibility.
-    Use extract_text_from_source for new code.
-    
-    Args:
-        file_url: File URL from Frappe
-        file_type: File extension override (e.g., '.pdf')
-        
-    Returns:
-        Dictionary containing:
-            - success (bool): Whether extraction succeeded
-            - content (str | None): Extracted text content
-            - error (str | None): Error message if failed
-            - file_type (str | None): Detected or provided file type
-    """
-    return extract_text_from_source(file_url, 'file')
 
 

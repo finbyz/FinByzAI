@@ -15,6 +15,3 @@ def create_embedding(provider_name: str, **kwargs) -> BaseEmbedding:
     if provider not in _registry:
         raise ValueError(f"Embedding provider '{provider_name}' not registered. Available: {list(_registry.keys())}")
     return _registry[provider](**kwargs)
-
-def available_embeddings():
-    return list(_registry.keys())
