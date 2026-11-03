@@ -91,8 +91,12 @@ class AgentService:
         Convert stored messages into LangChain message objects compatible with ChatPromptTemplate.
         Message format:
         - type: system | human | ai
-        - content_type: text | image | file
+        - content_type: text | image | audio | file (alias: document)
         - content: raw value (text, URL, filepath, base64)
+
+        Media content may be templated, e.g. content "{recording_base64}" with
+        content_type "audio", so the file is supplied per invoke() instead of
+        being fixed on the agent record.
         
         Returns a list of tuples (role, content) suitable for ChatPromptTemplate.from_messages()
         """
@@ -140,7 +144,32 @@ class AgentService:
                     parts["mime_type"] = mime_type
                 content_parts.append(parts)
      
-            elif msg.content_type == "file":
+            elif msg.content_type == "audio":
+                input_value = (msg.content or "").strip()
+
+                if input_value.startswith("base64:"):
+                    source_type, audio_content = "base64", input_value[len("base64:"):]
+                elif input_value.startswith("file-id:"):
+                    source_type, audio_content = "file_id", input_value[len("file-id:"):]
+                elif input_value.startswith("url:"):
+                    source_type, audio_content = "url", input_value[len("url:"):]
+                elif input_value.startswith(("http://", "https://")):
+                    source_type, audio_content = "url", input_value
+                else:
+                    # Bare value, including a template variable like {recording_base64}
+                    source_type, audio_content = "base64", input_value
+
+                audio_part = {
+                    "type": "audio",
+                    source_type: audio_content,
+                }
+                if source_type == "base64":
+                    audio_part["mime_type"] = (
+                        getattr(msg, "mime_type", None) or "audio/mp3"
+                    )
+                content_parts.append(audio_part)
+
+            elif msg.content_type in ("file", "document"):
                 doc_content = msg.content
                 if doc_content:
                     if doc_content.startswith(("http://", "https://")):
@@ -157,7 +186,7 @@ class AgentService:
                         })
                     else:
                         # Assume it's a file path or base64
-                        mime_type = getattr(msg, 'mime_type', 'application/pdf')
+                        mime_type = getattr(msg, 'mime_type', None) or 'application/pdf'
                         content_parts.append({
                             "type": "document",
                             "base64": doc_content,

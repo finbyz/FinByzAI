@@ -8,7 +8,8 @@
  "field_order": [
   "type",
   "content_type",
-  "content"
+  "content",
+  "mime_type"
  ],
  "fields": [
   {
@@ -31,7 +32,14 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Content Type",
-   "options": "text\nimage\ndocument"
+   "options": "text\nimage\ndocument\naudio"
+  },
+  {
+   "fieldname": "mime_type",
+   "fieldtype": "Data",
+   "label": "Mime Type",
+   "depends_on": "eval:['audio','document'].includes(doc.content_type)",
+   "description": "Media type of the content, e.g. audio/mp3 or application/pdf. Defaults to audio/mp3 for audio and application/pdf for documents."
   }
  ],
  "grid_page_length": 50,
