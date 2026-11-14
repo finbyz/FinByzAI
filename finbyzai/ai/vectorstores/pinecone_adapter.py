@@ -6,6 +6,7 @@ from langchain_core.tools import create_retriever_tool
 from langchain_core.tools import Tool
 from pinecone import Pinecone, ServerlessSpec
 import frappe
+import hashlib
 import os
 import re
 from langchain_core.tools import tool
@@ -28,11 +29,29 @@ class PineconeAdapter(BaseVectorStore):
         # Sanitize index name (Pinecone requirements: lowercase, alphanumeric, hyphens)
         index_name = self._sanitize_index_name(kb_name)
 
-        # Initialize Pinecone and ensure index exists
-        self._ensure_index_exists(index_name, embeddings)
+        # A new web worker would otherwise spend ~2 s on list_indexes + describe_index
+        # before its first search. Once the index is known to exist, remember its
+        # host in Redis (per index and API key) and build the store from it.
+        api_key_hash = hashlib.sha256((os.environ.get("PINECONE_API_KEY") or "").encode()).hexdigest()[:16]
+        host_cache_key = f"finbyzai:pinecone_host:{index_name}:{api_key_hash}"
+        host = None
+        try:
+            host = frappe.cache.get_value(host_cache_key)
+        except Exception:
+            pass
 
-        # Initialize the vector store
-        self.vs = PineconeVectorStore(index_name=index_name, embedding=embeddings)
+        if host:
+            self.vs = PineconeVectorStore(index_name=index_name, embedding=embeddings, host=host)
+        else:
+            # Initialize Pinecone and ensure index exists
+            self._ensure_index_exists(index_name, embeddings)
+
+            # Initialize the vector store
+            self.vs = PineconeVectorStore(index_name=index_name, embedding=embeddings)
+            try:
+                frappe.cache.set_value(host_cache_key, self.vs._index_host, expires_in_sec=24 * 3600)
+            except Exception:
+                pass
 
     def _sanitize_index_name(self, name: str) -> str:
         """Convert name to valid Pinecone index name format."""
