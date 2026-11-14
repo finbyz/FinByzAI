@@ -1,0 +1,23 @@
+{
+ "doctype": "Page",
+ "name": "automation-workflow-designer",
+ "page_name": "automation-workflow-designer",
+ "title": "Workflow designer",
+ "module": "Workflow Builder",
+ "standard": "Yes",
+ "system_page": 0,
+ "roles": [
+  {
+   "role": "Automation Builder"
+  },
+  {
+   "role": "Automation Publisher"
+  },
+  {
+   "role": "Automation Operator"
+  },
+  {
+   "role": "System Manager"
+  }
+ ]
+}

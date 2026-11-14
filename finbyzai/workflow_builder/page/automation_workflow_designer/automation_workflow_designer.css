@@ -1,0 +1,5 @@
+.automation-workflow-designer { padding: 0 !important; overflow: hidden; }
+.automation-workflow-designer-frame { display: block; width: 100%; height: calc(100dvh - 110px); min-height: 600px; border: 0; background: var(--fg-color); }
+@media (max-width: 767px) {
+ .automation-workflow-designer-frame { height: calc(100dvh - 100px); min-height: 480px; }
+}
