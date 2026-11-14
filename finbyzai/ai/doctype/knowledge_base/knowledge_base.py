@@ -1,6 +1,9 @@
 # Copyright (c) 2025, Finbyz Tech Pvt Ltd and contributors
 # For license information, please see license.txt
 
+import hashlib
+import time
+
 import frappe
 from frappe.model.document import Document
 
@@ -14,6 +17,14 @@ from finbyzai.ai.utils.knowledge_base_utils import extract_text_from_source
 STATUS_QUEUE = "Queue"
 STATUS_IN_PROGRESS = "In Progress"
 STATUS_COMPLETED = "Completed"
+
+# Per-process cache of Pinecone vector stores. Building one costs a Pinecone
+# list_indexes call and fresh HTTPS connections (~1-2 s per chatbot reply);
+# reusing it keeps the connections warm (query 1.2 s -> 0.2 s). Keyed on the KB's
+# modified time and API key, and expired after a few minutes so a changed
+# Pinecone key is picked up without a restart. Web workers are single-threaded.
+_VECTOR_STORE_CACHE = {}
+_VECTOR_STORE_TTL = 600
 
 
 class KnowledgeBase(Document):
@@ -102,13 +113,30 @@ class KnowledgeBase(Document):
 
         api_key = _get_provider_api_key(self)
 
-        return create_vector_store(
+        cache_key = None
+        if store_name == "pinecone":
+            cache_key = (
+                frappe.local.site,
+                self.name,
+                str(self.modified),
+                hashlib.sha256((api_key or "").encode()).hexdigest(),
+            )
+            cached = _VECTOR_STORE_CACHE.get(cache_key)
+            if cached and time.monotonic() - cached[0] < _VECTOR_STORE_TTL:
+                return cached[1]
+
+        store = create_vector_store(
             store_name=store_name,
             kb_name=self.name,
             description=self.description or "",
             embeddings=emb,
             api_key=api_key,
         )
+        if cache_key:
+            if len(_VECTOR_STORE_CACHE) >= 16:  # stale keys after KB edits; keep it small
+                _VECTOR_STORE_CACHE.clear()
+            _VECTOR_STORE_CACHE[cache_key] = (time.monotonic(), store)
+        return store
 
     # ── Core processing ───────────────────────────────────────────────────────
 
