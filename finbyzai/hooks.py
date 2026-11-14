@@ -18,8 +18,8 @@ on_session_creation = "finbyzai.workflow_builder.integrations.capture_customer_p
 # app_include_js = "/assets/finbyzai/js/finbyzai.js"
 
 # Frappe resolves these bundle names to content-hashed assets.
-app_include_js = ["finbyzai_copilot.bundle.js"]
-app_include_css = ["finbyzai_copilot.bundle.css"]
+# The Copilot panel bundle loads on demand (public/js/copilot_loader.bundle.js).
+app_include_js = ["copilot_loader.bundle.js"]
 
 extend_bootinfo = "finbyzai.copilot.boot.boot_session"
 
