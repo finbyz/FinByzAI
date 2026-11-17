@@ -969,6 +969,28 @@ class TestAutomationAuthoring(IntegrationTestCase):
 			state = _business_hours_state({"timezone": "Asia/Kolkata", "start_time": "09:00", "end_time": "17:00", "weekdays": [0, 1, 2, 3, 4]}, datetime(2026, 8, 14, 18, 0))
 		self.assertEqual(state, {"released": False, "due_at": "2026-08-17 03:30:00", "timezone": "Asia/Kolkata"})
 
+	def test_overnight_business_hours_window(self):
+		# Rule 4.5: 22:00-06:00 on Mon-Fri. Hours after midnight belong to the evening the window opened.
+		config = {"timezone": "Europe/Zurich", "start_time": "22:00", "end_time": "06:00", "weekdays": [0, 1, 2, 3, 4]}
+		with patch.object(engine, "get_system_timezone", return_value="Europe/Zurich"):
+			friday_late = _business_hours_state(config, datetime(2026, 11, 20, 23, 0))
+			saturday_early = _business_hours_state(config, datetime(2026, 11, 21, 3, 0))
+			sunday_early = _business_hours_state(config, datetime(2026, 11, 22, 3, 0))
+			wednesday_noon = _business_hours_state(config, datetime(2026, 11, 18, 12, 0))
+		self.assertTrue(friday_late["released"])
+		self.assertTrue(saturday_early["released"])
+		self.assertFalse(sunday_early["released"])
+		self.assertEqual(sunday_early["due_at"], "2026-11-23 22:00:00")
+		self.assertFalse(wednesday_noon["released"])
+		self.assertEqual(wednesday_noon["due_at"], "2026-11-18 22:00:00")
+
+	def test_overnight_action_window_is_valid_but_equal_times_are_not(self):
+		window = {"enabled": 1, "timezone": "Europe/Zurich", "start_time": "22:00", "end_time": "06:00", "weekdays": [0, 1, 2, 3, 4]}
+		_settings, issues = validate_settings({"execution_window": window}, "Lead", "Administrator")
+		self.assertNotIn("INVALID_EXECUTION_WINDOW", {issue["code"] for issue in issues})
+		_settings, issues = validate_settings({"execution_window": {**window, "end_time": "22:00"}}, "Lead", "Administrator")
+		self.assertIn("INVALID_EXECUTION_WINDOW", {issue["code"] for issue in issues})
+
 	def test_workflow_action_window_settings_are_normalized_and_validated(self):
 		settings, issues = validate_settings(
 			{"execution_window": {"enabled": 1, "timezone": "Asia/Kolkata", "start_time": "09:00", "end_time": "17:00", "weekdays": [0, 1, 2, 3, 4]}},
@@ -978,7 +1000,7 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		self.assertFalse(issues)
 		self.assertTrue(settings["execution_window"]["enabled"])
 		_invalid, issues = validate_settings(
-			{"execution_window": {"enabled": 1, "timezone": "Not/AZone", "start_time": "18:00", "end_time": "09:00", "weekdays": []}},
+			{"execution_window": {"enabled": 1, "timezone": "Not/AZone", "start_time": "09:00", "end_time": "09:00", "weekdays": []}},
 			"Lead",
 			"Administrator",
 		)

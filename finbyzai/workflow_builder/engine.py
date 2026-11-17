@@ -1318,16 +1318,25 @@ def _business_hours_state(config: dict, server_now: datetime | None = None) -> d
 		raise AutomationError(_("Business-hours start or end time is invalid.")) from exc
 	start_minutes = start_hour * 60 + start_minute
 	end_minutes = end_hour * 60 + end_minute
-	if not weekdays or start_minutes >= end_minutes or min(start_minutes, end_minutes) < 0 or max(start_minutes, end_minutes) >= 24 * 60:
+	# An end before the start is an overnight window (e.g. 22:00-06:00, rule 4.5).
+	if not weekdays or start_minutes == end_minutes or min(start_minutes, end_minutes) < 0 or max(start_minutes, end_minutes) >= 24 * 60:
 		raise AutomationError(_("Business-hours configuration is invalid."))
 
 	def is_workday(candidate) -> bool:
 		return candidate.weekday() in weekdays and not bool(calendar and is_holiday(calendar, candidate))
 
 	local_minutes = local_now.hour * 60 + local_now.minute
-	if is_workday(local_now.date()) and start_minutes <= local_minutes < end_minutes:
+	today = local_now.date()
+	if start_minutes < end_minutes:
+		released = is_workday(today) and start_minutes <= local_minutes < end_minutes
+	else:
+		# Overnight: hours after midnight belong to the evening the window opened.
+		released = (local_minutes >= start_minutes and is_workday(today)) or (
+			local_minutes < end_minutes and is_workday(today - timedelta(days=1))
+		)
+	if released:
 		return {"released": True, "due_at": str(server_now), "timezone": tz_name}
-	if is_workday(local_now.date()) and local_minutes < start_minutes:
+	if local_minutes < start_minutes:
 		next_local = local_now.replace(hour=start_hour, minute=start_minute, second=0, microsecond=0)
 	else:
 		next_local = (local_now + timedelta(days=1)).replace(hour=start_hour, minute=start_minute, second=0, microsecond=0)

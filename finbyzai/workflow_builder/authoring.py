@@ -622,8 +622,9 @@ def validate_settings(settings_value: Any, primary_doctype: str, execution_user:
 		time_pattern = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 		start_time = str(window.get("start_time") or "")
 		end_time = str(window.get("end_time") or "")
-		if not time_pattern.match(start_time) or not time_pattern.match(end_time) or start_time >= end_time:
-			issues.append({"severity": "error", "code": "INVALID_EXECUTION_WINDOW", "path": "settings.execution_window.start_time", "message": _("The action window requires valid start and end times, with start before end.")})
+		# An end before the start is an overnight window, e.g. 22:00 to 06:00 (rule 4.5).
+		if not time_pattern.match(start_time) or not time_pattern.match(end_time) or start_time == end_time:
+			issues.append({"severity": "error", "code": "INVALID_EXECUTION_WINDOW", "path": "settings.execution_window.start_time", "message": _("The action window requires valid start and end times that are not equal. An end before the start runs overnight.")})
 		weekdays = window.get("weekdays")
 		if not isinstance(weekdays, list) or not weekdays or any(isinstance(day, bool) or not isinstance(day, int) or day < 0 or day > 6 for day in weekdays) or len(set(weekdays)) != len(weekdays):
 			issues.append({"severity": "error", "code": "INVALID_EXECUTION_DAYS", "path": "settings.execution_window.weekdays", "message": _("Choose one or more unique action-window days.")})
