@@ -229,7 +229,7 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		self.assertIn("INVALID_SUBSCRIPTION_TOPIC", {issue["code"] for issue in issues})
 		self.assertIn("nodes.email.config.subscription_topic", {issue["path"] for issue in issues})
 
-	def test_email_subscription_topic_is_rejected_outside_lead_workflows(self):
+	def test_email_type_is_validated_for_any_record_type(self):
 		graph = empty_graph("Customer")
 		graph["nodes"].append({
 			"id": "email",
@@ -247,7 +247,30 @@ class TestAutomationAuthoring(IntegrationTestCase):
 
 		issues = validate_bindings(graph, "Administrator")
 
-		self.assertIn("SUBSCRIPTION_TOPIC_REQUIRES_LEAD", {issue["code"] for issue in issues})
+		# An unknown email type is rejected on Customer workflows too.
+		self.assertIn("INVALID_SUBSCRIPTION_TOPIC", {issue["code"] for issue in issues})
+		self.assertIn("nodes.email.config.subscription_topic", {issue["path"] for issue in issues})
+
+	def test_email_step_without_email_type_cannot_be_published(self):
+		from unittest.mock import patch
+		graph = empty_graph("Customer")
+		graph["nodes"].append({
+			"id": "email",
+			"type": "action.send_email",
+			"type_version": 2,
+			"config": {
+				"content_mode": "inline",
+				"recipient": {"kind": "literal", "value": "person@example.com"},
+				"subject": {"kind": "literal", "value": "Hello"},
+				"message": {"kind": "literal", "value": "Body"},
+			},
+		})
+		graph["edges"] = [{"id": "edge-1", "source": "trigger-1", "source_handle": "default", "target": "email"}]
+
+		with patch("finbyzreach.consent.policy_ready", return_value=True):
+			issues = validate_bindings(graph, "Administrator")
+
+		self.assertIn("EMAIL_TYPE_REQUIRED", {issue["code"] for issue in issues})
 		self.assertIn("nodes.email.config.subscription_topic", {issue["path"] for issue in issues})
 
 	def test_branch_field_permissions_skip_blank_rows_and_point_to_the_affected_path(self):
@@ -1520,6 +1543,7 @@ class TestAutomationAuthoring(IntegrationTestCase):
 					"content_mode": "inline",
 					"recipient": {"kind": "record_field", "field": "email_id"},
 					"subject": {"kind": "literal", "value": "Recovery check"},
+					"subscription_topic": "Transactional",
 					"message": {
 						"kind": "literal",
 						"value": "This job must not be resent automatically.",
@@ -1612,6 +1636,7 @@ class TestAutomationAuthoring(IntegrationTestCase):
 					"content_mode": "inline",
 					"recipient": {"kind": "record_field", "field": "email_id"},
 					"subject": {"kind": "literal", "value": "Pause check"},
+					"subscription_topic": "Transactional",
 					"message": {"kind": "literal", "value": "Resume safely."},
 				},
 			}

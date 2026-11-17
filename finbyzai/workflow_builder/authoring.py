@@ -536,13 +536,20 @@ def validate_bindings(graph: dict, execution_user: str, workflow_name: str | Non
 			if sender_email and not frappe.db.exists("Email Account", {"email_id": sender_email, "enable_outgoing": 1}):
 				issues.append({"severity": "error", "code": "UNAUTHORIZED_EMAIL_SENDER", "node_id": node_id, "path": f"nodes.{node_id}.config.sender_email", "message": _("Choose the address of an enabled outgoing Email Account.")})
 			subscription_topic = str(config.get("subscription_topic") or "").strip()
-			if subscription_topic and primary_doctype != "Lead":
-				issues.append({"severity": "error", "code": "SUBSCRIPTION_TOPIC_REQUIRES_LEAD", "node_id": node_id, "path": f"nodes.{node_id}.config.subscription_topic", "message": _("FinbyzReach subscription topics are available only for Lead workflows. Other workflow records use global and record-specific unsubscribe rules.")})
-			elif subscription_topic:
+			if subscription_topic:
 				if "finbyzreach" not in frappe.get_installed_apps():
-					issues.append({"severity": "error", "code": "REACH_NOT_INSTALLED", "node_id": node_id, "path": f"nodes.{node_id}.config.subscription_topic", "message": _("Finbyz Reach is required for topic-based email preferences.")})
-				elif not frappe.db.exists("Subscription Topic", {"name": subscription_topic, "disabled": 0}):
-					issues.append({"severity": "error", "code": "INVALID_SUBSCRIPTION_TOPIC", "node_id": node_id, "path": f"nodes.{node_id}.config.subscription_topic", "message": _("Choose an enabled Subscription Topic.")})
+					issues.append({"severity": "error", "code": "REACH_NOT_INSTALLED", "node_id": node_id, "path": f"nodes.{node_id}.config.subscription_topic", "message": _("Finbyz Reach is required for email type consent checks.")})
+				elif not frappe.db.exists("Subscription Topic", {"name": subscription_topic, "disabled": 0, "category": ["in", ["Mailing Type", "System"]]}):
+					issues.append({"severity": "error", "code": "INVALID_SUBSCRIPTION_TOPIC", "node_id": node_id, "path": f"nodes.{node_id}.config.subscription_topic", "message": _("Choose an active mailing type or Transactional.")})
+			# Every workflow email needs exactly one email type (rule 4.1); without it the
+			# send guard cannot check consent. Checked once the shared policy schema exists.
+			if not str(config.get("subscription_topic") or "").strip() and "finbyzreach" in frappe.get_installed_apps():
+				from finbyzreach.consent import policy_ready
+				template_type = ""
+				if config.get("email_template") and frappe.db.has_column("Email Template", "custom_email_type"):
+					template_type = frappe.db.get_value("Email Template", config.get("email_template"), "custom_email_type") or ""
+				if policy_ready() and not template_type:
+					issues.append({"severity": "error", "code": "EMAIL_TYPE_REQUIRED", "node_id": node_id, "path": f"nodes.{node_id}.config.subscription_topic", "message": _("Choose the email type: a mailing type or Transactional.")})
 		if node_type == "action.send_sms":
 			for key in ("recipient", "message"):
 				try:
