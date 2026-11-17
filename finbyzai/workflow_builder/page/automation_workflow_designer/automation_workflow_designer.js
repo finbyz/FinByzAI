@@ -19,8 +19,15 @@ frappe.pages["automation-workflow-designer"].on_page_load = function (wrapper) {
         });
     });
     wrapper.workflow_designer = {page, frame};
-    page.set_secondary_action(__("Close"), () => frappe.set_route("List", "Automation Workflow"));
+    page.set_secondary_action(__("Close"), () => frappe.set_route(wrapper.workflow_designer.listHref || "/desk/automation-workflow"));
 };
+
+// Back links open the list inside the sidebar the designer was launched from.
+function workflowListInSidebar(sidebar) {
+    return sidebar && frappe.boot?.module_sidebars?.[sidebar]
+        ? `/desk/${frappe.router.shell_slug(sidebar)}/automation-workflow`
+        : "/desk/automation-workflow";
+}
 
 frappe.pages["automation-workflow-designer"].on_page_show = function (wrapper) {
     const [, name, sidebar] = frappe.get_route();
@@ -28,8 +35,9 @@ frappe.pages["automation-workflow-designer"].on_page_show = function (wrapper) {
     if (sidebar && frappe.boot?.module_sidebars?.[sidebar]) frappe.app?.sidebar?.select_shell(sidebar);
     const designer = wrapper.workflow_designer;
     designer.page.set_title(name);
+    designer.listHref = workflowListInSidebar(sidebar);
     designer.page.set_breadcrumbs([
-        {label: __("Automation Workflow"), href: "/app/automation-workflow"},
+        {label: __("Workflows"), href: designer.listHref},
         {label: name, title: name},
     ]);
     if (designer.name === name) return;
