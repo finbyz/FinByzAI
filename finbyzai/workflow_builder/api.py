@@ -998,6 +998,106 @@ def enroll_manual(envelope=None, workflow_id=None, record_name=None, idempotency
 	return {"workflow_id": workflow.name, "run_id": run_name, "enrolled": bool(run_name)}
 
 
+MANUAL_START_LIMIT = 500
+MANUAL_SEGMENT_INLINE = 200
+
+
+@frappe.whitelist(methods=["GET"])
+def manual_start_workflows(doctype):
+	"""WF-04: published workflows for this record type that accept a manual start."""
+	registry.require_operator()
+	rows = frappe.get_list(
+		"Automation Workflow", filters={"status": "ACTIVE", "primary_doctype": doctype},
+		fields=["name", "title", "active_version"], order_by="title asc", limit_page_length=200,
+	)
+	return [
+		{"name": row.name, "title": row.title or row.name}
+		for row in rows if row.active_version and engine.published_trigger_type(row.active_version) == "trigger.manual"
+	]
+
+
+def _manual_workflow(workflow_id):
+	workflow = frappe.get_doc("Automation Workflow", workflow_id)
+	workflow.check_permission("read")
+	if engine.published_trigger_type(workflow.active_version) != "trigger.manual":
+		raise AutomationError(_("Only workflows published with a manual trigger accept manual enrollment."))
+	return workflow
+
+
+def _enroll_records(workflow, names, key):
+	enrolled, skipped = 0, []
+	for name in names:
+		try:
+			frappe.get_doc(workflow.primary_doctype, name).check_permission("read")
+			run = engine.enroll(workflow.name, workflow.primary_doctype, name, source="MANUAL", occurrence_key=f"{key}:{name}"[:140])
+		except Exception as error:
+			skipped.append({"record": name, "reason": str(error)[:140]})
+			continue
+		if run:
+			enrolled += 1
+		else:
+			skipped.append({"record": name, "reason": str(_("Already in this workflow, not eligible, or the workflow is not active"))})
+	return {"enrolled": enrolled, "skipped": skipped[:50], "skipped_count": len(skipped)}
+
+
+@frappe.whitelist(methods=["POST"])
+def enroll_manual_records(workflow_id=None, record_names=None, idempotency_key=None):
+	"""WF-04: start one workflow for the records selected in a list view."""
+	registry.require_operator()
+	names = frappe.parse_json(record_names) if isinstance(record_names, str) else record_names
+	if not isinstance(names, list) or not names or len(names) > MANUAL_START_LIMIT:
+		raise AutomationError(_("Select between 1 and {0} records.").format(MANUAL_START_LIMIT))
+	if not idempotency_key:
+		raise AutomationError(_("An idempotency key is required."))
+	workflow = _manual_workflow(workflow_id)
+	return _enroll_records(workflow, [str(name) for name in dict.fromkeys(names)], str(idempotency_key))
+
+
+def _enroll_segment_members(workflow_id, segment_name, key):
+	"""Walk the segment in pages so that a large segment is never held in memory at once."""
+	from finbyzreach.segment_service import member_names
+
+	workflow = frappe.get_doc("Automation Workflow", workflow_id)
+	segment = frappe.get_doc("Reach Segment", segment_name)
+	totals, after = {"enrolled": 0, "skipped_count": 0}, None
+	while True:
+		page = member_names(segment, after=after, limit=MANUAL_SEGMENT_INLINE)
+		if not page:
+			break
+		result = _enroll_records(workflow, page, key)
+		totals["enrolled"] += result["enrolled"]
+		totals["skipped_count"] += result["skipped_count"]
+		after = page[-1]
+		frappe.db.commit()
+	return totals
+
+
+@frappe.whitelist(methods=["POST"])
+def enroll_manual_segment(workflow_id=None, segment_name=None, idempotency_key=None):
+	"""WF-04: start one workflow for every member of a segment."""
+	registry.require_operator()
+	if not idempotency_key:
+		raise AutomationError(_("An idempotency key is required."))
+	workflow = _manual_workflow(workflow_id)
+	segment = frappe.get_doc("Reach Segment", segment_name)
+	segment.check_permission("read")
+	if (segment.get("audience_doctype") or "Lead") != workflow.primary_doctype:
+		raise AutomationError(_("The segment holds {0} records, the workflow starts {1} records.").format(segment.audience_doctype, workflow.primary_doctype))
+	if segment.get("archived"):
+		raise AutomationError(_("Archived segments cannot start a workflow."))
+	from finbyzreach.segment_service import count_members
+
+	size = count_members(segment)
+	if size <= MANUAL_SEGMENT_INLINE:
+		return {"queued": False, "size": size, **_enroll_segment_members(workflow.name, segment.name, str(idempotency_key))}
+	frappe.enqueue(
+		"finbyzai.workflow_builder.api._enroll_segment_members", queue="long", timeout=3600,
+		workflow_id=workflow.name, segment_name=segment.name, key=str(idempotency_key), job_id=f"manual-segment:{workflow.name}:{segment.name}:{idempotency_key}"[:140],
+		deduplicate=True,
+	)
+	return {"queued": True, "size": size}
+
+
 @frappe.whitelist(methods=["POST"])
 def signal_event(
 	event_topic: str,
