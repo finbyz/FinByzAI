@@ -45,6 +45,10 @@ class TestGenerationPolicy(unittest.TestCase):
         for model in ["gemini/gemini-2.5-flash", "openai/gpt-4o"]:
             self.assertEqual(GenerationPolicy(model).resolve(sampling), sampling)
 
+    def test_drops_temperature_litellm_rejects(self):
+        policy = GenerationPolicy("gemini/gemini-3.5-flash-lite")
+        self.assertEqual(policy.resolve({"temperature": 0.2, "max_tokens": 5}), {"max_tokens": 5})
+
     def test_google_translation(self):
         config = VertexGeminiConfig()
         for model, key in [("gemini-2.5-flash", "thinkingBudget"), ("gemini-3.8-flash", "thinkingLevel")]:

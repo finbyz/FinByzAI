@@ -46,6 +46,8 @@ class GenerationPolicy:
         gemini = re.search(r"gemini-(\d+)(?:\.(\d+))?", self.native)
         if gemini and (int(gemini[1]), int(gemini[2] or 0)) >= (3, 6):
             return True
+        if self._litellm_rejects_temperature():
+            return True
         if "gpt-5-chat" in self.native:
             return False
         if self.info.get("supports_none_reasoning_effort"):
@@ -95,6 +97,14 @@ class GenerationPolicy:
             for key in SAMPLING:
                 params.pop(key, None)
         return params
+
+    def _litellm_rejects_temperature(self):
+        # e.g. gemini-3.5-flash-lite: litellm raises UnsupportedParamsError if temperature is sent.
+        try:
+            supported = litellm.get_supported_openai_params(model=self.model)
+        except (ValueError, litellm.BadRequestError):
+            return False
+        return bool(supported) and "temperature" not in supported
 
     def _model_info(self):
         # Use the installed map: capability checks must not fetch account data.
