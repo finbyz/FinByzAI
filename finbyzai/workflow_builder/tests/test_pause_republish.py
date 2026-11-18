@@ -51,24 +51,23 @@ class PauseOnEditTest(TestCase):
 		self.enterContext(patch.object(api.registry, "require_viewer"))
 		self.enterContext(patch.object(api, "_envelope", return_value={"workflow_id": "AWF-1", "draft_revision": 1, "payload": {}}))
 
-	def _save(self, status, published_hash, draft_hash):
-		saved = {"workflow_id": "AWF-1", "graph_hash": draft_hash}
-		def get_value(doctype, name, field, **kw):
-			if doctype == "Automation Workflow":
-				return frappe._dict(status=status, active_version="V-1")
-			return published_hash
-		with patch.object(authoring, "save_workflow_draft", return_value=saved), patch.object(frappe.db, "get_value", side_effect=get_value), \
+	def _save(self, status, differs):
+		saved = {"workflow_id": "AWF-1", "graph_hash": "hash"}
+		state = frappe._dict(status=status, active_version="V-1" if status != "DRAFT" else None)
+		with patch.object(authoring, "save_workflow_draft", return_value=saved), patch.object(frappe.db, "get_value", return_value=state), \
+				patch.object(authoring, "draft_differs_from_version", return_value=differs) as differs_check, \
 				patch.object(engine, "open_run_count", return_value=12), patch.object(authoring, "change_workflow_state") as change:
-			return api.save_draft(), change
+			return api.save_draft(), change, differs_check
 
 	def test_first_real_change_to_an_active_workflow_pauses_it(self):
-		result, change = self._save("ACTIVE", "hash-a", "hash-b")
+		result, change, differs_check = self._save("ACTIVE", True)
+		differs_check.assert_called_once_with("AWF-1", "V-1")
 		change.assert_called_once_with("AWF-1", "PAUSED")
 		self.assertEqual(result["paused"], {"status": "PAUSED", "records": 12})
 
 	def test_saving_without_a_change_or_on_a_draft_does_not_pause(self):
-		for status, published, draft in (("ACTIVE", "same", "same"), ("PAUSED", "a", "b"), ("DRAFT", None, "b")):
-			result, change = self._save(status, published, draft)
+		for status, differs in (("ACTIVE", False), ("PAUSED", True), ("DRAFT", True)):
+			result, change, _differs_check = self._save(status, differs)
 			change.assert_not_called()
 			self.assertNotIn("paused", result)
 
@@ -76,3 +75,52 @@ class PauseOnEditTest(TestCase):
 		doc = frappe._dict(name="AWF-1", check_permission=lambda *_: None)
 		with patch.object(frappe, "get_doc", return_value=doc), patch.object(engine, "open_run_count", return_value=7):
 			self.assertEqual(api.pause_preview("AWF-1"), {"count": 7})
+
+
+def graph(x):
+	return json.dumps({"start_node_id": "t", "nodes": [{"id": "t", "type": "trigger.manual", "position": {"x": x, "y": 0}}], "edges": []})
+
+
+class DraftDiffersTest(TestCase):
+	def _differs(self, draft_graph, draft_settings="{}"):
+		version_row = frappe._dict(graph_json=graph(0), settings_json="{}")
+		draft = frappe._dict(graph_json=draft_graph, settings_json=draft_settings)
+		with patch.object(frappe.db, "get_value", return_value=version_row), patch.object(authoring, "_draft", return_value=draft):
+			return authoring.draft_differs_from_version("AWF-1", "V-1")
+
+	def test_moving_a_node_is_not_a_change(self):
+		self.assertFalse(self._differs(graph(300)))
+
+	def test_a_settings_change_is_a_change(self):
+		self.assertTrue(self._differs(graph(0), json.dumps({"reenrollment": "ALWAYS"})))
+
+
+class PublishTest(TestCase):
+	def setUp(self):
+		self.enterContext(patch.object(api.registry, "require_publisher"))
+		self.enterContext(patch.object(api, "_envelope", return_value={"workflow_id": "AWF-1", "draft_revision": 2, "payload": {}}))
+
+	def _publish(self, published, versions, status="ACTIVE"):
+		active = iter(versions)
+		with patch.object(frappe.db, "get_value", side_effect=lambda *a, **k: next(active)), \
+				patch.object(authoring, "publish_workflow", return_value=published), \
+				patch.object(engine, "move_runs_to_version", return_value={"moved": 3, "failed": 0, "re_enrolled": 0}) as move, \
+				patch.object(engine, "resume_held_tokens", return_value=5) as resume, \
+				patch.object(authoring, "change_workflow_state", return_value={"status": "ACTIVE"}) as change:
+			return api.publish(), move, resume, change
+
+	def test_publishing_a_new_version_moves_paused_records_to_it(self):
+		published = {"workflow_id": "AWF-1", "version": "V-2", "status": "ACTIVE", "unchanged": False}
+		result, move, resume, change = self._publish(published, ["V-1", "V-2"])
+		move.assert_called_once_with("AWF-1", "V-2")
+		self.assertEqual(result["runs"]["moved"], 3)
+		resume.assert_called_once_with("AWF-1")
+		change.assert_not_called()
+
+	def test_publishing_an_unchanged_paused_workflow_restarts_it(self):
+		published = {"workflow_id": "AWF-1", "version": "V-1", "status": "PAUSED", "unchanged": True}
+		result, move, resume, change = self._publish(published, ["V-1", "V-1"])
+		move.assert_not_called()
+		change.assert_called_once_with("AWF-1", "ACTIVE")
+		self.assertEqual(result["status"], "ACTIVE")
+		resume.assert_called_once_with("AWF-1")

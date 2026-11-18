@@ -638,8 +638,7 @@ def save_draft(envelope=None, workflow_id=None, draft_revision=None, graph=None,
 	# They continue on the new version when it is published (WF-07).
 	state = frappe.db.get_value("Automation Workflow", result["workflow_id"], ["status", "active_version"], as_dict=True)
 	if state and state.status == "ACTIVE" and state.active_version:
-		published_hash = frappe.db.get_value("Automation Workflow Version", state.active_version, "graph_hash")
-		if published_hash and result.get("graph_hash") and published_hash != result["graph_hash"]:
+		if authoring.draft_differs_from_version(result["workflow_id"], state.active_version):
 			records = engine.open_run_count(result["workflow_id"])
 			authoring.change_workflow_state(result["workflow_id"], "PAUSED")
 			result["paused"] = {"status": "PAUSED", "records": records}
@@ -838,9 +837,15 @@ def publish(envelope=None, workflow_id=None, draft_revision=None, activate=1, re
 		activate=bool(cint(payload.get("activate", data.get("activate", 1)))),
 		reenrollment=payload.get("reenrollment", data.get("reenrollment")),
 	)
+	active_version = frappe.db.get_value("Automation Workflow", result["workflow_id"], "active_version")
 	# WF-07: records that were paused while the workflow was edited continue on the new version.
-	if previous_version and result.get("active_version") and result["active_version"] != previous_version:
-		result["runs"] = engine.move_runs_to_version(result["workflow_id"], result["active_version"])
+	if previous_version and active_version and active_version != previous_version:
+		result["runs"] = engine.move_runs_to_version(result["workflow_id"], active_version)
+	# WF-06: a draft that matches the active version (for example after the edit was undone)
+	# publishes as unchanged. Publishing with activate still restarts the paused workflow.
+	activate = bool(cint(payload.get("activate", data.get("activate", 1))))
+	if activate and result.get("unchanged") and result.get("status") == "PAUSED" and active_version:
+		result["status"] = authoring.change_workflow_state(result["workflow_id"], "ACTIVE").get("status", "ACTIVE")
 	if result.get("status") == "ACTIVE":
 		result["released_tokens"] = engine.resume_held_tokens(result["workflow_id"])
 	return result

@@ -639,7 +639,9 @@ export function WorkflowProvider({ workflowId, children }: { workflowId: string;
     async publish(activate = true, reenrollment = 'NEVER') {
       const checked = documentRef.current
       const activationRetry = checked.publication.state === 'READY_TO_ACTIVATE'
-      if (!checked.publication.has_unpublished_changes && !activationRetry) {
+      // WF-06: a workflow paused by an edit that was later undone publishes again to restart.
+      const pausedRestart = activate && checked.status === 'PAUSED' && checked.publication.state === 'PUBLISHED'
+      if (!checked.publication.has_unpublished_changes && !activationRetry && !pausedRestart) {
         documentDispatch({ type: 'SAVE_ERROR', error: `The draft already matches published version ${checked.publication.latest_version_no}.` })
         return
       }

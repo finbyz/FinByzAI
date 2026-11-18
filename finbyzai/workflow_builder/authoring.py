@@ -94,6 +94,22 @@ def _normalized_settings(settings_value: Any) -> dict:
 	return settings
 
 
+def draft_differs_from_version(workflow_name: str, version_name: str) -> bool:
+	"""True when the draft would run differently from the version (WF-06).
+
+	Node positions are layout only, so moving a node on the canvas is not a change.
+	"""
+	version = frappe.db.get_value(
+		"Automation Workflow Version", version_name, ["graph_json", "settings_json"], as_dict=True
+	)
+	if not version:
+		return False
+	draft = _draft(workflow_name)
+	return execution_graph_hash(draft.graph_json) != execution_graph_hash(version.graph_json) or canonical_json(
+		_normalized_settings(draft.settings_json)
+	) != canonical_json(_normalized_settings(version.settings_json))
+
+
 def workflow_publication_state(workflow, draft=None) -> dict:
 	"""Describe how the mutable draft relates to immutable published history."""
 	draft = draft or _draft(workflow.name)
