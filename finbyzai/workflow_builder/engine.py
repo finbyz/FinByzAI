@@ -424,6 +424,23 @@ def _matching_suppression(workflow_name: str, record) -> Any | None:
 	return None
 
 
+def _timeline_note(doctype: str, name: str, text: str) -> None:
+	"""EM-36: one line on the record's timeline. A failure here never stops the workflow."""
+	if not doctype or not name or not frappe.db.exists(doctype, name):
+		return
+	try:
+		frappe.get_doc({
+			"doctype": "Comment", "comment_type": "Info", "reference_doctype": doctype,
+			"reference_name": name, "content": text,
+		}).insert(ignore_permissions=True)
+	except Exception:
+		frappe.log_error(title="Workflow timeline note failed")
+
+
+def _workflow_title(workflow_name: str) -> str:
+	return frappe.db.get_value("Automation Workflow", workflow_name, "title") or workflow_name
+
+
 def _append_event(run_name: str, event_type: str, *, node_id: str | None = None, payload: dict | None = None) -> None:
 	# The run row serializes event writers. Derive the next sequence from the
 	# append-only event stream so a stale in-memory Run document cannot reuse it.
@@ -685,6 +702,7 @@ def enroll(
 		record_name=record_name, source=source, occurrence_key=occurrence_key, decision="ENROLLED",
 		reason_code="MATCHED", evidence={"read_mode": read_mode}, trace_id=trace_id, run=run.name,
 	)
+	_timeline_note(record_doctype, record_name, _("Entered workflow {0}.").format(_workflow_title(workflow.name)))
 	_queue_token(token.name)
 	return run.name
 
@@ -1705,6 +1723,8 @@ def _finish_or_continue(run, token, graph: dict, result: dict) -> None:
 		if run.started_at:
 			increment_metric(run.workflow, run.workflow_version, "total_duration_seconds", max((run.completed_at - run.started_at).total_seconds(), 0))
 		_append_event(run.name, "RUN_COMPLETED", node_id=token.node_id)
+		if not record_deleted:
+			_timeline_note(run.record_doctype, run.record_name, _("Completed workflow {0}.").format(_workflow_title(run.workflow)))
 		_resolve_subflow_if_any(run)
 		return
 	run.status = "RUNNING"
