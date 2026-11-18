@@ -1037,6 +1037,9 @@ function EditorPanels() {
     if (!editor.publishOpen) return
     let active = true
     setPanelError('')
+    call<{ timezone: string; start_time: string; end_time: string; weekdays: number[] }>('marketing_window_default')
+      .then((result) => { if (active) setWindowDefault(result) })
+      .catch(() => { if (active) setWindowDefault(undefined) })
     call<{ count: number }>('pause_preview', { workflow_id: doc.workflowId })
       .then((result) => { if (active) setPauseCount(result.count || 0) })
       .catch(() => { if (active) setPauseCount(0) })
