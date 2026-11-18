@@ -684,6 +684,13 @@ def simulate(envelope=None, workflow_id=None, record_name=None, graph=None):
 	return {"valid": True, "issues": [], **engine.simulate_graph(simulation_graph, record, execution_user=workflow.execution_user)}
 
 
+@frappe.whitelist(methods=["GET"])
+def marketing_window_default():
+	"""The one shared default sending window, used to prefill a workflow's action window."""
+	registry.require_viewer()
+	return authoring._marketing_window_default()
+
+
 @frappe.whitelist(methods=["POST"])
 def test_run(envelope=None, workflow_id=None, record_name=None, graph=None, test_email=None, test_phone=None, test_instagram_id=None, confirm=None):
 	"""WF-08: run the draft on one record. Messages really go out, but only to the tester."""

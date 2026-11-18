@@ -70,6 +70,8 @@ export interface WorkflowSettings {
   reenrollment?: 'NEVER' | 'AFTER_COMPLETION' | 'ALWAYS'
   read_mode?: 'CURRENT' | 'ENROLLMENT_SNAPSHOT'
   unenroll_when_ineligible?: boolean
+  exit_on_unsubscribe?: string[]
+  exit_when_leaves_segment?: string[]
   goal_condition?: ConditionExpression | null
   eligibility_condition?: ConditionExpression | null
 	execution_window?: {
