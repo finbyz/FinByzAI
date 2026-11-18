@@ -627,13 +627,23 @@ def save_draft(envelope=None, workflow_id=None, draft_revision=None, graph=None,
 		client_id=client_id,
 	)
 	payload = data["payload"]
-	return authoring.save_workflow_draft(
+	result = authoring.save_workflow_draft(
 		data.get("workflow_id"),
 		cint(data.get("draft_revision")),
 		payload.get("graph", data.get("graph")),
 		payload.get("settings", data.get("settings")),
 		payload.get("client_id", data.get("client_id")),
 	)
+	# WF-06: the first real change to a published workflow pauses it, and the records inside it.
+	# They continue on the new version when it is published (WF-07).
+	state = frappe.db.get_value("Automation Workflow", result["workflow_id"], ["status", "active_version"], as_dict=True)
+	if state and state.status == "ACTIVE" and state.active_version:
+		published_hash = frappe.db.get_value("Automation Workflow Version", state.active_version, "graph_hash")
+		if published_hash and result.get("graph_hash") and published_hash != result["graph_hash"]:
+			records = engine.open_run_count(result["workflow_id"])
+			authoring.change_workflow_state(result["workflow_id"], "PAUSED")
+			result["paused"] = {"status": "PAUSED", "records": records}
+	return result
 
 
 @frappe.whitelist(methods=["POST"])
@@ -777,12 +787,28 @@ def publish(envelope=None, workflow_id=None, draft_revision=None, activate=1, re
 	registry.require_publisher()
 	data = _envelope(envelope, workflow_id=workflow_id, draft_revision=draft_revision, activate=activate, reenrollment=reenrollment)
 	payload = data["payload"]
-	return authoring.publish_workflow(
+	previous_version = frappe.db.get_value("Automation Workflow", data.get("workflow_id"), "active_version")
+	result = authoring.publish_workflow(
 		data.get("workflow_id"),
 		cint(data.get("draft_revision")),
 		activate=bool(cint(payload.get("activate", data.get("activate", 1)))),
 		reenrollment=payload.get("reenrollment", data.get("reenrollment")),
 	)
+	# WF-07: records that were paused while the workflow was edited continue on the new version.
+	if previous_version and result.get("active_version") and result["active_version"] != previous_version:
+		result["runs"] = engine.move_runs_to_version(result["workflow_id"], result["active_version"])
+	if result.get("status") == "ACTIVE":
+		result["released_tokens"] = engine.resume_held_tokens(result["workflow_id"])
+	return result
+
+
+@frappe.whitelist(methods=["GET"])
+def pause_preview(workflow_id=None):
+	"""WF-06: how many records a draft/edit pauses, for the confirmation text."""
+	registry.require_viewer()
+	workflow = frappe.get_doc("Automation Workflow", workflow_id)
+	workflow.check_permission("read")
+	return {"count": engine.open_run_count(workflow.name)}
 
 
 @frappe.whitelist()

@@ -2862,6 +2862,57 @@ def dispatch_ready_tokens(token_names: list[str] | None = None) -> int:
 	return len(ready)
 
 
+def open_run_count(workflow_name: str) -> int:
+	"""Records currently inside the workflow (WF-06): they are paused while it is a draft."""
+	return frappe.db.count("Automation Run", {"workflow": workflow_name, "status": ["not in", list(RUN_TERMINAL_STATUSES)]})
+
+
+def move_runs_to_version(workflow_name: str, new_version: str) -> dict:
+	"""WF-07: records paused during an edit continue on the NEW version.
+
+	A run moves when every open step still exists in the new graph with the same node type. Otherwise it
+	is ended as failed (shown in the enrollment history) and the record is enrolled again from the
+	start when it still qualifies; the new version's own eligibility rules decide that.
+	"""
+	version = frappe.get_doc("Automation Workflow Version", new_version)
+	new_nodes = _node_map(_graph(version))
+	result = {"moved": 0, "failed": 0, "re_enrolled": 0}
+	runs = frappe.get_all(
+		"Automation Run",
+		filters={"workflow": workflow_name, "status": ["not in", list(RUN_TERMINAL_STATUSES)], "workflow_version": ["!=", new_version]},
+		fields=["name", "workflow_version", "record_doctype", "record_name"], limit_page_length=0, order_by="creation asc",
+	)
+	old_graphs = {}
+	for run in runs:
+		old_nodes = old_graphs.get(run.workflow_version)
+		if old_nodes is None:
+			old_nodes = old_graphs[run.workflow_version] = _node_map(_graph(frappe.get_doc("Automation Workflow Version", run.workflow_version)))
+		open_nodes = set(frappe.get_all(
+			"Automation Run Token", filters={"run": run.name, "status": ["not in", ["COMPLETED", "FAILED", "CANCELLED"]]},
+			pluck="node_id", limit_page_length=0,
+		))
+		compatible = all(
+			node_id in new_nodes and node_id in old_nodes and new_nodes[node_id].get("type") == old_nodes[node_id].get("type")
+			for node_id in open_nodes
+		)
+		if compatible:
+			frappe.db.set_value("Automation Run", run.name, "workflow_version", new_version, update_modified=False)
+			_append_event(run.name, "RUN_MOVED_TO_VERSION", payload={"from": run.workflow_version, "to": new_version})
+			result["moved"] += 1
+			continue
+		now = now_datetime()
+		_cancel_open_run_artifacts(run.name, completed_at=now, error_code="WF_VERSION_CHANGED",
+			error_message="The workflow was republished and this run's current step no longer exists in the new version.")
+		frappe.db.set_value("Automation Run", run.name, {"status": "FAILED", "completed_at": now, "error_code": "WF_VERSION_CHANGED",
+			"error_message": "Republished: the current step no longer exists. The record is enrolled again when it qualifies."}, update_modified=False)
+		_append_event(run.name, "RUN_VERSION_MISMATCH", payload={"to": new_version})
+		result["failed"] += 1
+		if enroll(workflow_name, run.record_doctype, run.record_name, source="REPUBLISH",
+				occurrence_key=f"republish:{run.name}:{new_version}"[:140], workflow_version=new_version):
+			result["re_enrolled"] += 1
+	return result
+
+
 def resume_held_tokens(workflow_name: str) -> int:
 	if not workflow_runtime_allowed(workflow_name):
 		return 0
