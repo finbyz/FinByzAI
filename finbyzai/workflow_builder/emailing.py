@@ -41,6 +41,7 @@ def email_template_summary(template, primary_doctype: str | None = None) -> dict
 		"subject": template.subject or "",
 		"mode": mode,
 		"preheader": template.get("custom_preheader_text") if meta.has_field("custom_preheader_text") else "",
+		"email_type": (template.get("custom_email_type") if meta.has_field("custom_email_type") else "") or "",
 		"reference_doctype": reference_doctype,
 		"modified": str(template.modified),
 		"builder_route": f"/builder?template={quote(template.name, safe='')}" if mode == "Visual" else None,
@@ -115,6 +116,7 @@ def resolve_email_content(config: dict, *, record, outputs: dict[str, Any], prim
 		return {
 			"content_mode": "template",
 			"email_template": template.name,
+			"email_type": template.get("custom_email_type") or "",
 			"subject": str(rendered.get("subject") or "")[:998],
 			"message": str(rendered.get("html") or ""),
 			"preheader": snapshot.get("preheader") or "",
