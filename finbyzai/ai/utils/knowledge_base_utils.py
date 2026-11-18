@@ -7,7 +7,6 @@ These functions are decoupled from the Knowledge Document class for reusability.
 """
 from pathlib import Path
 import tempfile
-import pymupdf
 import frappe
 import os
 import csv
@@ -354,6 +353,8 @@ def extract_pdf_to_text(file_path: str) -> Tuple[bool, Optional[str], Optional[s
         
         doc = None
         try:
+            import pymupdf  # heavy; only needed when a PDF is processed
+
             doc = pymupdf.open(file_path)
             text_content = []
             

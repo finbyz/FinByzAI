@@ -5,7 +5,6 @@ import base64
 import time
 from typing import Optional, Dict, Any, List, Union
 from dataclasses import dataclass
-from google import genai
 from langchain_core.language_models.base import (
     LanguageModelInput,
 )
@@ -165,6 +164,8 @@ class ImageGeneration:
     
     def _invoke_google(self, prompt: str, **kwargs) -> ImageResponse:
         """Google Imagen implementation"""
+        from google import genai  # heavy; only for image generation
+
         client = genai.Client(api_key=self.api_key,**kwargs)
         images = []
         if "imagen" in self.model:

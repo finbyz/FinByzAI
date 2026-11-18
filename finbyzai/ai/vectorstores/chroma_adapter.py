@@ -1,7 +1,6 @@
 from .base import BaseVectorStore
 from .registry import register_vector_store
 from langchain_core.tools import create_retriever_tool
-from langchain_chroma import Chroma
 from langchain_core.tools import Tool
 import frappe
 from pathlib import Path
@@ -17,6 +16,8 @@ class ChromaAdapter(BaseVectorStore):
         site_path = Path(frappe.get_site_path())
         private_folder = site_path / "private"
         pd = persist_directory or (private_folder / "chroma_db")
+        from langchain_chroma import Chroma  # heavy; only when a Chroma KB is used
+
         self.vs = Chroma(collection_name=kb_name, embedding_function=embeddings, persist_directory=pd)
 
     def upsert(self, texts, metadatas, ids):
