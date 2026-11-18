@@ -1006,6 +1006,31 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		self.assertEqual((window["timezone"], window["start_time"], window["end_time"]), ("Europe/Zurich", "22:00", "06:00"))
 		self.assertNotIn("INVALID_EXECUTION_WINDOW", {issue["code"] for issue in issues})
 
+	def test_exit_conditions_are_normalised_and_validated(self):
+		settings, issues = validate_settings({"exit_on_unsubscribe": ["Marketing E-Mails", "Marketing E-Mails", " "], "exit_when_leaves_segment": ["No Such Segment"]}, "Lead", "Administrator")
+		self.assertEqual(settings["exit_on_unsubscribe"], ["Marketing E-Mails"])
+		codes = {issue["code"] for issue in issues}
+		self.assertIn("INVALID_EXIT_SEGMENT", codes)
+		_settings, issues = validate_settings({"exit_on_unsubscribe": ["Not A Type"]}, "Lead", "Administrator")
+		self.assertIn("INVALID_EXIT_MAILING_TYPE", {issue["code"] for issue in issues})
+
+	def test_record_leaves_when_unsubscribed_from_a_chosen_mailing_type(self):
+		record = frappe._dict(doctype="Lead", name="LEAD-1", email_id="Person@Example.com")
+		settings = {"exit_on_unsubscribe": ["Marketing E-Mails"]}
+		with patch.object(frappe, "get_all", return_value=["pref-1"]) as lookup:
+			self.assertEqual(engine._evaluate_run_policy(settings, {}, record), ("ELIGIBILITY_LOST", "UNSUBSCRIBED_FROM_MAILING_TYPE"))
+		self.assertEqual(lookup.call_args.kwargs["filters"]["email"], ["in", ["person@example.com"]])
+		with patch.object(frappe, "get_all", return_value=[]):
+			self.assertEqual(engine._evaluate_run_policy(settings, {}, record)[0], "NO_CHANGE")
+
+	def test_record_leaves_when_no_longer_in_the_chosen_segment(self):
+		record = frappe._dict(doctype="Lead", name="LEAD-1")
+		settings = {"exit_when_leaves_segment": ["Trade fair leads"]}
+		with patch("finbyzreach.segments.is_segment_member", return_value=False):
+			self.assertEqual(engine._evaluate_run_policy(settings, {}, record), ("ELIGIBILITY_LOST", "LEFT_SEGMENT"))
+		with patch("finbyzreach.segments.is_segment_member", return_value=True):
+			self.assertEqual(engine._evaluate_run_policy(settings, {}, record)[0], "NO_CHANGE")
+
 	def test_overnight_action_window_is_valid_but_equal_times_are_not(self):
 		window = {"enabled": 1, "timezone": "Europe/Zurich", "start_time": "22:00", "end_time": "06:00", "weekdays": [0, 1, 2, 3, 4]}
 		_settings, issues = validate_settings({"execution_window": window}, "Lead", "Administrator")

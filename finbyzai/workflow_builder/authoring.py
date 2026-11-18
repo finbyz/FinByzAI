@@ -58,6 +58,10 @@ def _normalized_settings(settings_value: Any) -> dict:
 	settings["reenrollment"] = str(settings.get("reenrollment") or "NEVER").upper()
 	settings["read_mode"] = str(settings.get("read_mode") or "CURRENT").upper()
 	settings["unenroll_when_ineligible"] = bool(cint(settings.get("unenroll_when_ineligible")))
+	# WF-48: leave when the person unsubscribes from a mailing type or leaves a segment.
+	for key in ("exit_on_unsubscribe", "exit_when_leaves_segment"):
+		values = settings.get(key)
+		settings[key] = list(dict.fromkeys(str(v).strip()[:140] for v in values if str(v or "").strip()))[:50] if isinstance(values, list) else []
 	for key in ("goal_condition", "eligibility_condition"):
 		if not settings.get(key):
 			settings.pop(key, None)
@@ -642,6 +646,13 @@ def validate_settings(settings_value: Any, primary_doctype: str, execution_user:
 	read_mode = settings["read_mode"]
 	if read_mode not in {"CURRENT", "ENROLLMENT_SNAPSHOT"}:
 		issues.append({"severity": "error", "code": "INVALID_READ_MODE", "path": "settings.read_mode", "message": _("Choose current values or enrollment snapshot values.")})
+	if "finbyzreach" in frappe.get_installed_apps():
+		for topic in settings.get("exit_on_unsubscribe") or []:
+			if not frappe.db.exists("Subscription Topic", {"name": topic, "disabled": 0, "category": "Mailing Type"}):
+				issues.append({"severity": "error", "code": "INVALID_EXIT_MAILING_TYPE", "path": "settings.exit_on_unsubscribe", "message": _("{0} is not an active mailing type.").format(topic)})
+		for segment in settings.get("exit_when_leaves_segment") or []:
+			if not frappe.db.exists("Reach Segment", {"name": segment, "archived": 0}):
+				issues.append({"severity": "error", "code": "INVALID_EXIT_SEGMENT", "path": "settings.exit_when_leaves_segment", "message": _("Segment {0} does not exist or is archived.").format(segment)})
 	window = settings.get("execution_window")
 	if isinstance(window, dict):
 		time_pattern = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")

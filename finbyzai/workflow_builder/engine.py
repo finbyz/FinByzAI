@@ -1867,10 +1867,42 @@ def _terminate_for_policy(run, token, *, status: str, event_type: str, reason_co
 	_resolve_subflow_if_any(run)
 
 
+def _record_emails(value_record) -> list[str]:
+	"""Email addresses of a record (Lead, Contact, Customer), normalised for consent lookups."""
+	values = [value_record.get("email_id"), value_record.get("email")]
+	values += [row.get("email_id") for row in (value_record.get("email_ids") or []) if hasattr(row, "get")]
+	return list(dict.fromkeys(str(v).strip().lower() for v in values if v))
+
+
+def _exit_condition_reason(settings: dict, value_record) -> str | None:
+	"""WF-48: leave when the person unsubscribed from a chosen mailing type or left a chosen segment."""
+	types = [str(t) for t in (settings.get("exit_on_unsubscribe") or []) if t]
+	segments = [str(s) for s in (settings.get("exit_when_leaves_segment") or []) if s]
+	if not (types or segments) or "finbyzreach" not in frappe.get_installed_apps():
+		return None
+	if types:
+		emails = _record_emails(value_record)
+		if emails and frappe.get_all(
+			"Email Subscription Preference",
+			filters={"email": ["in", emails], "subscription_topic": ["in", types], "status": "Unsubscribed"},
+			pluck="name", limit_page_length=1,
+		):
+			return "UNSUBSCRIBED_FROM_MAILING_TYPE"
+	if segments:
+		from finbyzreach.segments import is_segment_member
+		record = {"doctype": value_record.get("doctype"), "name": value_record.get("name")}
+		if record["name"] and not any(is_segment_member(segment, record) for segment in segments):
+			return "LEFT_SEGMENT"
+	return None
+
+
 def _evaluate_run_policy(settings: dict, graph: dict, value_record) -> tuple[str, str]:
 	goal = settings.get("goal_condition")
 	if goal and evaluate_expression(goal, value_record):
 		return "GOAL_MET", "GOAL_CONDITION_TRUE"
+	exit_reason = _exit_condition_reason(settings, value_record)
+	if exit_reason:
+		return "ELIGIBILITY_LOST", exit_reason
 	if cint(settings.get("unenroll_when_ineligible")):
 		eligibility = settings.get("eligibility_condition") or _trigger_condition(graph)
 		if eligibility and not evaluate_expression(eligibility, value_record):
