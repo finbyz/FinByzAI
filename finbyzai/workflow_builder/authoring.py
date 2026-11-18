@@ -63,12 +63,13 @@ def _normalized_settings(settings_value: Any) -> dict:
 			settings.pop(key, None)
 	window = settings.get("execution_window")
 	if isinstance(window, dict) and bool(cint(window.get("enabled"))):
+		default = _marketing_window_default()
 		settings["execution_window"] = {
 			"enabled": True,
-			"timezone": str(window.get("timezone") or "UTC").strip(),
-			"start_time": str(window.get("start_time") or "09:00"),
-			"end_time": str(window.get("end_time") or "17:00"),
-			"weekdays": window.get("weekdays") if isinstance(window.get("weekdays"), list) else [0, 1, 2, 3, 4],
+			"timezone": str(window.get("timezone") or default["timezone"]).strip(),
+			"start_time": str(window.get("start_time") or default["start_time"]),
+			"end_time": str(window.get("end_time") or default["end_time"]),
+			"weekdays": window.get("weekdays") if isinstance(window.get("weekdays"), list) else default["weekdays"],
 			"calendar": str(window.get("calendar") or "").strip(),
 		}
 	else:
@@ -550,6 +551,16 @@ def validate_bindings(graph: dict, execution_user: str, workflow_name: str | Non
 					template_type = frappe.db.get_value("Email Template", config.get("email_template"), "custom_email_type") or ""
 				if policy_ready() and not template_type:
 					issues.append({"severity": "error", "code": "EMAIL_TYPE_REQUIRED", "node_id": node_id, "path": f"nodes.{node_id}.config.subscription_topic", "message": _("Choose the email type: a mailing type or Transactional.")})
+			# EM-11: a marketing email built from a template must give the recipient an unsubscribe link.
+			if config.get("email_template") and "finbyzreach" in frappe.get_installed_apps():
+				from finbyzreach.consent import UNSUBSCRIBE_MISSING, email_has_unsubscribe
+				chosen_type = str(config.get("subscription_topic") or "").strip() or (
+					frappe.db.get_value("Email Template", config.get("email_template"), "custom_email_type")
+					if frappe.db.has_column("Email Template", "custom_email_type") else "") or ""
+				template_html = frappe.db.get_value("Email Template", config.get("email_template"), ["use_html", "response_html", "response"], as_dict=True)
+				source = (template_html.response_html if template_html and template_html.use_html else (template_html.response if template_html else "")) or ""
+				if chosen_type and chosen_type != "Transactional" and template_html and not email_has_unsubscribe(source):
+					issues.append({"severity": "error", "code": "EMAIL_UNSUBSCRIBE_REQUIRED", "node_id": node_id, "path": f"nodes.{node_id}.config.email_template", "message": _(UNSUBSCRIBE_MISSING)})
 		if node_type == "action.send_sms":
 			for key in ("recipient", "message"):
 				try:
@@ -606,6 +617,20 @@ def validate_bindings(graph: dict, execution_user: str, workflow_name: str | Non
 		if node_type == "action.notify_user" and str(config.get("audience") or "specific") == "specific" and not frappe.db.get_value("User", config.get("for_user"), "enabled"):
 			issues.append({"severity": "error", "code": "INVALID_RECIPIENT", "node_id": node_id, "path": f"nodes.{node_id}.config.for_user", "message": _("Choose an enabled notification recipient.")})
 	return issues
+
+
+
+def _marketing_window_default() -> dict:
+	"""The one default sending window from Subscription Center Settings (rule 4.5), else 09:00-17:00."""
+	fallback = {"timezone": "UTC", "start_time": "09:00", "end_time": "17:00", "weekdays": [0, 1, 2, 3, 4]}
+	if "finbyzreach" not in frappe.get_installed_apps():
+		return fallback
+	try:
+		from finbyzreach.email_marketing import default_sending_window
+		window = default_sending_window()
+	except Exception:
+		return fallback
+	return {"timezone": window["timezone"], "start_time": window["start"][:5], "end_time": window["end"][:5], "weekdays": window["weekdays"]}
 
 
 def validate_settings(settings_value: Any, primary_doctype: str, execution_user: str) -> tuple[dict, list[dict]]:

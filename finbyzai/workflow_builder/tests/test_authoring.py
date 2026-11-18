@@ -251,6 +251,20 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		self.assertIn("INVALID_SUBSCRIPTION_TOPIC", {issue["code"] for issue in issues})
 		self.assertIn("nodes.email.config.subscription_topic", {issue["path"] for issue in issues})
 
+	def test_template_email_without_unsubscribe_link_cannot_be_published(self):
+		graph = empty_graph("Customer")
+		graph["nodes"].append({
+			"id": "email", "type": "action.send_email", "type_version": 2,
+			"config": {"content_mode": "template", "email_template": "Some Template", "subscription_topic": "Marketing E-Mails",
+				"recipient": {"kind": "literal", "value": "person@example.com"}},
+		})
+		graph["edges"] = [{"id": "edge-1", "source": "trigger-1", "source_handle": "default", "target": "email"}]
+		template = frappe._dict(use_html=1, response_html="<p>No opt-out here</p>", response="")
+		with patch("finbyzai.workflow_builder.authoring.emailing.get_email_template"), \
+				patch.object(frappe.db, "get_value", return_value=template), patch.object(frappe.db, "has_column", return_value=True):
+			issues = validate_bindings(graph, "Administrator")
+		self.assertIn("EMAIL_UNSUBSCRIBE_REQUIRED", {issue["code"] for issue in issues})
+
 	def test_email_step_without_email_type_cannot_be_published(self):
 		from unittest.mock import patch
 		graph = empty_graph("Customer")
@@ -983,6 +997,14 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		self.assertEqual(sunday_early["due_at"], "2026-11-23 22:00:00")
 		self.assertFalse(wednesday_noon["released"])
 		self.assertEqual(wednesday_noon["due_at"], "2026-11-18 22:00:00")
+
+	def test_action_window_without_times_uses_the_shared_default_window(self):
+		default = {"timezone": "Europe/Zurich", "start": "22:00:00", "end": "06:00:00", "weekdays": [0, 1, 2, 3, 4], "enabled": 1}
+		with patch("finbyzreach.email_marketing.default_sending_window", return_value=default):
+			settings, issues = validate_settings({"execution_window": {"enabled": 1}}, "Lead", "Administrator")
+		window = settings["execution_window"]
+		self.assertEqual((window["timezone"], window["start_time"], window["end_time"]), ("Europe/Zurich", "22:00", "06:00"))
+		self.assertNotIn("INVALID_EXECUTION_WINDOW", {issue["code"] for issue in issues})
 
 	def test_overnight_action_window_is_valid_but_equal_times_are_not(self):
 		window = {"enabled": 1, "timezone": "Europe/Zurich", "start_time": "22:00", "end_time": "06:00", "weekdays": [0, 1, 2, 3, 4]}
