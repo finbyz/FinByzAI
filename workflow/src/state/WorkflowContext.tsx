@@ -14,6 +14,7 @@ import {
 import { call, mutationEnvelope, WorkflowApiError } from '../lib/api'
 import { arrangeWorkflowGraph, canonicalValue, catalogNode, createWorkflowClipboard, insertWorkflowNode, pasteWorkflowClipboard, relocateWorkflowNode, relocateWorkflowNodeToPlacement, removeWorkflowNodes, replaceWorkflowTrigger, sameExecutionGraph, suggestedNodePlacement, upgradeLegacyIfElseBranches, workflowSectionNodeIds, type NodePlacement, type WorkflowClipboardPayload } from '../lib/workflowGraphCommands'
 import type {
+  LiveTestOptions,
   NodeCatalogItem,
   SimulationResult,
   ValidationIssue,
@@ -61,6 +62,7 @@ export interface EditorState {
   aiAssistantOpen: boolean
   mode: 'edit' | 'conflict'
   simulation?: SimulationResult
+  notice?: string
   versionDiff?: { nodes: { added: string[]; removed: string[]; changed: string[] }; edges: { added: string[]; removed: string[]; changed: string[] }; settings_changed: boolean }
 }
 
@@ -91,6 +93,7 @@ type EditorAction =
   | { type: 'CANCEL_COPY' }
   | { type: 'TOGGLE'; panel: 'catalogOpen' | 'validationOpen' | 'simulationOpen' | 'publishOpen' | 'runsOpen' | 'policiesOpen' | 'versionsOpen' | 'aiAssistantOpen'; open?: boolean }
   | { type: 'SIMULATION'; result: SimulationResult }
+  | { type: 'NOTICE'; message?: string }
   | { type: 'VERSION_DIFF'; diff?: EditorState['versionDiff'] }
   | { type: 'CONFLICT' }
   | { type: 'RESOLVE_CONFLICT' }
@@ -338,6 +341,8 @@ export function workflowEditorReducer(state: EditorState, action: EditorAction):
       return { ...state, [action.panel]: action.open ?? !state[action.panel] }
     case 'SIMULATION':
       return { ...state, simulation: action.result, simulationOpen: true }
+    case 'NOTICE':
+      return { ...state, notice: action.message }
     case 'VERSION_DIFF':
       return { ...state, versionDiff: action.diff }
     case 'CONFLICT':
@@ -379,6 +384,8 @@ interface WorkflowActions {
   validate(): Promise<void>
   publish(activate?: boolean, reenrollment?: 'NEVER' | 'AFTER_COMPLETION' | 'ALWAYS'): Promise<void>
   simulate(recordName: string): Promise<void>
+  liveTest(recordName: string, options: LiveTestOptions): Promise<void>
+  dismissNotice(): void
   testNode(recordName: string): Promise<void>
   setState(status: 'ACTIVE' | 'PAUSED' | 'DISABLED'): Promise<void>
   addNode(item: NodeCatalogItem, placement?: Partial<NodePlacement>): void
@@ -438,6 +445,19 @@ export async function saveBeforeCheck<T>(saveDraft: () => Promise<number>, check
   const revision = await saveDraft()
   if (revision < 0) return undefined
   return checkDraft(revision)
+}
+
+export function pausedMessage(records: number): string {
+  return records > 0
+    ? `Workflow paused because it was edited. ${records} record${records === 1 ? ' is' : 's are'} waiting inside it and will continue from the current step when you publish again.`
+    : 'Workflow paused because it was edited. Publish again to start it.'
+}
+
+export function publishedMessage(runs?: { moved: number; failed: number; re_enrolled: number }): string | undefined {
+  if (!runs || (!runs.moved && !runs.failed)) return undefined
+  const parts = [`${runs.moved} record${runs.moved === 1 ? '' : 's'} continued on the new version`]
+  if (runs.failed) parts.push(`${runs.failed} could not continue because their step was removed (${runs.re_enrolled} started again from the beginning)`)
+  return parts.join(', ') + '.'
 }
 
 export function WorkflowProvider({ workflowId, children }: { workflowId: string; children: ReactNode }) {
@@ -543,12 +563,16 @@ export function WorkflowProvider({ workflowId, children }: { workflowId: string;
             current.settings,
             current.savedSettings,
           )
-          const result = await call<{ draft_revision: number; graph_hash: string; validation: ValidationIssue[]; publication: WorkflowPublication }>(
+          const result = await call<{ draft_revision: number; graph_hash: string; validation: ValidationIssue[]; publication: WorkflowPublication; paused?: { status: string; records: number } }>(
             'save_draft',
             mutationEnvelope(workflowId, { graph: current.graph, settings: current.settings }, revision),
             true,
           )
           localStorage.removeItem(recoveryKey(revision))
+          if (result.paused) {
+            documentDispatch({ type: 'SET_STATUS', status: result.paused.status })
+            editorDispatch({ type: 'NOTICE', message: pausedMessage(result.paused.records) })
+          }
           revision = result.draft_revision
           documentDispatch({
             type: 'SAVE_SUCCESS',
@@ -633,12 +657,13 @@ export function WorkflowProvider({ workflowId, children }: { workflowId: string;
 		  documentDispatch({ type: 'SAVE_ERROR', error: 'Resolve the current workflow-check issues before publishing.' })
 		  return
 		}
-        const result = await call<{ status: string }>(
+        const result = await call<{ status: string; runs?: { moved: number; failed: number; re_enrolled: number }; released_tokens?: number }>(
           'publish',
           mutationEnvelope(workflowId, { activate, reenrollment }, revision),
           true,
         )
         documentDispatch({ type: 'SET_STATUS', status: result.status })
+        editorDispatch({ type: 'NOTICE', message: publishedMessage(result.runs) })
         editorDispatch({ type: 'TOGGLE', panel: 'publishOpen', open: false })
         await load()
       } catch (error) {
@@ -658,6 +683,23 @@ export function WorkflowProvider({ workflowId, children }: { workflowId: string;
       } catch (error) {
         documentDispatch({ type: 'SAVE_ERROR', error: error instanceof Error ? error.message : 'Simulation failed' })
       }
+    },
+    async liveTest(recordName: string, options: LiveTestOptions) {
+      const current = documentRef.current
+      if (!current.graph) return
+      try {
+        const result = await call<SimulationResult>(
+          'test_run',
+          mutationEnvelope(workflowId, { record_name: recordName, graph: current.graph, confirm: 1, ...options }, current.serverRevision),
+          true,
+        )
+        editorDispatch({ type: 'SIMULATION', result })
+      } catch (error) {
+        documentDispatch({ type: 'SAVE_ERROR', error: error instanceof Error ? error.message : 'Test run failed' })
+      }
+    },
+    dismissNotice() {
+      editorDispatch({ type: 'NOTICE' })
     },
     async testNode(recordName: string) {
       const current = documentRef.current

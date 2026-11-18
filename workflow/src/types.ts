@@ -296,10 +296,17 @@ export interface WorkflowLookup {
 export interface SimulationResult {
   valid: boolean
   issues: ValidationIssue[]
-  path: Array<{ node_id: string; type: NodeType; status: string; confidence?: 'observed' | 'predicted' | 'skipped'; output: Record<string, unknown>; note?: string }>
+  path: Array<{ node_id: string; type: NodeType; status: string; confidence?: 'observed' | 'predicted' | 'skipped'; output: Record<string, unknown>; note?: string; test_outcome?: TestOutcome; test_note?: string }>
   mutated: false
   completed?: boolean
+  test_mode?: boolean
+  summary?: Partial<Record<TestOutcome, number>>
+  tester?: { email?: string; phone?: string; instagram_id?: string; user?: string }
 }
+
+export type TestOutcome = 'REALLY_SENT' | 'SIMULATED' | 'SKIPPED' | 'FAILED'
+
+export interface LiveTestOptions { test_email?: string; test_phone?: string; test_instagram_id?: string }
 
 export interface RunSummary {
   name: string

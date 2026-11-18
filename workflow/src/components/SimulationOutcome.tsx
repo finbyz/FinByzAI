@@ -1,5 +1,19 @@
 import { AlertTriangle, FlaskConical } from 'lucide-react'
-import type { SimulationResult } from '../types'
+import type { SimulationResult, TestOutcome } from '../types'
+
+export const TEST_OUTCOME_LABEL: Record<TestOutcome, string> = {
+  REALLY_SENT: 'Really sent',
+  SIMULATED: 'Simulated',
+  SKIPPED: 'Skipped',
+  FAILED: 'Failed',
+}
+
+const TEST_OUTCOME_STYLE: Record<TestOutcome, string> = {
+  REALLY_SENT: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300',
+  SIMULATED: 'bg-slate-100 text-slate-600 dark:bg-white/10 dark:text-slate-300',
+  SKIPPED: 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300',
+  FAILED: 'bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-300',
+}
 
 interface SimulationOutcomeProps {
   result?: SimulationResult
@@ -45,6 +59,13 @@ export function SimulationOutcome({ result, onSelectNode }: SimulationOutcomePro
         </section>
       )}
 
+      {result.test_mode && result.summary && (
+        <p className="rounded-lg border border-[var(--border-color)] bg-[var(--subtle-fg)] p-3 text-[11px] leading-4" data-testid="test-summary">
+          {(Object.keys(TEST_OUTCOME_LABEL) as TestOutcome[]).map((key) => `${result.summary?.[key] ?? 0} ${TEST_OUTCOME_LABEL[key].toLowerCase()}`).join(' · ')}
+          {result.tester?.email && <span className="text-muted block">Messages went to {result.tester.email}{result.tester.phone ? ` and ${result.tester.phone}` : ''} only.</span>}
+        </p>
+      )}
+
       {path.length > 0 ? (
         <ol className="space-y-0">
           {path.map((entry, index) => (
@@ -54,6 +75,8 @@ export function SimulationOutcome({ result, onSelectNode }: SimulationOutcomePro
               <div className="min-w-0 flex-1 rounded-lg border border-[var(--border-color)] bg-white/60 p-3 backdrop-blur-md dark:bg-white/5">
                 <strong className="text-heading block text-[11px]">{entry.type}</strong>
                 <span className={`mt-1 inline-block rounded-full px-1.5 py-0.5 text-[8px] font-bold uppercase ${entry.status === 'FAILED' ? 'bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-300' : 'bg-slate-100 text-slate-600 dark:bg-white/10 dark:text-slate-300'}`}>{entry.status}</span>
+                {entry.test_outcome && <span className={`ml-1 mt-1 inline-block rounded-full px-1.5 py-0.5 text-[8px] font-bold uppercase ${TEST_OUTCOME_STYLE[entry.test_outcome]}`}>{TEST_OUTCOME_LABEL[entry.test_outcome]}</span>}
+                {entry.test_note && <p className="text-muted mt-1 text-[9.5px] leading-4">{entry.test_note}</p>}
                 {entry.note && <p className={`mt-1 text-[9.5px] leading-4 ${entry.status === 'FAILED' ? 'text-red-600 dark:text-red-300' : 'text-amber-700 dark:text-amber-300'}`}>{entry.note}</p>}
                 <pre className="text-muted mt-1 max-h-32 overflow-auto whitespace-pre-wrap text-[9px] leading-4">{JSON.stringify(entry.output, null, 2)}</pre>
               </div>
