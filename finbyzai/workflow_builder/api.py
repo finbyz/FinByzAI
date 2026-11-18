@@ -685,6 +685,43 @@ def simulate(envelope=None, workflow_id=None, record_name=None, graph=None):
 
 
 @frappe.whitelist(methods=["POST"])
+def test_run(envelope=None, workflow_id=None, record_name=None, graph=None, test_email=None, test_phone=None, test_instagram_id=None, confirm=None):
+	"""WF-08: run the draft on one record. Messages really go out, but only to the tester."""
+	from . import test_mode
+
+	registry.require_builder()
+	data = _envelope(envelope, workflow_id=workflow_id, record_name=record_name, graph=graph, test_email=test_email, test_phone=test_phone, test_instagram_id=test_instagram_id, confirm=confirm)
+	payload = data["payload"]
+
+	def option(key):
+		return str(payload.get(key) or data.get(key) or "").strip()
+
+	if not cint(payload.get("confirm") or data.get("confirm")):
+		raise AutomationError(_("Confirm that this test really sends messages to you."))
+	workflow = frappe.get_doc("Automation Workflow", data.get("workflow_id"))
+	workflow.check_permission("read")
+	graph_value = payload.get("graph", data.get("graph"))
+	if graph_value is None:
+		graph_value = authoring.get_workflow_draft(workflow.name)["draft"]["graph"]
+	validation = validate_graph(graph_value, primary_doctype=workflow.primary_doctype)
+	if not validation["valid"]:
+		return {"valid": False, "issues": validation["issues"], "path": [], "mutated": False}
+	issues = authoring.validate_bindings(validation["graph"], workflow.execution_user, workflow.name)
+	if issues:
+		return {"valid": False, "issues": issues, "path": [], "mutated": False}
+	record = frappe.get_doc(workflow.primary_doctype, option("record_name"))
+	record.check_permission("read")
+	if not frappe.has_permission(workflow.primary_doctype, ptype="read", doc=record, user=workflow.execution_user):
+		raise AutomationPermissionError(_("Workflow execution user cannot read this record."))
+	email = option("test_email") or frappe.db.get_value("User", frappe.session.user, "email") or ""
+	if email and not validate_email_address(email, throw=False):
+		raise AutomationError(_("The test email address is not valid."))
+	tester = {"email": email, "phone": option("test_phone"), "instagram_id": option("test_instagram_id"), "user": frappe.session.user}
+	result = test_mode.run_test(validation["graph"], record, execution_user=workflow.execution_user, tester=tester)
+	return {"valid": True, "issues": [], "mutated": False, "tester": {k: v for k, v in tester.items() if v}, **result}
+
+
+@frappe.whitelist(methods=["POST"])
 def test_node(envelope=None, workflow_id=None, record_name=None, node_id=None, graph=None):
 	registry.require_builder()
 	data = _envelope(envelope, workflow_id=workflow_id, record_name=record_name, node_id=node_id, graph=graph)

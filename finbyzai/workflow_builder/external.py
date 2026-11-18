@@ -283,10 +283,13 @@ def repair_email_queue_communication(queue_name: str) -> str | None:
 	return communication_name
 
 
-def queue_email(run, config: dict, *, record, outputs: dict[str, Any], workflow_settings: dict | None = None) -> dict:
+def queue_email(run, config: dict, *, record, outputs: dict[str, Any], workflow_settings: dict | None = None, test_recipient: str | None = None) -> dict:
+	"""Queue one workflow email. With test_recipient (WF-08) the message goes to that address only,
+	the subject starts with [TEST], and no Communication is written to the record's timeline.
+	The recipient checks still run, so a suppressed test address is not mailed."""
 	if not external_actions_enabled():
 		raise AutomationError(_("External workflow actions are disabled in Automation Settings."))
-	recipient = str(_resolve_tree(config.get("recipient"), record=record, outputs=outputs) or "").strip()
+	recipient = str(test_recipient or _resolve_tree(config.get("recipient"), record=record, outputs=outputs) or "").strip()
 	if not validate_email_address(recipient, throw=False):
 		raise AutomationError(_("Email action resolved to an invalid recipient."))
 	content = resolve_email_content(
@@ -296,6 +299,8 @@ def queue_email(run, config: dict, *, record, outputs: dict[str, Any], workflow_
 	message = content["message"]
 	if not subject or not message:
 		raise AutomationError(_("Email subject and message are required."))
+	if test_recipient:
+		subject = f"[TEST] {subject}"
 	communication = (workflow_settings or {}).get("communication") or {}
 	sender_email = str(config.get("sender_email") or communication.get("default_sender_email") or "").strip()
 	sender_name = str(config.get("sender_name") or communication.get("default_sender_name") or "").strip()
@@ -344,21 +349,24 @@ def queue_email(run, config: dict, *, record, outputs: dict[str, Any], workflow_
 	savepoint = "automation_workflow_email"
 	frappe.db.savepoint(savepoint)
 	try:
-		communication_name = _create_outbound_communication(
-			run,
-			sender=sender,
-			recipient=recipient,
-			subject=subject,
-			message=message,
-			email_template=content.get("email_template"),
-		)
-		delivery_message, tracked_link_count = decorate_workflow_email_links(
-			message,
-			communication_name,
-		)
-		if bool(content["raw_html"]):
-			delivery_message = ensure_workflow_open_tracking(delivery_message)
-		if delivery_message != message:
+		if test_recipient:
+			communication_name, delivery_message = None, message
+		else:
+			communication_name = _create_outbound_communication(
+				run,
+				sender=sender,
+				recipient=recipient,
+				subject=subject,
+				message=message,
+				email_template=content.get("email_template"),
+			)
+			delivery_message, tracked_link_count = decorate_workflow_email_links(
+				message,
+				communication_name,
+			)
+			if bool(content["raw_html"]):
+				delivery_message = ensure_workflow_open_tracking(delivery_message)
+		if communication_name and delivery_message != message:
 			frappe.db.set_value(
 				"Communication",
 				communication_name,
