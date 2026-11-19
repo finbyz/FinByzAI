@@ -60,7 +60,10 @@ def _email_check_reason(email: str) -> str | None:
 		resolver = dns.resolver.Resolver()
 		resolver.lifetime = 3
 		try:
-			resolver.resolve(domain, "MX")
+			answer = resolver.resolve(domain, "MX")
+			# RFC 7505 "null MX" (MX 0 .): the domain explicitly accepts no mail.
+			if all(str(record.exchange).rstrip(".") == "" for record in answer):
+				return "NO_MAIL_SERVER"
 			return None
 		except dns.resolver.NoAnswer:
 			resolver.resolve(domain, "A")
