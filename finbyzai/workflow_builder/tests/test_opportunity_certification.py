@@ -609,6 +609,7 @@ class TestOpportunityWorkflowCertification(IntegrationTestCase):
 					"message": {"kind": "literal", "value": "Controlled delivery"},
 					"purpose": "certification",
 					"require_consent": 0,
+					"subscription_topic": "Transactional",
 				},
 			),
 			_node(

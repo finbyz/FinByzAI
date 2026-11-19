@@ -41,6 +41,7 @@ import {
   X,
   Zap,
   Pencil,
+  Users,
 } from 'lucide-react'
 import { type CSSProperties, type FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -59,6 +60,7 @@ import { ThemeToggle } from '../components/ThemeToggle'
 import { useDialogA11y } from '../components/useDialogA11y'
 import { WorkflowCanvas } from '../components/WorkflowCanvas'
 import { call, fetchFieldCatalog, mutationEnvelope, searchDoctypes, searchLink } from '../lib/api'
+import { RunArchivesDialog, WorkflowAccessDialog } from '../components/AccessDialogs'
 import { projectRunTrace } from '../lib/runTrace'
 import { useWorkflowActions, useWorkflowDocument, useWorkflowEditor, useWorkflowHistory, WorkflowProvider } from '../state/WorkflowContext'
 import type { CanvasMetricsResponse, ConditionExpression, FieldCatalogItem, ManualEnrollmentResult, RunSummary, RuntimeHealth, RuntimePreflight, WorkflowGraph, WorkflowLookup, WorkflowSummary } from '../types'
@@ -647,6 +649,8 @@ export function WorkflowListPage() {
       {expanded && children.map((child) => renderFolder(child, depth + 1))}
     </div>
   }
+  const [sharing, setSharing] = useState<{ id: string; title: string } | null>(null)
+  const [archivesOpen, setArchivesOpen] = useState(false)
   const canBuild = hasRole('Automation Builder', 'Automation Publisher')
   const canOperate = hasRole('Automation Operator', 'Automation Publisher')
   const isSystemManager = hasRole('System Manager', 'Automation Manager')
@@ -680,7 +684,7 @@ export function WorkflowListPage() {
           <div className="hidden text-right sm:block"><p className="text-heading text-[11px] font-semibold">{window.frappe?.boot?.user}</p><p className="text-light text-[9px]">{window.frappe?.boot?.site_name}</p></div>
           {canOperate && <Link className={secondary} to="/operations"><Activity size={14} /><span className="hidden sm:inline">Operations</span></Link>}
           <DeskLink />
-          <ThemeToggle />
+          {isSystemManager && <button type="button" className={secondary} onClick={() => setArchivesOpen(true)} title="Download archived run logs"><History size={13} />Archives</button>}<ThemeToggle />{sharing && <WorkflowAccessDialog workflowId={sharing.id} title={sharing.title} onClose={() => setSharing(null)} />}{archivesOpen && <RunArchivesDialog onClose={() => setArchivesOpen(false)} />}
           {canBuild && <Link className={secondary} to="/templates"><Layers3 size={14} /><span className="hidden sm:inline">Templates</span></Link>}
           {canBuild && <button className={magic} onClick={() => setCreatingAi(true)} title="Generate workflow from natural language with AI"><Sparkles size={14} /><span className="hidden sm:inline">New with AI</span></button>}
           {canBuild && <button className={primary} onClick={() => setCreating(true)}><Plus size={15} /><span className="hidden sm:inline">Create workflow</span></button>}
@@ -724,7 +728,7 @@ export function WorkflowListPage() {
                       <td className="px-5 py-4"><span className="rounded-md border border-[var(--border-color)] bg-[var(--subtle-fg)] px-2 py-1 text-[10px] font-semibold">{row.primary_doctype}</span></td>
                       <td className="px-5 py-4"><Status value={row.status} /></td>
                       <td className="text-muted whitespace-nowrap px-5 py-4 text-[10px]">{formatDate(row.modified)}</td>
-                      <td className="px-5 py-4"><div className="flex flex-wrap gap-1.5">{canBuild && <button className={secondary} onClick={() => void cloneWorkflow(row)} title="Create an independent draft with fresh node and edge IDs"><Copy size={13} />Clone</button>}{canOperate && row.active_version && <>{row.trigger_type === 'trigger.manual' ? <Link className={secondary} to={`/${row.name}/runs`} title="Enroll a record manually and inspect runs"><Play size={13} />Enroll</Link> : <Link className={secondary} to={`/${row.name}/enrollment`} title={row.trigger_type === 'trigger.schedule' ? 'Manage schedules and backfills' : 'Run version-pinned backfills'}><CalendarClock size={13} />{row.trigger_type === 'trigger.schedule' ? 'Schedules' : 'Backfill'}</Link>}{row.status === 'ACTIVE' ? <button className={secondary} title="Stop new enrollments while preserving resumable runtime state" onClick={() => void setWorkflowState(row.name, 'PAUSED')}><Pause size={13} />Pause</button> : row.status === 'PAUSED' ? <button className={primary} title="Revalidate the pinned version and resume execution" onClick={() => void setWorkflowState(row.name, 'ACTIVE')}><Play size={13} />Resume</button> : null}{row.status !== 'DISABLED' && <button className={ghost} title="Cancel active runs and timers; published history remains" onClick={() => void setWorkflowState(row.name, 'DISABLED')}><Ban size={13} />Disable</button>}</>}{canBuild && ((row.status === 'DRAFT' && !row.latest_version && (row.owner === window.frappe?.boot?.user || isSystemManager)) || (isSystemManager && row.status === 'DISABLED')) && <button className="btn-core btn-ghost text-red-600 hover:!bg-red-50 dark:hover:!bg-red-500/10" title={row.latest_version ? 'Permanently delete this disabled workflow and all history' : 'Delete this unpublished draft'} onClick={() => setDeleting(row)}><Trash2 size={13} />Delete</button>}</div></td>
+                      <td className="px-5 py-4"><div className="flex flex-wrap gap-1.5">{canBuild && <button className={secondary} onClick={() => setSharing({ id: row.name, title: row.title })} title="Give one more person access to this workflow"><Users size={13} />Share</button>}{canBuild && <button className={secondary} onClick={() => void cloneWorkflow(row)} title="Create an independent draft with fresh node and edge IDs"><Copy size={13} />Clone</button>}{canOperate && row.active_version && <>{row.trigger_type === 'trigger.manual' ? <Link className={secondary} to={`/${row.name}/runs`} title="Enroll a record manually and inspect runs"><Play size={13} />Enroll</Link> : <Link className={secondary} to={`/${row.name}/enrollment`} title={row.trigger_type === 'trigger.schedule' ? 'Manage schedules and backfills' : 'Run version-pinned backfills'}><CalendarClock size={13} />{row.trigger_type === 'trigger.schedule' ? 'Schedules' : 'Backfill'}</Link>}{row.status === 'ACTIVE' ? <button className={secondary} title="Stop new enrollments while preserving resumable runtime state" onClick={() => void setWorkflowState(row.name, 'PAUSED')}><Pause size={13} />Pause</button> : row.status === 'PAUSED' ? <button className={primary} title="Revalidate the pinned version and resume execution" onClick={() => void setWorkflowState(row.name, 'ACTIVE')}><Play size={13} />Resume</button> : null}{row.status !== 'DISABLED' && <button className={ghost} title="Cancel active runs and timers; published history remains" onClick={() => void setWorkflowState(row.name, 'DISABLED')}><Ban size={13} />Disable</button>}</>}{canBuild && ((row.status === 'DRAFT' && !row.latest_version && (row.owner === window.frappe?.boot?.user || isSystemManager)) || (isSystemManager && row.status === 'DISABLED')) && <button className="btn-core btn-ghost text-red-600 hover:!bg-red-50 dark:hover:!bg-red-500/10" title={row.latest_version ? 'Permanently delete this disabled workflow and all history' : 'Delete this unpublished draft'} onClick={() => setDeleting(row)}><Trash2 size={13} />Delete</button>}</div></td>
                       <td><Link className="icon-button" aria-label={`Open ${row.title}`} to={canBuild ? `/${row.name}` : `/${row.name}/runs`}><ChevronRight size={17} /></Link></td>
                     </tr>
                   ))}</tbody>

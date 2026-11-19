@@ -47,3 +47,24 @@ class TestAutomationCollaboration(IntegrationTestCase):
 		self.assertIn(("Email Account", "sales@example.com"), {(row["kind"], row["name"]) for row in rows})
 		self.assertIn(("Subscription Topic", "Product Updates"), {(row["kind"], row["name"]) for row in rows})
 		self.assertIn(("Installed integration", "Asana Integration"), {(row["kind"], row["name"]) for row in rows})
+
+	def test_workflow_can_be_shared_per_user_as_read_or_edit(self):
+		email = f"zztest-share-{frappe.generate_hash(length=6)}@example.com"
+		frappe.get_doc({
+			"doctype": "User", "email": email, "first_name": "ZZTest", "send_welcome_email": 0,
+			"roles": [{"role": "Automation Builder"}],
+		}).insert(ignore_permissions=True)
+		created = create_workflow_record("Shared workflow", "Lead")
+		workflow = frappe.get_doc("Automation Workflow", created["workflow"])
+
+		access = collaboration.set_workflow_access(workflow.name, email, "read")
+		self.assertEqual([(r.user, r.read, r.write) for r in access["rows"]], [(email, 1, 0)])
+		access = collaboration.set_workflow_access(workflow.name, email, "edit")
+		self.assertEqual([(r.user, r.read, r.write) for r in access["rows"]], [(email, 1, 1)])
+		self.assertTrue(frappe.has_permission("Automation Workflow", "write", doc=workflow, user=email))
+
+		self.assertEqual(collaboration.set_workflow_access(workflow.name, email, "none")["rows"], [])
+		with self.assertRaises(frappe.ValidationError):
+			collaboration.set_workflow_access(workflow.name, email, "owner")
+		with self.assertRaises(frappe.ValidationError):
+			collaboration.set_workflow_access(workflow.name, workflow.owner, "read")

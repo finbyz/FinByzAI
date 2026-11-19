@@ -31,7 +31,7 @@ import { DeleteWorkflowStepButton } from './DeleteWorkflowStepButton'
 import { nodeLabels, nodeIcons } from './InspectorHelpers'
 
 type WorkflowFlowNode = Node<{ workflowNode: WorkflowNode; primaryDoctype: string; issueCount: number; manualConnections: boolean; connected: boolean; metric?: CanvasMetric; moving?: boolean; beginMove?: (nodeId: string) => void }, 'workflow'>
-type EnrollmentFlowNode = Node<{ workflowNode: WorkflowNode; primaryDoctype: string; issueCount: number; totalEnrollments?: number }, 'enrollment'>
+type EnrollmentFlowNode = Node<{ workflowNode: WorkflowNode; primaryDoctype: string; issueCount: number; totalEnrollments?: number; goalReached?: number }, 'enrollment'>
 type VirtualEndFlowNode = Node<{ sourceId: string; sourceHandle: string; label: string; failsWorkflow?: boolean; insertPosition: { x: number; y: number }; movingNodeId?: string | null; moveToPlacement?: (placement: NodePlacement) => void }, 'virtualEnd'>
 type FlowNode = WorkflowFlowNode | EnrollmentFlowNode | VirtualEndFlowNode
 
@@ -343,7 +343,7 @@ export const EnrollmentBoundary = memo(({ data }: NodeProps<EnrollmentFlowNode>)
 		actions.selectTrigger(node.id, id)
 	}
 	return <section className="enrollment-boundary nodrag" style={{ width: workflowNodeVisualWidth(node) } as CSSProperties} data-selected={selectedNodeId === node.id ? 'true' : 'false'} data-invalid={data.issueCount > 0 ? 'true' : 'false'}>
-		{canMutateCards && visibleCards.length > 0 && <div className="enrollment-boundary__or"><span />OR<span /></div>}
+		{canMutateCards && visibleCards.length > 0 && <div className="enrollment-boundary__or"><span />{node.config.match_mode === 'all' ? 'AND' : 'OR'}<span /></div>}
 		<div className="enrollment-boundary__cards" data-empty={visibleCards.length === 0 ? 'true' : 'false'} data-mutable={canMutateCards ? 'true' : 'false'}>
 			<div className="enrollment-boundary__trigger-list nowheel">
 			{visibleCards.map((entry, index) => { const EntryIcon = nodeIcons[entry.type as NodeType] || Zap; return <article className="enrollment-trigger-card" data-active={selectedTriggerGroupId === entry.id ? 'true' : 'false'} data-incomplete={!entryConfigured(entry) ? 'true' : 'false'} key={entry.id} onClick={(event) => { event.stopPropagation(); setChooserOpen(false); actions.selectTrigger(node.id, entry.id) }}>
@@ -354,6 +354,7 @@ export const EnrollmentBoundary = memo(({ data }: NodeProps<EnrollmentFlowNode>)
 			</div>
 			{canMutateCards && <div className="enrollment-add-trigger__slot"><button type="button" className="enrollment-add-trigger" disabled={visibleCards.length >= 20} aria-expanded={chooserOpen} onClick={(event) => { event.stopPropagation(); actions.select(node.id); setChooserOpen((open) => !open) }}><Plus size={17} /><span><strong>Add new trigger</strong><small>{visibleCards.length}/20 configured</small></span></button>{chooserOpen && <EnrollmentTriggerChooser primaryDoctype={data.primaryDoctype} events={eventTypes} loading={eventTypesLoading} error={eventTypesError} onChoose={choose} onClose={() => setChooserOpen(false)} onRetry={() => setEventTypesEpoch((value) => value + 1)} />}</div>}
 		</div>
+		{data.totalEnrollments ? <div className="workflow-node__metric" title="Records enrolled in the active version and runs that ended because a goal was met"><span>{data.totalEnrollments.toLocaleString()} enrolled</span>{data.goalReached ? <span>{data.goalReached.toLocaleString()} reached the goal</span> : null}</div> : null}
 		<div className="enrollment-boundary__connector" aria-hidden><span /></div>
 		<Handle id="default" type="source" position={Position.Bottom} className="workflow-handle workflow-handle--guided" />
 	</section>
@@ -558,7 +559,7 @@ export function WorkflowCanvas() {
 				id: node.id,
 				type: 'enrollment',
 				position: node.position || { x: 120, y: 120 },
-				data: { workflowNode: node, primaryDoctype: graph?.primary_doctype || 'record', issueCount: validation.filter((issue) => issue.node_id === node.id).length, totalEnrollments: canvasMetrics?.total_enrollments },
+				data: { workflowNode: node, primaryDoctype: graph?.primary_doctype || 'record', issueCount: validation.filter((issue) => issue.node_id === node.id).length, totalEnrollments: canvasMetrics?.total_enrollments, goalReached: canvasMetrics?.goal_reached },
 			} : {
 				id: node.id,
 				type: 'workflow',
@@ -576,7 +577,7 @@ export function WorkflowCanvas() {
 				deletable: false,
 			})),
 		],
-		[actions, canvasMetrics?.total_enrollments, connectedNodeIds, graph?.nodes, graph?.primary_doctype, graph?.start_node_id, implicitEnds, manualConnections, metricsByNode, movingNodeId, validation],
+		[actions, canvasMetrics?.total_enrollments, canvasMetrics?.goal_reached, connectedNodeIds, graph?.nodes, graph?.primary_doctype, graph?.start_node_id, implicitEnds, manualConnections, metricsByNode, movingNodeId, validation],
   )
   const [nodes, setNodes] = useState(mappedNodes)
 

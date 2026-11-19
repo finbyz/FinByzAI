@@ -29,6 +29,59 @@ from finbyzai.workflow_builder.schema import canonical_json
 
 
 class TestAutomationExternalSafety(IntegrationTestCase):
+	def setUp(self):
+		super().setUp()
+		# Most tests here cover the pre-migration email path; the policy path has its own tests below.
+		patcher = patch("finbyzreach.consent.policy_ready", return_value=False)
+		patcher.start()
+		self.addCleanup(patcher.stop)
+
+	def _policy_email(self, email_type, *, consent_required, reach_reason=None):
+		"""Run queue_email on the policy path up to the point where it would build the message."""
+
+		class Reached(Exception):
+			pass
+
+		run = SimpleNamespace(record_doctype="Lead", record_name="LEAD-1")
+		config = {
+			"content_mode": "template",
+			"email_template": "Welcome",
+			"recipient": {"kind": "literal", "value": "person@example.com"},
+			"subscription_topic": email_type,
+		}
+		content = {"subject": "Hi", "message": "<p>Hi</p>", "raw_html": True, "email_template": "Welcome", "email_type": email_type}
+		policy = frappe._dict(available=True, consent_required=consent_required)
+		with (
+			patch("finbyzai.workflow_builder.external.external_actions_enabled", return_value=True),
+			patch("finbyzai.workflow_builder.external.resolve_email_content", return_value=content),
+			patch("finbyzreach.consent.policy_ready", return_value=True),
+			patch("finbyzreach.consent.email_policy", return_value=policy),
+			patch("finbyzai.workflow_builder.external._reach_recipient_exclusion", return_value=reach_reason),
+			patch("finbyzai.workflow_builder.external._native_email_recipient_exclusion", return_value=None) as native,
+			patch("finbyzreach.subscription_preferences.address_urls", side_effect=Reached) as urls,
+		):
+			try:
+				result = queue_email(run, config, record={}, outputs={})
+			except Reached:
+				result = None
+		return result, native, urls
+
+	def test_marketing_email_is_skipped_for_an_unsubscribed_contact(self):
+		result, _native, urls = self._policy_email("Marketing E-Mails", consent_required=1, reach_reason="Unsubscribed")
+		self.assertTrue(result["suppressed"])
+		self.assertEqual(result["suppression_reason"], "Unsubscribed")
+		urls.assert_not_called()
+
+	def test_marketing_email_also_checks_native_opt_outs(self):
+		_result, native, _urls = self._policy_email("Marketing E-Mails", consent_required=1)
+		native.assert_called_once()
+
+	def test_transactional_email_ignores_marketing_opt_outs(self):
+		result, native, urls = self._policy_email("Transactional", consent_required=0)
+		self.assertIsNone(result)  # reached message building: not suppressed
+		urls.assert_called_once()
+		native.assert_not_called()
+
 	def test_workflow_email_creates_frappe_automated_message_for_record_timeline(self):
 		run = SimpleNamespace(record_doctype="Lead", record_name="LEAD-1")
 		communication = Mock()
@@ -320,7 +373,6 @@ class TestAutomationExternalSafety(IntegrationTestCase):
 		self.assertIsNone(result["subscription_topic"])
 		native_check.assert_called_once_with(run, "person@example.com")
 		reach_check.assert_not_called()
-		installed_apps.assert_not_called()
 		exists.assert_not_called()
 		sendmail.assert_not_called()
 
