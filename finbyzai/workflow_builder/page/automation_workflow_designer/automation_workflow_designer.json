@@ -17,6 +17,12 @@
    "role": "Automation Operator"
   },
   {
+   "role": "Automation Viewer"
+  },
+  {
+   "role": "Automation Manager"
+  },
+  {
    "role": "System Manager"
   }
  ]

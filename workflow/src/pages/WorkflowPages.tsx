@@ -642,14 +642,14 @@ export function WorkflowListPage() {
         <button type="button" className="flex min-w-0 flex-1 items-center gap-2 py-2 text-left text-xs" onClick={() => setSelectedFolder(item.name)}>{expanded ? <FolderOpen size={14} /> : <Folder size={14} />}<span className="truncate" title={item.name}>{item.folder_name}</span></button>
         {canBuild && <button type="button" className="icon-button !size-6 opacity-0 group-hover:opacity-100 focus:opacity-100" aria-label={`Add subfolder in ${item.name}`} onClick={() => { setFolderParent(item.name); setFolderName(''); setFolderError(''); setAddingFolder(true) }}><Plus size={12} /></button>}
         {canBuild && <button type="button" className="icon-button !size-6 opacity-0 group-hover:opacity-100 focus:opacity-100" aria-label={`Rename folder ${item.name}`} onClick={() => void renameFolder(item)}><Pencil size={12} /></button>}
-        {canBuild && <button type="button" className="icon-button !size-6 text-red-500 opacity-0 group-hover:opacity-100 focus:opacity-100" aria-label={`Delete folder ${item.name}`} onClick={() => void removeFolder(item.name)}><Trash2 size={12} /></button>}
+        {isSystemManager && <button type="button" className="icon-button !size-6 text-red-500 opacity-0 group-hover:opacity-100 focus:opacity-100" aria-label={`Delete folder ${item.name}`} onClick={() => void removeFolder(item.name)}><Trash2 size={12} /></button>}
       </div>
       {expanded && children.map((child) => renderFolder(child, depth + 1))}
     </div>
   }
   const canBuild = hasRole('Automation Builder', 'Automation Publisher')
   const canOperate = hasRole('Automation Operator', 'Automation Publisher')
-  const isSystemManager = hasRole('System Manager')
+  const isSystemManager = hasRole('System Manager', 'Automation Manager')
   const setWorkflowState = async (workflowId: string, status: 'ACTIVE' | 'PAUSED' | 'DISABLED') => {
     if (status === 'DISABLED' && !await confirmation.ask({
       title: 'Disable this workflow?',

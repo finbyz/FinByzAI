@@ -477,6 +477,23 @@ class TestAutomationExternalSafety(IntegrationTestCase):
 		create_task.assert_called_once_with({**payload, "workspace": "workspace-1"})
 		self.assertEqual(result, {**response, "operation": "create_task"})
 
+	def test_asana_update_retries_when_the_new_task_is_not_visible_yet(self):
+		settings = SimpleNamespace(enabled=1, workspace_gid="workspace-1")
+		class NotYet(Exception):
+			status = 404
+
+		with (
+			patch.object(frappe, "get_installed_apps", return_value=["asana_integration"]),
+			patch.object(frappe, "get_cached_doc", return_value=settings),
+			patch("asana_integration.client.update_task", side_effect=NotYet("not found")),
+			self.assertRaises(AutomationTransientError),
+		):
+			execute_asana(
+				{"operation": "update_task", "target_gid": "task-1", "payload": {"notes": "x"}},
+				record={},
+				outputs={},
+			)
+
 	def test_webhook_response_is_bounded_and_connection_is_released(self):
 		response = Mock(status=200)
 		response.read.return_value = b"x" * (MAX_WEBHOOK_RESPONSE_BYTES + 1)

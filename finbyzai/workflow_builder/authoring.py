@@ -12,6 +12,7 @@ from frappe import _
 from frappe.utils import cint, now_datetime, validate_email_address
 
 from . import emailing
+from .constants import AUTOMATION_ROLES
 from .trigger_groups import match_settings
 from .folders import ensure_folder_path, normalize_folder_path
 from .errors import AutomationConflictError, AutomationError, AutomationPermissionError
@@ -1002,9 +1003,10 @@ def _delete_workflow_history(workflow) -> dict[str, int]:
 def delete_workflow_record(workflow_name: str, delete_history: bool = False) -> dict:
 	"""Delete a disposable draft or, for System Managers, a disabled workflow."""
 	workflow = _workflow(workflow_name, "write", for_update=True)
-	is_system_manager = "System Manager" in frappe.get_roles()
-	if workflow.owner != frappe.session.user and not is_system_manager:
-		raise AutomationPermissionError(_("Only the workflow owner can delete this draft."))
+	# Deleting needs the Automation Manager role (or System Manager); an owner may drop an unused draft.
+	can_delete = bool(AUTOMATION_ROLES["deleter"].intersection(frappe.get_roles()))
+	if workflow.owner != frappe.session.user and not can_delete:
+		raise AutomationPermissionError(_("Only the workflow owner or an Automation Manager can delete this draft."))
 	has_history = bool(workflow.active_version or cint(workflow.latest_version)) or any(
 		frappe.db.exists(doctype, {"workflow": workflow.name})
 		for doctype in (
@@ -1017,8 +1019,8 @@ def delete_workflow_record(workflow_name: str, delete_history: bool = False) -> 
 	if not has_history and workflow.status == "DRAFT":
 		counts = _delete_workflow_history(workflow)
 		return {"workflow_id": workflow.name, "deleted": True, "history_deleted": False, "counts": counts}
-	if not is_system_manager:
-		raise AutomationPermissionError(_("Only a System Manager can permanently delete workflow history."))
+	if not can_delete:
+		raise AutomationPermissionError(_("Only an Automation Manager or System Manager can permanently delete workflow history."))
 	if not cint(delete_history):
 		raise AutomationError(_("Confirm permanent deletion of this workflow and its history."))
 	if workflow.status in {"ACTIVE", "PAUSED"}:

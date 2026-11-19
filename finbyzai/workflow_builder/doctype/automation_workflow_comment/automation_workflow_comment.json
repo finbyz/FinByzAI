@@ -24,7 +24,8 @@
  "permissions": [
   {"create": 1, "read": 1, "write": 1, "delete": 1, "role": "Automation Builder"},
   {"create": 1, "read": 1, "write": 1, "delete": 1, "role": "Automation Publisher"},
-  {"create": 1, "read": 1, "write": 1, "delete": 1, "role": "System Manager"}
+  {"create": 1, "read": 1, "write": 1, "delete": 1, "role": "System Manager"},
+  {"read": 1, "role": "Automation Viewer"}
  ],
  "sort_field": "creation",
  "sort_order": "ASC",

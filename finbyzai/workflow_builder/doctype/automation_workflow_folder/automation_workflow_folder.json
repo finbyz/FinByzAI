@@ -24,6 +24,8 @@
   {"role": "Automation Builder", "read": 1, "write": 1, "create": 1, "delete": 1},
   {"role": "Automation Publisher", "read": 1, "write": 1, "create": 1, "delete": 1},
   {"role": "Automation Operator", "read": 1},
+  {"role": "Automation Viewer", "read": 1},
+  {"role": "Automation Manager", "read": 1, "delete": 1},
   {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1}
  ],
  "sort_field": "name",

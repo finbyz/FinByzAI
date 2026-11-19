@@ -487,7 +487,7 @@ def rename_workflow_folder(path: str, new_name: str):
 
 @frappe.whitelist(methods=["POST"])
 def delete_workflow_folder(path: str):
-	registry.require_builder()
+	registry.require_deleter()
 	return folders.delete_folder(path)
 
 
@@ -621,7 +621,7 @@ def set_workflow_folder(envelope=None, workflow_id=None, folder=None):
 
 @frappe.whitelist(methods=["POST"])
 def delete_workflow(envelope=None, workflow_id=None, delete_history=None):
-	registry.require_builder()
+	registry.require_builder()  # owners may drop their own unused drafts; authoring enforces the Manager role for the rest
 	data = _envelope(envelope, workflow_id=workflow_id, delete_history=delete_history)
 	return authoring.delete_workflow_record(
 		data.get("workflow_id"),

@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 AUTOMATION_PREFIX = "Automation "
+# Who may do what (assign the roles that match the job):
+#   Automation Viewer    open workflows and their run history, change nothing
+#   Automation Builder   edit drafts and manage folders
+#   Automation Publisher edit and publish (includes Builder rights)
+#   Automation Operator  run, cancel and retry (read-only on the design)
+#   Automation Manager   delete workflows and folders; give it together with Builder or Publisher
 AUTOMATION_ROLES = {
+	"viewer": {"Automation Viewer", "Automation Builder", "Automation Publisher", "Automation Operator", "Automation Manager", "System Manager"},
 	"builder": {"Automation Builder", "Automation Publisher", "System Manager"},
 	"publisher": {"Automation Publisher", "System Manager"},
 	"operator": {"Automation Operator", "Automation Publisher", "System Manager"},
+	"deleter": {"Automation Manager", "System Manager"},
 }
 
 WORKFLOW_STATUSES = {"DRAFT", "ACTIVE", "PAUSED", "DISABLED"}

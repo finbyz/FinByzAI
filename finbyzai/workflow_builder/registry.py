@@ -563,8 +563,12 @@ def require_operator() -> None:
 	require_capability("operator")
 
 
+def require_deleter() -> None:
+	require_capability("deleter")
+
+
 def require_viewer() -> None:
-	allowed = AUTOMATION_ROLES["builder"] | AUTOMATION_ROLES["operator"]
+	allowed = AUTOMATION_ROLES["viewer"] | AUTOMATION_ROLES["builder"] | AUTOMATION_ROLES["operator"]
 	if not allowed.intersection(frappe.get_roles()):
 		raise AutomationPermissionError(_("You do not have access to Automation workflows."))
 

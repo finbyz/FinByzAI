@@ -631,6 +631,9 @@ def execute_asana(config: dict, *, record, outputs: dict[str, Any]) -> dict:
 		status = cint(getattr(exc, "status", 0) or getattr(getattr(exc, "response", None), "status_code", 0))
 		if status == 429 or status >= 500:
 			raise AutomationTransientError(_("Asana temporarily rejected the request.")) from exc
+		if status == 404 and operation in {"update_task", "create_subtask"}:
+			# Asana can answer 404 for a task a few seconds after creating it; retry before failing.
+			raise AutomationTransientError(_("Asana does not know this task yet; retrying.")) from exc
 		raise AutomationError(_("Asana rejected the request: {0}").format(str(exc)[:500])) from exc
 	if not isinstance(response, dict):
 		response = {"value": str(response)}

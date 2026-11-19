@@ -104,6 +104,10 @@
   {
    "role": "System Manager",
    "read": 1
+  },
+  {
+   "role": "Automation Viewer",
+   "read": 1
   }
  ],
  "sort_field": "modified",
