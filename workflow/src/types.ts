@@ -70,7 +70,9 @@ export interface WorkflowSettings {
   reenrollment?: 'NEVER' | 'AFTER_COMPLETION' | 'ALWAYS'
   read_mode?: 'CURRENT' | 'ENROLLMENT_SNAPSHOT'
   unenroll_when_ineligible?: boolean
+  allow_manual_enrollment?: boolean
   exit_on_unsubscribe?: string[]
+  goal_events?: string[]
   exit_when_leaves_segment?: string[]
   goal_condition?: ConditionExpression | null
   eligibility_condition?: ConditionExpression | null
@@ -171,12 +173,14 @@ export interface CanvasMetric {
   failed: number
   cancelled: number
   branches: Record<string, number>
+  email?: { sent: number; opened: number; clicked: number; bounced: number }
 }
 
 export interface CanvasMetricsResponse {
   workflow_id: string
   workflow_version?: string
   total_enrollments: number
+  goal_reached?: number
   nodes: CanvasMetric[]
 }
 

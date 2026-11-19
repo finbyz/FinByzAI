@@ -105,7 +105,7 @@ def create_approval(run, token, node: dict, *, record, outputs: dict[str, Any]) 
 			"assigned_by": current_execution_user(),
 			"reference_type": run.record_doctype,
 			"reference_name": run.record_name,
-			"description": _("{0} — workflow {1}, run {2}").format(approval.title, run.workflow, run.name),
+			"description": _("{0} - workflow {1}, run {2}").format(approval.title, run.workflow, run.name),
 			"priority": "High",
 			"status": "Open",
 			"date": approval.expires_at.date() if approval.expires_at else None,

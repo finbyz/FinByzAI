@@ -65,6 +65,11 @@ NODE_OUTPUT_PATHS = {
 
 
 BUSINESS_EVENT_CATALOG = [
+    {
+        "topic": "crm.segment.entered", "label": "Record enters segment", "category": "CRM events",
+        "description": "Current members enroll on publication; new segment entrants enroll afterwards.",
+        "filter_fields": [{"fieldname":"segment", "label":"Segment", "fieldtype":"Link", "options":"Reach Segment", "link_filters":{"archived":0}}],
+    },
 	{
 		"topic": "crm.contact.list.joined",
 		"label": "Contact joined a list",
@@ -168,6 +173,17 @@ BUSINESS_EVENT_CATALOG = [
 		],
 	},
 	{
+		"topic": "email.complained",
+		"label": "Email marked as spam",
+		"category": "Email",
+		"description": "The recipient or their provider reported the email as spam.",
+		"filter_fields": [
+			{"fieldname": "email_queue", "label": "Workflow email message", "fieldtype": "Data"},
+			{"fieldname": "email_id", "label": "Specific email", "fieldtype": "Data"},
+			{"fieldname": "email_type", "label": "Email type", "fieldtype": "Data"},
+		],
+	},
+	{
 		"topic": "email.clicked",
 		"label": "Email link clicked",
 		"category": "Email",
@@ -204,9 +220,9 @@ BUSINESS_EVENT_CATALOG = [
 	},
 	{
 		"topic": "commerce.store.login",
-		"label": "Customer signed in to portal",
+		"label": "Signed in to portal",
 		"category": "Commerce",
-		"description": "A website user linked to a Customer created a new authenticated portal session.",
+		"description": "A website user created a new authenticated portal session. Customer, Contact and Lead workflows can use it.",
 		"filter_fields": [
 			{"fieldname": "portal", "label": "Portal", "fieldtype": "Data"},
 		],
@@ -242,6 +258,11 @@ BUSINESS_EVENT_CATALOG = [
 # context separate from the stable topic definitions above so existing saved
 # workflows and integrations continue to use the same topic keys.
 BUSINESS_EVENT_CONTEXT = {
+    "crm.segment.entered": {
+        "trigger_doctypes": {"Contact","Lead","Customer","Opportunity","Sales Order"}, "wait_doctypes": {"Contact","Lead","Customer","Opportunity","Sales Order"},
+        "source_modes": ["enrolled_record"], "producer_status":"native", "source_app":"Finbyzreach",
+        "setup_note":"Uses saved Reach Segment criteria and persistent exclusions.",
+    },
 	"crm.contact.list.joined": {
 		"trigger_doctypes": {"Contact", "Lead"},
 		"wait_doctypes": {"Contact", "Lead"},
@@ -319,6 +340,15 @@ BUSINESS_EVENT_CONTEXT = {
 		"source_app": "Frappe Communication",
 		"setup_note": "Emitted when a provider updates a linked Communication to Soft-Bounced or an imported delay delivery report correlates to the exact sent Communication.",
 	},
+	"email.complained": {
+		"trigger_traits": {"email_recipient"},
+		"wait_traits": {"record"},
+		"source_modes": ["enrolled_record", "action_output"],
+		"source_node_types": ["action.send_email"],
+		"producer_status": "native",
+		"source_app": "Frappe Communication",
+		"setup_note": "Emitted when a provider updates a linked Communication to Marked As Spam, or a campaign recipient is marked as spam.",
+	},
 	"email.clicked": {
 		"trigger_traits": {"email_recipient"},
 		"wait_traits": {"record"},
@@ -347,8 +377,8 @@ BUSINESS_EVENT_CONTEXT = {
 		"setup_note": "Global and record-specific opt-outs come from Frappe Email Unsubscribe; Lead topic opt-outs come from Finbyz Reach subscription preferences.",
 	},
 	"commerce.store.login": {
-		"trigger_doctypes": {"Customer"},
-		"wait_doctypes": {"Customer"},
+		"trigger_doctypes": {"Customer", "Contact", "Lead"},
+		"wait_doctypes": {"Customer", "Contact", "Lead"},
 		"source_modes": ["enrolled_record"],
 		"producer_status": "native",
 		"source_app": "Customer Portal",
@@ -422,7 +452,7 @@ NODE_CATALOG = [
 	{"type": "action.copy_record", "label": "Copy record", "category": "Actions", "description": "Create a permission-checked copy of the enrolled record.", "default_config": {}, "authoring_tier": "advanced"},
 	{"type": "action.merge_contact", "label": "Merge contact", "category": "Actions", "description": "Merge the enrolled Contact into one unambiguous canonical Contact.", "default_config": {"match_fields": ["email_id"], "match_mode": "all"}, "authoring_tier": "advanced"},
 	{"type": "action.unassign_record", "label": "Remove assigned users", "category": "Actions", "description": "Close every open Frappe assignment linked to the enrolled record.", "default_config": {}, "authoring_tier": "advanced"},
-	{"type": "action.verify_email", "label": "Check email format", "category": "Data", "description": "Check only whether an email address is syntactically valid; this does not verify its mailbox.", "default_config": {"email": {"kind": "record_field", "field": "email_id"}}, "authoring_tier": "advanced"},
+	{"type": "action.verify_email", "label": "Check email address", "category": "Data", "description": "Check the address format and that its domain accepts mail. A mailbox cannot be confirmed without sending. Optionally store Valid or Invalid on the record.", "default_config": {"email": {"kind": "record_field", "field": "email_id"}}, "authoring_tier": "advanced"},
 	{"type": "action.mark_communications_read", "label": "Mark conversations read", "category": "Actions", "description": "Mark received Communications linked to the enrolled record as seen.", "default_config": {}, "authoring_tier": "advanced"},
 	{"type": "action.remove_from_workflow", "label": "Remove from workflow", "category": "Logic", "description": "Cancel this record's active runs in the selected workflow and end this path when targeting the current workflow.", "default_config": {"target_workflow": "current"}, "authoring_tier": "advanced"},
 	{"type": "action.complete_goal", "label": "Mark goal and end path", "category": "Logic", "description": "Record a named goal marker and end this path immediately; ordinary paths already complete automatically.", "default_config": {"goal": "Goal reached"}, "authoring_tier": "advanced"},
@@ -753,6 +783,9 @@ def _field_capabilities(df, details: dict) -> dict[str, bool]:
 	}
 
 
+RECORD_LINK_FIELD = "__record_link"
+
+
 def _standard_field_rows(permission_type: str, capability: str | None) -> list[dict]:
 	definitions = {
 		"name": ("ID", "Data", None),
@@ -761,6 +794,7 @@ def _standard_field_rows(permission_type: str, capability: str | None) -> list[d
 		"modified": ("Last modified", "Datetime", None),
 		"modified_by": ("Modified by", "Link", "User"),
 		"docstatus": ("Document status", "Int", None),
+		RECORD_LINK_FIELD: ("Link to this record", "Data", None),
 	}
 	rows = []
 	for fieldname, (label, fieldtype, options) in definitions.items():
@@ -768,14 +802,14 @@ def _standard_field_rows(permission_type: str, capability: str | None) -> list[d
 		capabilities = {
 			"scalar_read": permission_type == "read",
 			"collection_read": False,
-			"condition_scalar": permission_type == "read",
+			"condition_scalar": permission_type == "read" and fieldname != RECORD_LINK_FIELD,
 			"condition_collection": False,
 			"assignment_scalar": writable,
 			"assignment_collection": False,
 			"child_collection": False,
 			"switch": permission_type == "read",
 			"deduplicate": permission_type == "read" and fieldname == "name",
-			"snapshot": permission_type == "read",
+			"snapshot": permission_type == "read" and fieldname != RECORD_LINK_FIELD,
 		}
 		if capability and not capabilities.get(capability, False):
 			continue
@@ -845,7 +879,7 @@ def field_catalog_result(
 		if df.fieldname not in permitted or df.fieldtype not in SUPPORTED_FIELD_TYPES:
 			excluded += 1
 			continue
-		if df.read_only and permission_type in {"write", "create"}:
+		if df.read_only and permission_type in {"write", "create"} and not _writable_despite_read_only(meta.name, df):
 			excluded += 1
 			continue
 		details = _table_field_details(
@@ -897,6 +931,25 @@ def field_catalog(
 	if not result["available"]:
 		raise AutomationPermissionError(result["explanation"] or _("This DocType is unavailable for automation."))
 	return result["fields"]
+
+
+CONTACT_CHANNEL_FIELDS = {"email_id", "mobile_no", "phone"}
+
+
+def _writable_despite_read_only(doctype: str, df) -> bool:
+	"""Workflows may write Contact e-mail/phone (stored in child tables) and site-defined custom fields.
+
+	Standard read-only fields stay protected. A custom field marked read only is a
+	site decision for the form, so an authored workflow, such as a counter, may update it.
+	"""
+	if doctype == "Contact" and df.fieldname in CONTACT_CHANNEL_FIELDS:
+		return True
+	if df.fieldtype in SUPPORTED_COLLECTION_FIELD_TYPES or df.fetch_from:
+		return False
+	custom = frappe.local.__dict__.setdefault("automation_custom_field_names", {})
+	if doctype not in custom:
+		custom[doctype] = set(frappe.get_all("Custom Field", filters={"dt": doctype}, pluck="fieldname", limit_page_length=0))
+	return df.fieldname in custom[doctype]
 
 
 def assert_field_access(
@@ -1073,6 +1126,10 @@ def business_event_catalog(primary_doctype: str | None = None, usage: str = "all
 			definition["label"] = _("Placed an order")
 		elif doctype and definition["topic"] == "commerce.order.abandoned":
 			definition["label"] = _("Abandoned a cart")
+		if doctype and definition["topic"] == "crm.segment.entered":
+			for field in definition["filter_fields"]:
+				if field["fieldname"] == "segment":
+					field["link_filters"] = {"archived": 0, "audience_doctype": doctype}
 		if doctype and definition["topic"] == "crm.form.submitted":
 			# Only forms that write this workflow's DocType can ever enrol it.
 			# Scoping the picker is what stops an author choosing a Lead form in

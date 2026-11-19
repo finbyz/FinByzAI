@@ -69,3 +69,45 @@ def delete_folder(path: str) -> dict:
 		raise AutomationError(_("Move workflows out of this folder first."))
 	frappe.delete_doc("Automation Workflow Folder", path)
 	return {"deleted": path}
+
+
+def rename_folder(path: str, new_name: str) -> dict:
+	"""Rename one folder; subfolder paths and workflows filed under it follow."""
+	path = normalize_folder_path(path)
+	name = str(new_name or "").strip()
+	if not path or not frappe.db.exists("Automation Workflow Folder", path):
+		raise AutomationError(_("Folder not found."))
+	if not name or "/" in name or name in {".", ".."}:
+		raise AutomationError(_("Enter one valid folder name without a slash."))
+	parent = path.rsplit("/", 1)[0] if "/" in path else ""
+	new_path = normalize_folder_path(f"{parent}/{name}" if parent else name)
+	if new_path == path:
+		return {"path": path, "renamed": False}
+	if frappe.db.exists("Automation Workflow Folder", new_path):
+		raise AutomationError(_("A folder with this name already exists here."))
+
+	def moved(value: str) -> str:
+		return new_path + value[len(path):]
+
+	descendants = frappe.get_all(
+		"Automation Workflow Folder",
+		filters={"name": ["like", f"{path}/%"]},
+		pluck="name",
+		order_by="name asc",
+		limit_page_length=0,
+	)
+	if any(len(moved(value)) > 140 for value in descendants):
+		raise AutomationError(_("The new name makes a subfolder path longer than 140 characters."))
+	for old in [path, *descendants]:
+		new = moved(old)
+		new_parent = new.rsplit("/", 1)[0] if "/" in new else None
+		frappe.db.sql(
+			"""update `tabAutomation Workflow Folder`
+			set name=%s, path=%s, folder_name=%s, parent_folder=%s, old_parent=%s where name=%s""",
+			(new, new, new.rsplit("/", 1)[-1], new_parent, new_parent, old),
+		)
+		frappe.db.sql(
+			"update `tabAutomation Workflow` set folder=%s where folder=%s", (new, old)
+		)
+	frappe.clear_cache(doctype="Automation Workflow Folder")
+	return {"path": new_path, "renamed": True}

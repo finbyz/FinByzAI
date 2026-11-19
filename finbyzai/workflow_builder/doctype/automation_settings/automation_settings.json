@@ -242,8 +242,8 @@
    "label": "History Retention"
   },
   {
-   "default": "180",
-   "description": "Completed workflow runs and resolved operational logs older than this number of days are removed. Minimum 180 days preserves the client-required six-month history window.",
+   "default": "365",
+   "description": "Completed workflow runs and resolved operational logs older than this number of days are archived and then removed from the database. Archives are private gzip files named automation-run-archive-* in the File list (Desk, File, filter by that name). Default one year, minimum 180 days.",
    "fieldname": "history_retention_days",
    "fieldtype": "Int",
    "label": "Workflow Log Retention (Days)"

@@ -46,7 +46,7 @@ from finbyzai.workflow_builder.principal import (
 	execution_principal,
 )
 from finbyzai.workflow_builder.errors import AutomationConflictError, AutomationError, AutomationPermissionError
-from finbyzai.workflow_builder.folders import create_folder, delete_folder, ensure_folder_path, list_folders
+from finbyzai.workflow_builder.folders import create_folder, delete_folder, rename_folder, ensure_folder_path, list_folders
 from finbyzai.workflow_builder.registry import field_catalog_result
 from finbyzai.workflow_builder.schema import empty_graph, validate_graph
 from finbyzai.workflow_builder.setup import (
@@ -121,8 +121,13 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		with self.assertRaisesRegex(AutomationError, "workflows"):
 			delete_folder(child)
 		self.assertEqual(set_workflow_folder(created["workflow"], "")["folder"], "")
-		self.assertEqual(delete_folder(child)["deleted"], child)
-		self.assertEqual(delete_folder(root)["deleted"], root)
+		renamed_root = f"{root} renamed"
+		self.assertEqual(rename_folder(root, f"{root} renamed")["path"], renamed_root)
+		renamed_child = f"{renamed_root}/Nurture"
+		self.assertEqual(frappe.db.get_value("Automation Workflow Folder", renamed_child, "parent_folder"), renamed_root)
+		self.assertFalse(frappe.db.exists("Automation Workflow Folder", child))
+		self.assertEqual(delete_folder(renamed_child)["deleted"], renamed_child)
+		self.assertEqual(delete_folder(renamed_root)["deleted"], renamed_root)
 
 	def test_workflow_list_bulk_loads_published_graphs(self):
 		graph = empty_graph("Lead", "trigger.record_created")

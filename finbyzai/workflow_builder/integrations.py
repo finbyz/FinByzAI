@@ -17,6 +17,7 @@ TERMINAL_CALL_STATUSES = {"Completed", "Failed", "Busy", "No Answer", "Cancelled
 EMAIL_DELIVERY_TOPICS = {
 	"Bounced": "email.hard_bounced",
 	"Soft-Bounced": "email.soft_bounced",
+	"Marked As Spam": "email.complained",
 	"Clicked": "email.clicked",
 	"Opened": "email.opened",
 	"Recipient Unsubscribed": "email.unsubscribed",
@@ -26,6 +27,7 @@ TRACKING_EVENT_TOPICS = {
 	"Clicked": "email.clicked",
 	"Bounced": "email.hard_bounced",
 	"Soft-Bounced": "email.soft_bounced",
+	"Marked As Spam": "email.complained",
 	"Unsubscribed": "email.unsubscribed",
 }
 
@@ -194,14 +196,25 @@ def capture_customer_portal_login(login_manager=None) -> None:
 	except Exception:
 		frappe.log_error(title="Customer Portal workflow login event failed", message=frappe.get_traceback())
 		return
-	if not customer:
-		return
 	session_id = str(getattr(frappe.session, "sid", "") or frappe.generate_hash(length=20))
 	payload = {
 		"event_id": f"customer-portal:{session_id}",
 		"portal": "Customer Portal",
 	}
-	_signal("commerce.store.login", "Customer", customer, payload, payload["event_id"])
+	if customer:
+		_signal("commerce.store.login", "Customer", customer, payload, payload["event_id"])
+	# Contact and Lead workflows react to the same sign-in (matched by user or e-mail).
+	user = str(getattr(login_manager, "user", "") or frappe.session.user or "")
+	if not user or user in {"Guest", "Administrator"}:
+		return
+	contact = frappe.db.get_value("Contact", {"user": user}, "name") or frappe.db.get_value(
+		"Contact Email", {"email_id": user, "parenttype": "Contact"}, "parent"
+	)
+	if contact:
+		_signal("commerce.store.login", "Contact", contact, payload, f"{payload['event_id']}:contact")
+	lead = frappe.db.get_value("Lead", {"email_id": user}, "name")
+	if lead:
+		_signal("commerce.store.login", "Lead", lead, payload, f"{payload['event_id']}:lead")
 
 
 def capture_web_form_submission(doc, method=None) -> None:

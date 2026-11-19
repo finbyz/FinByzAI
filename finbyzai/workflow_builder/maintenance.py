@@ -6,6 +6,10 @@ import frappe
 from frappe.utils import cint, get_datetime, now_datetime
 
 
+DEFAULT_RETENTION_DAYS = 365
+# Detail rows written to the archive file before a run is purged.
+ARCHIVE_DOCTYPES = ("Automation Run", "Automation Run Event", "Automation Action Attempt", "Automation Enrollment Decision")
+
 RUN_CHILD_DOCTYPES = (
 	"Automation Action Attempt",
 	"Automation AI Attempt",
@@ -20,11 +24,11 @@ RUN_CHILD_DOCTYPES = (
 
 
 def history_retention_days() -> int:
-	"""The client baseline is six months; administrators may retain longer."""
+	"""Run logs are kept one year by default (client: 1 year, then archive); six months is the floor."""
 	try:
-		configured = cint(frappe.db.get_single_value("Automation Settings", "history_retention_days", cache=False) or 180)
+		configured = cint(frappe.db.get_single_value("Automation Settings", "history_retention_days", cache=False) or DEFAULT_RETENTION_DAYS)
 	except Exception:
-		configured = 180
+		configured = DEFAULT_RETENTION_DAYS
 	return max(configured, 180)
 
 
@@ -82,8 +86,37 @@ def _expired_names(
 	)
 
 
+def archive_runs(run_names: list[str]) -> str | None:
+	"""Write the runs and their evidence to a private gzip JSON-lines file; return its File name.
+
+	Purging only continues when this succeeds, so detail is never lost without an archive.
+	"""
+	import gzip
+	import io
+	import json
+
+	buffer = io.BytesIO()
+	with gzip.GzipFile(fileobj=buffer, mode="wb") as handle:
+		for doctype in ARCHIVE_DOCTYPES:
+			if not frappe.db.table_exists(doctype):
+				continue
+			link = "name" if doctype == "Automation Run" else "run"
+			for row in frappe.get_all(doctype, filters={link: ["in", run_names]}, fields=["*"], limit_page_length=0):
+				handle.write((json.dumps({"doctype": doctype, "row": row}, default=str) + "\n").encode())
+	stamp = now_datetime().strftime("%Y%m%d-%H%M%S")
+	file_doc = frappe.get_doc(
+		{
+			"doctype": "File",
+			"file_name": f"automation-run-archive-{stamp}.jsonl.gz",
+			"content": buffer.getvalue(),
+			"is_private": 1,
+		}
+	).insert(ignore_permissions=True)
+	return file_doc.name
+
+
 def purge_expired_execution_history(limit: int | None = None) -> int:
-	"""Purge terminal run detail after the configured retention window.
+	"""Archive, then purge, terminal run detail after the configured retention window.
 
 	Enrollment ledgers and aggregate metrics remain, so re-enrollment semantics and
 	long-term counts do not change when detailed execution evidence expires.
@@ -102,6 +135,11 @@ def purge_expired_execution_history(limit: int | None = None) -> int:
 		statuses=("COMPLETED", "FAILED", "CANCELLED"),
 	)
 	if not run_names:
+		return 0
+	try:
+		archive_runs(run_names)
+	except Exception:
+		frappe.log_error(title="Workflow run archive failed; purge skipped", message=frappe.get_traceback())
 		return 0
 	for doctype in RUN_CHILD_DOCTYPES:
 		if frappe.db.table_exists(doctype):

@@ -4,6 +4,8 @@ import time
 from typing import Any
 from zoneinfo import available_timezones
 
+import json
+
 import frappe
 from frappe import _
 from frappe.email.email_body import get_formatted_html
@@ -463,6 +465,24 @@ def list_workflow_folders():
 def create_workflow_folder(folder_name: str, parent_folder: str | None = None):
 	registry.require_builder()
 	return folders.create_folder(folder_name, parent_folder)
+
+
+@frappe.whitelist()
+def get_workflow_access(workflow_id: str):
+	registry.require_builder()
+	return collaboration.list_workflow_access(workflow_id)
+
+
+@frappe.whitelist(methods=["POST"])
+def set_workflow_access(workflow_id: str, user: str, access: str):
+	registry.require_builder()
+	return collaboration.set_workflow_access(workflow_id, user, access)
+
+
+@frappe.whitelist(methods=["POST"])
+def rename_workflow_folder(path: str, new_name: str):
+	registry.require_builder()
+	return folders.rename_folder(path, new_name)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -1056,8 +1076,8 @@ def enroll_manual(envelope=None, workflow_id=None, record_name=None, idempotency
 	payload = data["payload"]
 	workflow = frappe.get_doc("Automation Workflow", data.get("workflow_id"))
 	workflow.check_permission("read")
-	if engine.published_trigger_type(workflow.active_version) != "trigger.manual":
-		raise AutomationError(_("Only workflows published with a manual trigger accept manual enrollment."))
+	if not engine.accepts_manual_enrollment(workflow.active_version):
+		raise AutomationError(_("Manual enrollment needs a manual trigger or the setting Allow manual start on this workflow."))
 	record = frappe.get_doc(workflow.primary_doctype, payload.get("record_name") or data.get("record_name"))
 	record.check_permission("read")
 	key = data.get("idempotency_key")
@@ -1087,15 +1107,15 @@ def manual_start_workflows(doctype):
 	)
 	return [
 		{"name": row.name, "title": row.title or row.name}
-		for row in rows if row.active_version and engine.published_trigger_type(row.active_version) == "trigger.manual"
+		for row in rows if row.active_version and engine.accepts_manual_enrollment(row.active_version)
 	]
 
 
 def _manual_workflow(workflow_id):
 	workflow = frappe.get_doc("Automation Workflow", workflow_id)
 	workflow.check_permission("read")
-	if engine.published_trigger_type(workflow.active_version) != "trigger.manual":
-		raise AutomationError(_("Only workflows published with a manual trigger accept manual enrollment."))
+	if not engine.accepts_manual_enrollment(workflow.active_version):
+		raise AutomationError(_("Manual enrollment needs a manual trigger or the setting Allow manual start on this workflow."))
 	return workflow
 
 
@@ -1317,6 +1337,20 @@ def bulk_discard_dead_letters(dead_letter_ids=None):
 
 
 @frappe.whitelist()
+def list_run_archives(start: int = 0, page_length: int = 20):
+	"""Archive files written by the log cleanup (gzip JSON lines), newest first."""
+	registry.require_builder()
+	return frappe.get_list(
+		"File",
+		filters={"file_name": ["like", "automation-run-archive-%"], "is_private": 1},
+		fields=["name", "file_name", "file_url", "file_size", "creation"],
+		order_by="creation desc",
+		start=max(cint(start), 0),
+		page_length=min(max(cint(page_length), 1), 100),
+	)
+
+
+@frappe.whitelist()
 def get_automation_analytics(workflow_id: str | None = None, days: int = 30):
 	registry.require_viewer()
 	return observability.analytics(workflow_id, days=days)
@@ -1386,13 +1420,81 @@ def get_canvas_metrics(workflow_id: str, workflow_version: str | None = None):
 		branches = metrics[str(row.node_id)]["branches"]
 		branches[handle] = cint(branches.get(handle)) + cint(row.count)
 
+	_add_email_step_metrics(workflow.name, version, metrics)
 	total_enrollments = cint(frappe.db.count("Automation Run", {"workflow": workflow.name, "workflow_version": version}))
 	return {
 		"workflow_id": workflow.name,
 		"workflow_version": version,
 		"total_enrollments": total_enrollments,
+		"goal_reached": _goal_reached_count(workflow.name, version),
 		"nodes": list(metrics.values()),
 	}
+
+
+def _goal_reached_count(workflow_name: str, version: str) -> int:
+	"""Runs of this version that ended because a goal was met (goal step, condition or event)."""
+	Run = frappe.qb.DocType("Automation Run")
+	Event = frappe.qb.DocType("Automation Run Event")
+	row = (
+		frappe.qb.from_(Event)
+		.join(Run).on(Run.name == Event.run)
+		.select(Count(Run.name).distinct().as_("count"))
+		.where((Run.workflow == workflow_name) & (Run.workflow_version == version) & (Event.event_type == "RUN_GOAL_MET"))
+	).run(as_dict=True)
+	return cint(row[0].count) if row else 0
+
+
+def _add_email_step_metrics(workflow_name: str, version: str, metrics: dict[str, dict]) -> None:
+	"""Per send-email step: e-mails sent and how many of them were opened, clicked or bounced."""
+	if not frappe.db.table_exists("Email Tracking Event"):
+		return
+	Run = frappe.qb.DocType("Automation Run")
+	Ledger = frappe.qb.DocType("Automation Effect Ledger")
+	rows = (
+		frappe.qb.from_(Ledger)
+		.join(Run).on(Run.name == Ledger.run)
+		.select(Ledger.node_id, Ledger.result_json)
+		.where((Run.workflow == workflow_name) & (Run.workflow_version == version) & (Ledger.status == "COMPLETED") & Ledger.result_json.isnotnull())
+		.limit(50000)
+	).run(as_dict=True)
+	communications: dict[str, str] = {}
+	sent: dict[str, int] = {}
+	for row in rows:
+		try:
+			result = json.loads(row.result_json or "{}")
+		except ValueError:
+			continue
+		communication = result.get("communication") if isinstance(result, dict) else None
+		if not communication:
+			continue
+		communications[str(communication)] = str(row.node_id)
+		sent[str(row.node_id)] = sent.get(str(row.node_id), 0) + 1
+	if not communications:
+		return
+	seen: dict[str, dict[str, set]] = {}
+	names = list(communications)
+	for index in range(0, len(names), 5000):
+		for event in frappe.get_all(
+			"Email Tracking Event",
+			filters={"communication": ["in", names[index:index + 5000]]},
+			fields=["communication", "event_type"],
+			limit_page_length=0,
+		):
+			kind = {"Opened": "opened", "Clicked": "clicked", "Bounced": "bounced", "Soft-Bounced": "bounced"}.get(str(event.event_type))
+			if kind:
+				seen.setdefault(communications[event.communication], {}).setdefault(kind, set()).add(event.communication)
+	for node_id, count in sent.items():
+		metric = metrics.setdefault(node_id, {
+			"node_id": node_id, "reached": 0, "ready": 0, "running": 0, "waiting": 0,
+			"completed": 0, "failed": 0, "cancelled": 0, "branches": {},
+		})
+		found = seen.get(node_id, {})
+		metric["email"] = {
+			"sent": count,
+			"opened": len(found.get("opened", ())),
+			"clicked": len(found.get("clicked", ())),
+			"bounced": len(found.get("bounced", ())),
+		}
 
 
 @frappe.whitelist()

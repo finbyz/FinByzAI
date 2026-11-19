@@ -164,7 +164,7 @@ def ensure_automation_settings_defaults() -> None:
 	if not frappe.db.exists("DocType", "Automation Settings"):
 		return
 	defaults = {
-		"history_retention_days": 180,
+		"history_retention_days": 365,
 		"log_cleanup_interval_hours": 24,
 		"log_cleanup_batch_size": 500,
 		"ai_max_context_characters": 50000,

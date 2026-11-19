@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import frappe
 from frappe import _
 from frappe.desk.form.assign_to import _add as add_assignment, close_all_assignments
+from frappe.model.rename_doc import rename_doc
 from frappe.utils import add_to_date, cint, get_system_timezone, now_datetime, validate_email_address
 
 from .configuration import automation_enabled, int_setting, workflow_runtime_allowed
@@ -32,7 +33,7 @@ from .principal import (
 	execution_principal,
 	is_valid_execution_user,
 )
-from .registry import assert_field_access, is_eligible_doctype, round_robin_assignment
+from .registry import CONTACT_CHANNEL_FIELDS, assert_field_access, is_eligible_doctype, round_robin_assignment
 from .schema import (
 	canonical_json,
 	condition_fields,
@@ -44,12 +45,82 @@ from .schema import (
 	resolve_value,
 )
 
+def _email_check_reason(email: str) -> str | None:
+	"""None when the address looks deliverable: valid syntax and a domain that accepts mail.
+
+	A mailbox cannot be confirmed without sending, so this stops at the domain's MX/A record.
+	"""
+	if not validate_email_address(email, throw=False):
+		return "INVALID_FORMAT"
+	domain = email.rsplit("@", 1)[-1].lower()
+	try:
+		import dns.exception
+		import dns.resolver
+
+		resolver = dns.resolver.Resolver()
+		resolver.lifetime = 3
+		try:
+			resolver.resolve(domain, "MX")
+			return None
+		except dns.resolver.NoAnswer:
+			resolver.resolve(domain, "A")
+			return None
+		except dns.resolver.NXDOMAIN:
+			return "DOMAIN_NOT_FOUND"
+	except dns.resolver.NoAnswer:
+		return "NO_MAIL_SERVER"
+	except dns.resolver.NXDOMAIN:
+		return "DOMAIN_NOT_FOUND"
+	except Exception:
+		# DNS temporarily unavailable: do not reject a syntactically valid address.
+		return None
+
+
+def _set_field(record, fieldname: str, value) -> None:
+	"""Contact e-mail and phone live in child tables, so they are added as primary entries."""
+	if record.doctype == "Contact" and fieldname in CONTACT_CHANNEL_FIELDS:
+		value = str(value or "").strip()
+		if not value:
+			return
+		if fieldname == "email_id":
+			record.add_email(value, is_primary=1)
+		else:
+			record.add_phone(value, is_primary_mobile_no=1 if fieldname == "mobile_no" else 0, is_primary_phone=1 if fieldname == "phone" else 0)
+		return
+	record.set(fieldname, value)
+
+
+def _render_record_text(value, record) -> str:
+	"""Fill {{ doc.field }} placeholders in comment and note text from the record."""
+	text = str(value or "")
+	if "{{" not in text and "{%" not in text:
+		return text
+	try:
+		return frappe.render_template(text, {"doc": record})
+	except Exception:
+		# A bad placeholder must not fail the run; keep the text as typed.
+		return text
+
+
 def _new_trace_id() -> str:
 	return frappe.generate_hash(length=20)
 
 
 def _graph(version) -> dict:
 	return parse_object(version.graph_json, "published workflow graph")
+
+
+def accepts_manual_enrollment(version_name: str | None) -> bool:
+	"""WF-04: a manual trigger, or the workflow setting that adds manual start to other triggers."""
+	if not version_name:
+		return False
+	if published_trigger_type(version_name) == "trigger.manual":
+		return True
+	try:
+		settings = parse_object(frappe.db.get_value("Automation Workflow Version", version_name, "settings_json") or "{}", "workflow settings")
+	except Exception:
+		return False
+	return bool(cint(settings.get("allow_manual_enrollment")))
 
 
 def published_trigger_type(version_name: str | None) -> str | None:
@@ -146,8 +217,12 @@ def _transform_output(config: dict, values: list[Any], *, seed: str) -> Any:
 		digits = re.sub(r"\D", "", str(values[0] if values else ""))
 		if not 3 <= len(digits) <= 15:
 			raise AutomationError(_("Phone transform requires between 3 and 15 digits."))
-		country_code = re.sub(r"\D", "", str(config.get("country_code") or ""))
-		if country_code and not str(values[0]).strip().startswith("+") and not digits.startswith(country_code):
+		raw = str(values[0]).strip()
+		# Default country is Switzerland (41) when the step sets none.
+		country_code = re.sub(r"\D", "", str(config.get("country_code") or "")) or "41"
+		if raw.startswith("00"):
+			digits = digits[2:]
+		elif not raw.startswith("+") and not digits.startswith(country_code):
 			digits = country_code + digits.lstrip("0")
 		return f"+{digits}"
 	if operation == "format_currency":
@@ -376,11 +451,12 @@ def _active_policy_candidates(record_doctype: str, record_name: str) -> list[dic
 			continue
 		settings = parse_object(version.settings_json or "{}", "workflow settings")
 		read_mode = str(run.read_mode or settings.get("read_mode") or "CURRENT").upper()
-		if read_mode == "ENROLLMENT_SNAPSHOT":
+		has_goal_events = bool(settings.get("goal_events"))
+		if read_mode == "ENROLLMENT_SNAPSHOT" and not has_goal_events:
 			continue
 		graph = parse_object(version.graph_json, "published workflow graph")
-		dependencies = _policy_dependency_fields(settings, graph)
-		if dependencies:
+		dependencies = _policy_dependency_fields(settings, graph) if read_mode != "ENROLLMENT_SNAPSHOT" else set()
+		if dependencies or has_goal_events:
 			candidates.append(
 				{
 					"run": run.name,
@@ -995,7 +1071,7 @@ def _execute_action(run, token, node, record, value_record, outputs: dict[str, A
 				user=current_execution_user(),
 				capability=("assignment_scalar", "assignment_collection"),
 			)
-			record.set(fieldname, _coerce_assignment_value(record.doctype, fieldname, value))
+			_set_field(record, fieldname, _coerce_assignment_value(record.doctype, fieldname, value))
 		record.save(ignore_permissions=True)
 		result = {"doctype": record.doctype, "name": record.name, "updated_fields": sorted(values)}
 	elif node_type == "action.numeric_adjust":
@@ -1042,7 +1118,11 @@ def _execute_action(run, token, node, record, value_record, outputs: dict[str, A
 		if target_meta.get_field("reference_type") and target_meta.get_field("reference_name"):
 			values.setdefault("reference_type", record.doctype)
 			values.setdefault("reference_name", record.name)
-		target = frappe.get_doc({"doctype": target_doctype, **values}).insert(ignore_permissions=True)
+		channels = {key: values.pop(key) for key in list(values) if target_doctype == "Contact" and key in CONTACT_CHANNEL_FIELDS}
+		target = frappe.get_doc({"doctype": target_doctype, **values})
+		for key, value in channels.items():
+			_set_field(target, key, value)
+		target.insert(ignore_permissions=True)
 		result = {"doctype": target.doctype, "name": target.name}
 	elif node_type == "action.manage_association":
 		check_execution_permission(record, "write")
@@ -1118,7 +1198,7 @@ def _execute_action(run, token, node, record, value_record, outputs: dict[str, A
 		check_execution_permission(record, "write")
 		comment = record.add_comment(
 			"Comment",
-			text=str(config.get("content") or ""),
+			text=_render_record_text(config.get("content"), record),
 			comment_email=current_execution_user(),
 		)
 		result = {"comment": comment.name if comment else None}
@@ -1127,8 +1207,8 @@ def _execute_action(run, token, node, record, value_record, outputs: dict[str, A
 		note = frappe.get_doc(
 			{
 				"doctype": "Note",
-				"title": str(config.get("title") or "")[:140],
-				"content": f"{str(config.get('content') or '')}<p><a href=\"/app/{frappe.scrub(record.doctype).replace('_', '-')}/{record.name}\">{record.doctype} {record.name}</a></p>",
+				"title": _render_record_text(config.get("title"), record)[:140],
+				"content": f"{_render_record_text(config.get('content'), record)}<p><a href=\"/app/{frappe.scrub(record.doctype).replace('_', '-')}/{record.name}\">{record.doctype} {record.name}</a></p>",
 			}
 		).insert(ignore_permissions=True)
 		result = {"note": note.name}
@@ -1170,7 +1250,7 @@ def _execute_action(run, token, node, record, value_record, outputs: dict[str, A
 			raise AutomationError(_("More than one canonical Contact matches; resolve ambiguity before merging."))
 		canonical = matches[0]
 		check_execution_permission(frappe.get_doc("Contact", canonical), "write")
-		frappe.rename_doc("Contact", record.name, canonical, merge=True, ignore_permissions=True)
+		rename_doc("Contact", record.name, canonical, merge=True, ignore_permissions=True)
 		result = {"canonical_contact": canonical, "merged_contact": record.name, "matched_fields": [next(iter(item)) for item in predicates], "deleted": True}
 	elif node_type == "action.unassign_record":
 		check_execution_permission(record, "write")
@@ -1180,8 +1260,19 @@ def _execute_action(run, token, node, record, value_record, outputs: dict[str, A
 	elif node_type == "action.verify_email":
 		check_execution_permission(record, "read")
 		email = str(resolve_value(config.get("email"), record=value_record, outputs=outputs) or "").strip()
-		valid = bool(validate_email_address(email, throw=False))
-		result = {"email": email, "valid": valid, "reason": None if valid else "INVALID_FORMAT"}
+		reason = _email_check_reason(email)
+		valid = reason is None
+		result = {"email": email, "valid": valid, "reason": reason}
+		store_field = str(config.get("store_in_field") or "").strip()
+		if store_field:
+			target = frappe.get_doc(record.doctype, record.name, for_update=True)
+			check_execution_permission(target, "write")
+			assert_field_access(
+				target.doctype, store_field, permission_type="write", user=current_execution_user(), capability="assignment_scalar"
+			)
+			target.set(store_field, "Valid" if valid else "Invalid")
+			target.save(ignore_permissions=True)
+			result["stored_in"] = store_field
 	elif node_type == "action.mark_communications_read":
 		check_execution_permission(record, "write")
 		updated = frappe.db.count("Communication", {"reference_doctype": record.doctype, "reference_name": record.name, "sent_or_received": "Received", "seen": 0})
@@ -1233,15 +1324,37 @@ def _execute_action(run, token, node, record, value_record, outputs: dict[str, A
 		if not recipients:
 			raise AutomationError(_("The notification audience contains no enabled users."))
 		sent = []
+		channels = set(str(config.get("channels") or "in_app").replace(" ", "").split(","))
+		subject = str(config.get("subject") or _("Workflow notification"))
+		message = str(config.get("message") or "")
+		record_url = frappe.utils.get_url_to_form(record.doctype, record.name)
 		for recipient in recipients:
-			if enqueue_notification_for_user(recipient, {
-				"type": "Alert",
-				"subject": str(config.get("subject") or _("Workflow notification")),
-				"email_content": str(config.get("message") or ""),
-				"document_type": record.doctype,
-				"document_name": record.name,
-				"from_user": current_execution_user(),
-			}):
+			delivered = False
+			if "in_app" in channels:
+				delivered = enqueue_notification_for_user(recipient, {
+					"type": "Alert",
+					"subject": subject,
+					"email_content": message,
+					"document_type": record.doctype,
+					"document_name": record.name,
+					"from_user": current_execution_user(),
+				})
+			user_email, user_mobile = frappe.db.get_value("User", recipient, ["email", "mobile_no"]) or (None, None)
+			if "email" in channels and user_email:
+				frappe.sendmail(
+					recipients=[user_email],
+					subject=subject,
+					message=f"<p>{message}</p><p><a href=\"{record_url}\">{record.doctype} {record.name}</a></p>",
+					reference_doctype=record.doctype,
+					reference_name=record.name,
+				)
+				delivered = True
+			if "sms" in channels and user_mobile:
+				from frappe.core.doctype.sms_settings.sms_settings import send_sms
+
+				send_sms([user_mobile], f"{subject}: {message} {record_url}"[:480], success_msg=False)
+				delivered = True
+			if delivered:
 				sent.append(recipient)
 		if not sent:
 			raise AutomationError(_("Notification recipients are disabled, missing, or have no email address."))
@@ -1879,6 +1992,10 @@ def _terminate_for_policy(run, token, *, status: str, event_type: str, reason_co
 	run.status = status
 	run.completed_at = now
 	run.current_node_id = token.node_id
+	if status == "CANCELLED":
+		# Shown as "Exited": the record left because an exit condition was met.
+		run.error_code = "WF_EXITED"
+		run.error_message = f"Exited the workflow: {reason_code}."
 	run.save(ignore_permissions=True)
 	increment_metric(run.workflow, run.workflow_version, "completed_runs" if status == "COMPLETED" else "cancelled_runs")
 	if status == "COMPLETED" and run.started_at:
@@ -1962,8 +2079,8 @@ def _terminate_run_from_record_event(
 	)
 	run.status = status
 	run.completed_at = now
-	run.error_code = None
-	run.error_message = None
+	run.error_code = "WF_EXITED" if status == "CANCELLED" else None
+	run.error_message = f"Exited the workflow: {reason_code}." if status == "CANCELLED" else None
 	run.save(ignore_permissions=True)
 	increment_metric(run.workflow, run.workflow_version, "completed_runs" if status == "COMPLETED" else "cancelled_runs")
 	if status == "COMPLETED" and run.started_at:
@@ -1980,6 +2097,28 @@ def _terminate_run_from_record_event(
 			"changed_fields": sorted(changed_fields),
 		},
 	)
+
+
+def end_runs_for_goal_event(topic: str, record_doctype: str, record_name: str) -> int:
+	"""WF-38: a workflow-level goal event (for example the contact calls us) ends active runs at any step."""
+	ended = 0
+	for candidate in _active_policy_candidates(record_doctype, record_name):
+		settings = candidate.get("settings") or {}
+		if topic not in (settings.get("goal_events") or []):
+			continue
+		run = frappe.get_doc("Automation Run", candidate["run"], for_update=True)
+		if run.status not in {"QUEUED", "RUNNING", "WAITING"}:
+			continue
+		_terminate_run_from_record_event(
+			run,
+			outcome="GOAL_MET",
+			reason_code=f"GOAL_EVENT:{topic}"[:140],
+			outbox_event="",
+			event_id=f"goal:{topic}"[:140],
+			changed_fields=set(),
+		)
+		ended += 1
+	return ended
 
 
 def reevaluate_active_run_policies(
@@ -3413,8 +3552,8 @@ def simulate_graph(graph: dict, record, *, start_node_id: str | None = None, exe
 			entry["status"] = "OBSERVED"
 			entry["confidence"] = "observed"
 			email = str(resolve_value(config.get("email"), record=record, outputs=outputs) or "").strip()
-			valid = bool(validate_email_address(email, throw=False))
-			entry["output"] = {"email": email, "valid": valid, "reason": None if valid else "INVALID_FORMAT"}
+			reason = _email_check_reason(email)
+			entry["output"] = {"email": email, "valid": reason is None, "reason": reason}
 		elif node["type"] == "action.mark_communications_read":
 			entry["status"] = "PREDICTED"
 			entry["confidence"] = "predicted"

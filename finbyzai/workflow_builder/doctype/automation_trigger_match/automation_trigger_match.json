@@ -1,0 +1,32 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2026-11-19 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": ["workflow", "record_doctype", "record_name", "trigger_group_id", "matched_at"],
+ "fields": [
+  {"fieldname": "workflow", "fieldtype": "Link", "label": "Workflow", "reqd": 1, "options": "Automation Workflow", "in_list_view": 1},
+  {"fieldname": "record_doctype", "fieldtype": "Link", "label": "Record DocType", "reqd": 1, "options": "DocType"},
+  {"fieldname": "record_name", "fieldtype": "Data", "label": "Record Name", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "trigger_group_id", "fieldtype": "Data", "label": "Trigger Group ID", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "matched_at", "fieldtype": "Datetime", "label": "Matched At", "reqd": 1}
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-11-19 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Workflow Builder",
+ "name": "Automation Trigger Match",
+ "owner": "Administrator",
+ "permissions": [
+  {"role": "Automation Operator", "read": 1},
+  {"role": "Automation Publisher", "read": 1},
+  {"role": "System Manager", "read": 1}
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}

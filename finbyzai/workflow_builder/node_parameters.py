@@ -40,8 +40,8 @@ NODE_GUIDE: dict[str, dict[str, Any]] = {
 	"trigger.any": {
 		"when_to_use": (
 			"Run on one or more discrete events: a named business event, a record "
-			"being created, or a record being changed. Holds up to 20 OR'd trigger "
-			"groups."
+			"being created, or a record being changed. Holds up to 20 trigger groups "
+			"linked with OR (match_mode any, default) or AND (match_mode all)."
 		),
 		"params": {
 			"triggers": (
@@ -49,6 +49,8 @@ NODE_GUIDE: dict[str, dict[str, Any]] = {
 				"trigger.event (needs config.event_topic from business_events), "
 				"trigger.document_insert, or trigger.document_change."
 			),
+			"match_mode": "Optional. 'any' (default) enrolls on one trigger; 'all' only when every trigger fired for the same record.",
+			"match_window_hours": "Optional with match_mode all: all triggers must fire within this many hours (1 to 8760). Empty means no limit.",
 		},
 	},
 	"trigger.manual": {"when_to_use": "Records are enrolled by a person, on demand. No configuration."},
@@ -250,6 +252,7 @@ NODE_GUIDE: dict[str, dict[str, Any]] = {
 			"for_user": "The User to notify, when audience is specific.",
 			"subject": "Notification title. Plain literal. Required.",
 			"message": "Notification body. Plain literal. Required.",
+			"channels": "Optional comma list of in_app, email, sms. Default in_app.",
 		},
 	},
 	"action.round_robin": {
@@ -298,6 +301,7 @@ NODE_GUIDE: dict[str, dict[str, Any]] = {
 			"integration_secret": "Stored credential. Required.",
 			"url": "Meta endpoint. Required.",
 			"recipient_id": "Instagram recipient, as a VALUE BINDING. Required.",
+			"last_inbound_at": "When the contact last wrote to us on Instagram, as a VALUE BINDING (a datetime field). The DM is skipped and logged if empty or older than 24 hours.",
 			"message": "Message, as a VALUE BINDING. Required.",
 		},
 	},
@@ -341,7 +345,10 @@ NODE_GUIDE: dict[str, dict[str, Any]] = {
 	"action.mark_communications_read": {"when_to_use": "Clear unread flags on the record's conversations."},
 	"action.verify_email": {
 		"when_to_use": "Check an address is well-formed before sending.",
-		"params": {"email": "Address to check, as a VALUE BINDING. Required."},
+		"params": {
+			"email": "Address to check, as a VALUE BINDING. Required.",
+			"store_in_field": "Optional field on the record that receives Valid or Invalid.",
+		},
 	},
 }
 

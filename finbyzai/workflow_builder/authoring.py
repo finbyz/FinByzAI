@@ -12,6 +12,7 @@ from frappe import _
 from frappe.utils import cint, now_datetime, validate_email_address
 
 from . import emailing
+from .trigger_groups import match_settings
 from .folders import ensure_folder_path, normalize_folder_path
 from .errors import AutomationConflictError, AutomationError, AutomationPermissionError
 from .registry import assert_field_access, doctype_eligibility, field_catalog_result, is_eligible_doctype, round_robin_assignment
@@ -58,10 +59,13 @@ def _normalized_settings(settings_value: Any) -> dict:
 	settings["reenrollment"] = str(settings.get("reenrollment") or "NEVER").upper()
 	settings["read_mode"] = str(settings.get("read_mode") or "CURRENT").upper()
 	settings["unenroll_when_ineligible"] = bool(cint(settings.get("unenroll_when_ineligible")))
+	settings["allow_manual_enrollment"] = bool(cint(settings.get("allow_manual_enrollment")))
 	# WF-48: leave when the person unsubscribes from a mailing type or leaves a segment.
 	for key in ("exit_on_unsubscribe", "exit_when_leaves_segment"):
 		values = settings.get(key)
 		settings[key] = list(dict.fromkeys(str(v).strip()[:140] for v in values if str(v or "").strip()))[:50] if isinstance(values, list) else []
+	goal_events = settings.get("goal_events")
+	settings["goal_events"] = list(dict.fromkeys(str(v).strip()[:140] for v in goal_events if str(v or "").strip()))[:20] if isinstance(goal_events, list) else []
 	for key in ("goal_condition", "eligibility_condition"):
 		if not settings.get(key):
 			settings.pop(key, None)
@@ -642,7 +646,7 @@ def validate_bindings(graph: dict, execution_user: str, workflow_name: str | Non
 
 def _marketing_window_default() -> dict:
 	"""The one default sending window from Subscription Center Settings (rule 4.5), else 09:00-17:00."""
-	fallback = {"timezone": "UTC", "start_time": "09:00", "end_time": "17:00", "weekdays": [0, 1, 2, 3, 4]}
+	fallback = {"timezone": "Europe/Zurich", "start_time": "09:00", "end_time": "17:00", "weekdays": [0, 1, 2, 3, 4]}
 	if "finbyzreach" not in frappe.get_installed_apps():
 		return fallback
 	try:
@@ -969,6 +973,7 @@ def _delete_workflow_history(workflow) -> dict[str, int]:
 	remove("Automation Suppression Rule", {"workflow": workflow_name})
 	remove("Automation Workflow Comment", {"workflow": workflow_name})
 	remove("Automation Trigger Subscription", {"workflow": workflow_name})
+	remove("Automation Trigger Match", {"workflow": workflow_name})
 
 	# Password fields have auxiliary auth rows; use the document lifecycle for
 	# the small number of webhook definitions instead of a raw bulk delete.
@@ -1346,6 +1351,8 @@ def publish_workflow(workflow_name: str, draft_revision: int, *, activate: bool 
 		]
 	else:
 		trigger_specs = [{"id": trigger["id"], "type": trigger["type"], "config": trigger.get("config") or {}}]
+	match = match_settings(trigger.get("config")) if trigger["type"] == "trigger.any" else {"mode": "any", "window_hours": 0}
+	group_ids = [spec["id"] for spec in trigger_specs]
 	for trigger_spec in trigger_specs:
 		config = trigger_spec["config"]
 		frappe.get_doc(
@@ -1357,7 +1364,14 @@ def publish_workflow(workflow_name: str, draft_revision: int, *, activate: bool 
 				"primary_doctype": workflow.primary_doctype,
 				"event_type": event_type_by_trigger[trigger_spec["type"]],
 				"dependency_fields_json": json.dumps(sorted(condition_fields(config.get("condition")) | {str(field) for field in config.get("watch_fields") or [] if field})),
-				"config_json": json.dumps({**config, "_trigger_type": trigger_spec["type"], "_trigger_group_id": trigger_spec["id"]}),
+				"config_json": json.dumps({
+					**config,
+					"_trigger_type": trigger_spec["type"],
+					"_trigger_group_id": trigger_spec["id"],
+					"_trigger_group_ids": group_ids,
+					"_match_mode": match["mode"],
+					"_match_window_hours": match["window_hours"],
+				}),
 				"active": 0,
 			}
 		).insert(ignore_permissions=True)

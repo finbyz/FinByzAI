@@ -21,6 +21,7 @@ from .constants import (
 	RETRY_DELAYS_SECONDS,
 )
 from .engine import active_policy_dependency_fields, enroll, reevaluate_active_run_policies
+from .trigger_groups import all_triggers_satisfied
 from .errors import AutomationError, AutomationTransientError
 from .observability import record_enrollment_decision, record_incident
 from .principal import current_automation_context
@@ -100,6 +101,8 @@ def signal_business_event(
 	)
 	if topic == "communication.responded" and record_doctype and record_name:
 		engine.apply_response_policy(record_doctype, record_name, payload_value)
+	if record_doctype and record_name:
+		engine.end_runs_for_goal_event(topic, record_doctype, record_name)
 	enrolled = []
 	if record_doctype and record_name:
 		occurrence = str(idempotency_key or payload_value.get("event_id") or frappe.generate_hash(length=32))[:140]
@@ -137,6 +140,8 @@ def signal_business_event(
 				or workflow_state.active_version != subscription.workflow_version
 			):
 				continue
+			if not all_triggers_satisfied(config, subscription.workflow, record_doctype, record_name):
+				continue
 			run_id = engine.enroll(
 				subscription.workflow,
 				record_doctype,
@@ -173,10 +178,16 @@ def _safe_changed_values(
 	dependencies.update(policy_dependencies or set())
 	previous = doc.get_doc_before_save() if event_type == "ON_UPDATE" else None
 	safe_types = {"Check", "Int", "Float", "Currency", "Percent", "Date", "Datetime", "Time", "Select"}
+	# Fields with an explicit "changed from / to" rule must keep their values to be compared.
+	rule_fields = {
+		fieldname
+		for subscription in subscriptions
+		for fieldname in (_json_object(subscription.get("config_json")).get("watch_values") or {})
+	}
 	values = {}
-	for fieldname in sorted(dependencies.intersection(changed_fields)):
+	for fieldname in sorted(dependencies.intersection(changed_fields) | rule_fields.intersection(changed_fields)):
 		df = doc.meta.get_field(fieldname)
-		if not df or df.fieldtype not in safe_types:
+		if not df or (df.fieldtype not in safe_types and fieldname not in rule_fields) or df.fieldtype in {"Table", "Table MultiSelect"}:
 			continue
 		values[fieldname] = {"before": previous.get(fieldname) if previous else None, "after": doc.get(fieldname)}
 	return values
@@ -397,6 +408,23 @@ def _matching_subscriptions(doctype: str, event_type: str) -> list[dict]:
 	]
 
 
+def _value_change_matches(rules, changed_values: dict) -> bool:
+	"""WF-14: with "changed from X to Y" rules, at least one watched field must change that way."""
+	if not isinstance(rules, dict) or not rules:
+		return True
+	for fieldname, rule in rules.items():
+		change = changed_values.get(fieldname)
+		if not change or not isinstance(rule, dict):
+			continue
+		wanted_from, wanted_to = rule.get("from"), rule.get("to")
+		if wanted_from not in (None, "") and str(change.get("before") or "") != str(wanted_from):
+			continue
+		if wanted_to not in (None, "") and str(change.get("after") or "") != str(wanted_to):
+			continue
+		return True
+	return False
+
+
 def _json_list(value: str | None) -> list:
 	try:
 		parsed = json.loads(value or "[]")
@@ -596,6 +624,15 @@ def _process_event(event) -> int:
 				evidence={"changed_fields": sorted(changed), "watch_fields": sorted(watch_fields)}, trace_id=event.trace_id,
 			)
 			continue
+		if event.event_type == "ON_UPDATE" and not _value_change_matches(config.get("watch_values"), _json_object(event.changed_values_json)):
+			decisions.append({"workflow": subscription.workflow, "decision": "SKIPPED", "reason": "VALUE_CHANGE_NOT_MATCHED"})
+			record_enrollment_decision(
+				workflow=subscription.workflow, workflow_version=subscription.workflow_version,
+				record_doctype=event.object_doctype, record_name=event.object_name, source=event.event_type,
+				occurrence_key=event.event_id, decision="REJECTED", reason_code="VALUE_CHANGE_NOT_MATCHED",
+				evidence={"watch_values": config.get("watch_values")}, trace_id=event.trace_id,
+			)
+			continue
 		if not evaluate_expression(config.get("condition"), record):
 			decisions.append({"workflow": subscription.workflow, "decision": "SKIPPED", "reason": "CONDITION_FALSE"})
 			record_enrollment_decision(
@@ -604,6 +641,9 @@ def _process_event(event) -> int:
 				occurrence_key=event.event_id, decision="REJECTED", reason_code="TRIGGER_CONDITION_FALSE",
 				evidence={"condition_fields": sorted(condition_fields(config.get("condition"))), "changed_fields": sorted(changed)}, trace_id=event.trace_id,
 			)
+			continue
+		if not all_triggers_satisfied(config, subscription.workflow, event.object_doctype, event.object_name):
+			decisions.append({"workflow": subscription.workflow, "decision": "WAITING", "reason": "WAITING_FOR_OTHER_TRIGGERS"})
 			continue
 		run_name = enroll(
 			subscription.workflow,

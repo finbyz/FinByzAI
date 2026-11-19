@@ -598,6 +598,19 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 			issues.extend(validate_expression(config.get("condition"), f"{path}.config.condition"))
 		if node.get("type") == "trigger.any":
 			triggers = config.get("triggers")
+			match_mode = str(config.get("match_mode") or "any").lower()
+			if match_mode not in {"any", "all"}:
+				issues.append(_issue("INVALID_TRIGGER_MATCH_MODE", "Choose whether any trigger or all triggers must match", f"{path}.config.match_mode", node_id))
+			elif match_mode == "all" and (not isinstance(triggers, list) or len(triggers) < 2):
+				issues.append(_issue("ALL_TRIGGERS_NEEDS_TWO", "Linking triggers with AND needs at least two triggers", f"{path}.config.match_mode", node_id))
+			window_hours = config.get("match_window_hours")
+			if window_hours not in (None, "", 0):
+				try:
+					valid_window = 1 <= int(window_hours) <= 24 * 365
+				except (TypeError, ValueError):
+					valid_window = False
+				if not valid_window:
+					issues.append(_issue("INVALID_TRIGGER_MATCH_WINDOW", "The time window must be between 1 and 8760 hours", f"{path}.config.match_window_hours", node_id))
 			legacy_mixed_mode = node_version < 2
 			allowed_trigger_types = {"trigger.document_insert", "trigger.document_change", "trigger.event"}
 			if legacy_mixed_mode:
@@ -630,6 +643,13 @@ def validate_graph(graph_value: Any, *, primary_doctype: str | None = None, publ
 					if entry_type == "trigger.filter_criteria" and not entry_config.get("condition"):
 						issues.append(_issue("MISSING_FILTER_CRITERIA", "Add enrollment filter criteria", f"{trigger_path}.config.condition", node_id))
 					if entry_type == "trigger.document_change":
+						rules = entry_config.get("watch_values")
+						if rules is not None and (
+							not isinstance(rules, dict)
+							or len(rules) > 50
+							or any(not isinstance(rule, dict) for rule in rules.values())
+						):
+							issues.append(_issue("INVALID_WATCH_VALUES", "Changed-value rules must be an object of field rules", f"{trigger_path}.config.watch_values", node_id))
 						watch_fields = entry_config.get("watch_fields", [])
 						if not isinstance(watch_fields, list) or len(watch_fields) > 50 or any(not isinstance(field, str) or not field.strip() for field in watch_fields) or len(set(watch_fields)) != len(watch_fields):
 							issues.append(_issue("INVALID_WATCH_FIELDS", "Changed-field selection must contain up to fifty unique field names", f"{trigger_path}.config.watch_fields", node_id))
@@ -1422,6 +1442,12 @@ def resolve_value(spec: Any, *, record: Any, outputs: dict[str, Any]) -> Any:
 	if kind == "literal":
 		return spec.get("value")
 	if kind == "record_field":
+		if spec.get("field") == "__record_link":
+			# Lets a task, e-mail or webhook carry a link back to the enrolled record.
+			import frappe.utils
+
+			doctype, name = record.get("doctype"), record.get("name")
+			return frappe.utils.get_url_to_form(doctype, name) if doctype and name else None
 		return record.get(spec.get("field"))
 	if kind == "node_output":
 		value: Any = outputs.get(spec.get("node_id"), {})

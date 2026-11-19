@@ -135,3 +135,47 @@ def workflow_connections(workflow_id: str) -> dict:
 				entry_config = entry.get("config") or {}
 				add("Business event", entry_config.get("event_topic"), node_id)
 	return {"rows": sorted(connections.values(), key=lambda row: (row["kind"], row["name"]))}
+
+
+def list_workflow_access(workflow_id: str) -> dict:
+	"""Users a workflow is shared with (read or edit); the owner always has access."""
+	workflow = _workflow(workflow_id)
+	rows = frappe.get_all(
+		"DocShare",
+		filters={"share_doctype": "Automation Workflow", "share_name": workflow.name},
+		fields=["user", "read", "write", "share"],
+		limit_page_length=200,
+	)
+	return {"owner": workflow.owner, "rows": rows}
+
+
+def set_workflow_access(workflow_id: str, user: str, access: str) -> dict:
+	"""Give one user read-only or edit access to one workflow, or remove it ('none').
+
+	Only a user who can edit the workflow may change access. Edit access lets the
+	user change the draft; publishing still needs the Automation Publisher role.
+	"""
+	import frappe.share
+
+	workflow = _workflow(workflow_id, "write")
+	user = str(user or "").strip()
+	access = str(access or "").strip().lower()
+	if access not in {"none", "read", "edit"}:
+		frappe.throw(_("Access must be none, read or edit."))
+	if not frappe.db.exists("User", {"name": user, "enabled": 1}):
+		frappe.throw(_("User {0} is not available.").format(user))
+	if user == workflow.owner:
+		frappe.throw(_("The owner always has full access."))
+	if access == "none":
+		frappe.share.remove("Automation Workflow", workflow.name, user, flags={"ignore_permissions": True})
+	else:
+		frappe.share.add(
+			"Automation Workflow",
+			workflow.name,
+			user,
+			read=1,
+			write=1 if access == "edit" else 0,
+			share=0,
+			flags={"ignore_permissions": True},
+		)
+	return list_workflow_access(workflow.name)

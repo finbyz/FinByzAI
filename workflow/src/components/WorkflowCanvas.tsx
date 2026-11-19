@@ -396,7 +396,7 @@ const WorkflowNodeCard = memo(({ data, selected }: NodeProps<WorkflowFlowNode>) 
 		  {!data.connected ? <span className="workflow-node__status workflow-node__status--disconnected" title="This step is not connected to the enrollment trigger"><Unplug size={11} />Not connected</span> : data.issueCount > 0 && <span className="workflow-node__status workflow-node__status--invalid" title={`${issueLabel}. Open the step to review.`}><AlertTriangle size={11} />{issueLabel}</span>}
 		</div>
 		<div className="workflow-node__summary"><p>{nodeSummary(node, data.primaryDoctype)}</p></div>
-		{data.metric && data.metric.reached > 0 && <div className="workflow-node__metric" title={`${data.metric.completed} completed, ${data.metric.failed} failed, ${data.metric.waiting} waiting`}><span>{data.metric.reached.toLocaleString()} reached</span>{data.metric.failed > 0 && <span className="workflow-node__metric-error">{data.metric.failed.toLocaleString()} failed</span>}</div>}
+		{data.metric && data.metric.reached > 0 && <div className="workflow-node__metric" title={`${data.metric.completed} completed, ${data.metric.failed} failed, ${data.metric.waiting} waiting`}><span>{data.metric.reached.toLocaleString()} reached</span>{data.metric.failed > 0 && <span className="workflow-node__metric-error">{data.metric.failed.toLocaleString()} failed</span>}{data.metric.email && <span title="E-mails sent, opened, clicked">{data.metric.email.sent.toLocaleString()} sent · {data.metric.email.opened.toLocaleString()} opened · {data.metric.email.clicked.toLocaleString()} clicked</span>}</div>}
       </div>
 		{branchOutputs.length ? (
 			<div className="workflow-node__footer relative flex rounded-b-xl px-2 py-2 text-[9px] font-bold uppercase tracking-[0.04em]">
