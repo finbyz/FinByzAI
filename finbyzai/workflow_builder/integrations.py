@@ -621,6 +621,22 @@ def capture_email_unsubscribe(doc, method=None) -> None:
 	_signal("email.unsubscribed", doc.get("reference_doctype"), doc.get("reference_name"), payload, payload["event_id"])
 
 
+def capture_subscription_unsubscribe(doc, method=None) -> None:
+	"""WF-48: a mailing-type unsubscribe ends runs whose workflow exits on that type, right away."""
+	if doc.get("status") != "Unsubscribed" or not doc.get("email") or not doc.get("subscription_topic"):
+		return
+	before = doc.get_doc_before_save()
+	if before and before.get("status") == "Unsubscribed":
+		return
+	frappe.enqueue(
+		"finbyzai.workflow_builder.engine.end_runs_for_unsubscribe",
+		email=doc.email,
+		topic=doc.subscription_topic,
+		queue="short",
+		enqueue_after_commit=True,
+	)
+
+
 @frappe.whitelist(allow_guest=True, methods=["GET"])
 def unsubscribe_workflow_email(doctype: str, name: str, email: str) -> None:
 	"""Globally opt out a non-Lead workflow recipient and retain exact record identity.

@@ -2126,6 +2126,56 @@ def _terminate_run_from_record_event(
 	)
 
 
+def _records_with_email(email: str) -> list[tuple[str, str]]:
+	records = [("Lead", name) for name in frappe.get_all("Lead", filters={"email_id": email}, pluck="name", limit_page_length=0)]
+	records += [
+		("Contact", name)
+		for name in frappe.get_all("Contact Email", filters={"email_id": email, "parenttype": "Contact"}, pluck="parent", limit_page_length=0)
+	]
+	if frappe.get_meta("Customer").has_field("email_id"):
+		records += [("Customer", name) for name in frappe.get_all("Customer", filters={"email_id": email}, pluck="name", limit_page_length=0)]
+	return list(dict.fromkeys(records))
+
+
+def end_runs_for_unsubscribe(email: str, topic: str) -> int:
+	"""WF-48: an unsubscribe ends active runs at once when the workflow exits on that mailing type.
+
+	The exit rule is otherwise only re-checked before the next step, so a run waiting on a
+	long delay kept showing "Waiting" although it could never send again.
+	"""
+	email, topic = str(email or "").strip().lower(), str(topic or "").strip()
+	if not email or not topic or not frappe.db.table_exists("Automation Run"):
+		return 0
+	ended = 0
+	for record_doctype, record_name in _records_with_email(email):
+		runs = frappe.get_all(
+			"Automation Run",
+			filters={"record_doctype": record_doctype, "record_name": record_name, "status": ["in", ["QUEUED", "RUNNING", "WAITING"]]},
+			fields=["name", "workflow_version"],
+			limit_page_length=0,
+		)
+		for row in runs:
+			settings = parse_object(
+				frappe.db.get_value("Automation Workflow Version", row.workflow_version, "settings_json") or "{}",
+				"workflow settings",
+			)
+			if topic not in (settings.get("exit_on_unsubscribe") or []):
+				continue
+			run = frappe.get_doc("Automation Run", row.name, for_update=True)
+			if run.status not in {"QUEUED", "RUNNING", "WAITING"}:
+				continue
+			_terminate_run_from_record_event(
+				run,
+				outcome="ELIGIBILITY_LOST",
+				reason_code="UNSUBSCRIBED_FROM_MAILING_TYPE",
+				outbox_event="",
+				event_id=f"unsubscribe:{topic}"[:140],
+				changed_fields=set(),
+			)
+			ended += 1
+	return ended
+
+
 def end_runs_for_goal_event(topic: str, record_doctype: str, record_name: str) -> int:
 	"""WF-38: a workflow-level goal event (for example the contact calls us) ends active runs at any step."""
 	ended = 0

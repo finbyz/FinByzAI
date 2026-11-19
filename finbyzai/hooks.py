@@ -213,6 +213,10 @@ doc_events = {
 	"Email Unsubscribe": {
 		"after_insert": "finbyzai.workflow_builder.integrations.capture_email_unsubscribe",
 	},
+	"Email Subscription Preference": {
+		"after_insert": "finbyzai.workflow_builder.integrations.capture_subscription_unsubscribe",
+		"on_update": "finbyzai.workflow_builder.integrations.capture_subscription_unsubscribe",
+	},
 	"Lead": {
 		"on_update": "finbyzai.workflow_builder.integrations.capture_lead_qualified",
 	},
