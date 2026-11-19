@@ -1011,23 +1011,30 @@ def _reserve_drip_slot(run, node: dict, config: dict) -> dict:
 		)
 		.on_duplicate_key_update(cursor_table.cursor_key, cursor_key)
 	).run()
-	cursor_name = frappe.db.get_value("Automation Drip Cursor", {"cursor_key": cursor_key}, "name", for_update=True)
-	cursor = frappe.get_doc("Automation Drip Cursor", cursor_name)
+	# Read and write the locked row directly. frappe.get_doc would use the transaction's older
+	# snapshot under REPEATABLE READ, so concurrent runs failed with "not found" or
+	# "modified after you have opened it" (WF-41 at volume).
+	cursor = frappe.db.get_value(
+		"Automation Drip Cursor", {"cursor_key": cursor_key}, ["name", "window_start", "issued"], as_dict=True, for_update=True
+	)
+	if not cursor:
+		raise AutomationError(_("The drip batch cursor could not be reserved."))
 	window_start = frappe.utils.get_datetime(cursor.window_start)
+	issued = cint(cursor.issued)
 	batch_size = cint(config.get("batch_size"))
 	interval = cint(config.get("interval_seconds"))
 	if window_start <= now and (now - window_start).total_seconds() >= interval:
 		window_start = now
-		cursor.issued = 0
-	if cint(cursor.issued) >= batch_size:
+		issued = 0
+	if issued >= batch_size:
 		window_start = max(window_start, now)
 		window_start = add_to_date(window_start, seconds=interval)
-		cursor.issued = 0
-	cursor.window_start = window_start
-	cursor.issued = cint(cursor.issued) + 1
-	position = cint(cursor.issued)
-	cursor.save(ignore_permissions=True)
-	return {"due_at": str(window_start), "batch_size": batch_size, "position": position, "released": window_start <= now}
+		issued = 0
+	issued += 1
+	frappe.db.set_value(
+		"Automation Drip Cursor", cursor.name, {"window_start": window_start, "issued": issued}, update_modified=True
+	)
+	return {"due_at": str(window_start), "batch_size": batch_size, "position": issued, "released": window_start <= now}
 
 
 def _enabled_user_names(identifiers: list[str]) -> list[str]:
