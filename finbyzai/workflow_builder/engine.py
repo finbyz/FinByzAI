@@ -195,6 +195,27 @@ def _number(value: Any) -> float:
 		raise AutomationError(_("Value {0} is not a number.").format(value)) from exc
 
 
+def _readable_phone(raw: str, country_code: str, phone_format: str) -> str | None:
+	"""WF-42: "0791234567" -> "+41 79 123 45 67" (or "+41791234567" with phone_format "e164").
+
+	Returns None when the number cannot be parsed, so the caller keeps its digit-only fallback.
+	"""
+	try:
+		import phonenumbers
+	except ImportError:
+		return None
+	region = phonenumbers.region_code_for_country_code(cint(country_code)) or "CH"
+	number = "+" + raw[2:] if raw.startswith("00") else raw
+	try:
+		parsed = phonenumbers.parse(number, region)
+	except phonenumbers.NumberParseException:
+		return None
+	if not phonenumbers.is_possible_number(parsed):
+		return None
+	style = phonenumbers.PhoneNumberFormat.E164 if phone_format == "e164" else phonenumbers.PhoneNumberFormat.INTERNATIONAL
+	return phonenumbers.format_number(parsed, style)
+
+
 def _transform_output(config: dict, values: list[Any], *, seed: str) -> Any:
 	operation = str(config.get("operation") or "")
 	if operation == "coalesce":
@@ -220,6 +241,9 @@ def _transform_output(config: dict, values: list[Any], *, seed: str) -> Any:
 		raw = str(values[0]).strip()
 		# Default country is Switzerland (41) when the step sets none.
 		country_code = re.sub(r"\D", "", str(config.get("country_code") or "")) or "41"
+		readable = _readable_phone(raw, country_code, str(config.get("phone_format") or "international"))
+		if readable:
+			return readable
 		if raw.startswith("00"):
 			digits = digits[2:]
 		elif not raw.startswith("+") and not digits.startswith(country_code):
