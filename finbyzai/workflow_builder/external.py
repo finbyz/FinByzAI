@@ -312,34 +312,23 @@ def queue_email(run, config: dict, *, record, outputs: dict[str, Any], workflow_
 	reply_to = str(config.get("reply_to") or "").strip()
 	if reply_to and not validate_email_address(reply_to, throw=False):
 		raise AutomationError(_("Email Reply-To address is invalid."))
-	# Resolve one email type from the reusable template (or the inline send step).
-	# Keep the pre-migration path until the shared policy schema is installed.
-	reach_installed = "finbyzreach" in frappe.get_installed_apps()
-	policy_enabled = False
-	policy = None
-	if reach_installed:
-		from finbyzreach.consent import policy_ready, email_policy
-		policy_enabled = policy_ready()
-	if policy_enabled:
-		template_type = str(content.get("email_type") or "").strip()
-		configured_type = str(config.get("subscription_topic") or "").strip()
-		if template_type and configured_type and template_type != configured_type:
-			raise AutomationError(_("The workflow email type must match its Email Template."))
-		subscription_topic = template_type or configured_type
-		policy = email_policy(subscription_topic)
+	# FinbyzReach stores topic preferences exclusively on Lead records. Ignore a
+	# stale topic left in an older non-Lead graph and keep applying the native
+	# global/reference unsubscribe checks below. New drafts are rejected by
+	# authoring validation before publication.
+	subscription_topic = (
+		str(config.get("subscription_topic") or "").strip()
+		if run.record_doctype == "Lead"
+		else ""
+	)
+	if subscription_topic:
+		if "finbyzreach" not in frappe.get_installed_apps():
+			raise AutomationError(_("Finbyz Reach is required for topic-based email preferences."))
+		if not frappe.db.exists("Subscription Topic", {"name": subscription_topic, "disabled": 0}):
+			raise AutomationError(_("Choose an enabled Subscription Topic."))
+	suppression_reason = _native_email_recipient_exclusion(run, recipient)
+	if not suppression_reason and subscription_topic:
 		suppression_reason = _reach_recipient_exclusion(recipient, subscription_topic)
-		if not suppression_reason and policy.consent_required:
-			suppression_reason = _native_email_recipient_exclusion(run, recipient)
-	else:
-		subscription_topic = str(config.get("subscription_topic") or "").strip() if run.record_doctype == "Lead" else ""
-		if subscription_topic:
-			if not reach_installed:
-				raise AutomationError(_("Finbyz Reach is required for topic-based email preferences."))
-			if not frappe.db.exists("Subscription Topic", {"name": subscription_topic, "disabled": 0}):
-				raise AutomationError(_("Choose an enabled Subscription Topic."))
-		suppression_reason = _native_email_recipient_exclusion(run, recipient)
-		if not suppression_reason and subscription_topic:
-			suppression_reason = _reach_recipient_exclusion(recipient, subscription_topic)
 	if suppression_reason:
 		return {
 			"email_queue": None,
@@ -353,13 +342,6 @@ def queue_email(run, config: dict, *, record, outputs: dict[str, Any], workflow_
 			"suppressed": True,
 			"suppression_reason": str(suppression_reason),
 		}
-	consent_urls = None
-	if policy_enabled:
-		from finbyzreach.subscription_preferences import address_urls
-		from finbyzreach.consent import delivery_footer
-		consent_urls = address_urls(recipient, subscription_topic)
-		if subscription_topic != "Transactional":
-			message = delivery_footer(message, consent_urls)
 	# Keep Communication and Email Queue atomic. Without the Communication link,
 	# a successfully delivered workflow email disappears from the record activity
 	# timeline; without the savepoint, a queueing failure could leave a false
@@ -407,20 +389,13 @@ def queue_email(run, config: dict, *, record, outputs: dict[str, Any], workflow_
 			"raw_html": bool(content["raw_html"]),
 			"add_css": not bool(content["raw_html"]),
 		}
-		if consent_urls:
-			sendmail_options.update(add_unsubscribe_link=0,
-				unsubscribe_method="/api/method/finbyzreach.subscription_preferences.unsubscribe_address",
-				unsubscribe_params={"email_type": subscription_topic})
-		elif run.record_doctype != "Lead":
+		if run.record_doctype != "Lead":
 			sendmail_options["unsubscribe_method"] = (
 				"/api/method/finbyzai.workflow_builder.integrations.unsubscribe_workflow_email"
 			)
 		queue = frappe.sendmail(
 			**sendmail_options,
 		)
-		if consent_urls and subscription_topic != "Transactional" and queue:
-			from finbyzreach.consent import add_list_headers
-			add_list_headers(queue, consent_urls["unsubscribe_url"])
 		if not queue or not getattr(queue, "name", None):
 			raise AutomationError(_("Frappe did not create an Email Queue record."))
 	except Exception:

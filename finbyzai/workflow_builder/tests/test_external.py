@@ -417,6 +417,7 @@ class TestAutomationExternalSafety(IntegrationTestCase):
 			"integration_secret": "Meta",
 			"url": "https://graph.facebook.com/v23.0/me/messages",
 			"recipient_id": {"kind": "record_field", "field": "instagram_id"},
+			"last_inbound_at": {"kind": "record_field", "field": "last_instagram_message_at"},
 			"message": {"kind": "literal", "value": "Hello from the workflow"},
 			"purpose": "support",
 			"require_consent": 1,
@@ -425,7 +426,7 @@ class TestAutomationExternalSafety(IntegrationTestCase):
 			result = send_instagram_message(
 				run,
 				config,
-				record={"instagram_id": "17841400000000000"},
+				record={"instagram_id": "17841400000000000", "last_instagram_message_at": frappe.utils.now_datetime()},
 				outputs={},
 				effect_key="instagram-effect",
 			)
@@ -438,6 +439,25 @@ class TestAutomationExternalSafety(IntegrationTestCase):
 			{"recipient": {"id": "17841400000000000"}, "message": {"text": "Hello from the workflow"}},
 		)
 		self.assertEqual(result["recipient_id"], "17841400000000000")
+
+	def test_instagram_dm_is_skipped_outside_the_24_hour_window(self):
+		run = SimpleNamespace(record_doctype="Lead", record_name="LEAD-1")
+		base = {
+			"integration_secret": "Meta",
+			"url": "https://graph.facebook.com/v23.0/me/messages",
+			"recipient_id": {"kind": "record_field", "field": "instagram_id"},
+			"last_inbound_at": {"kind": "record_field", "field": "last_instagram_message_at"},
+			"message": {"kind": "literal", "value": "Hello"},
+		}
+		old = frappe.utils.add_to_date(frappe.utils.now_datetime(), hours=-30)
+		for last_inbound in (old, None):
+			with self.subTest(last_inbound=last_inbound), patch("finbyzai.workflow_builder.external.send_webhook") as webhook:
+				result = send_instagram_message(
+					run, base, record={"instagram_id": "1784", "last_instagram_message_at": last_inbound}, outputs={}, effect_key="k"
+				)
+			webhook.assert_not_called()
+			self.assertTrue(result["skipped"])
+			self.assertEqual(result["reason"], "OUTSIDE_24H_WINDOW")
 
 	def test_asana_action_uses_installed_integration_and_returns_stable_output(self):
 		settings = SimpleNamespace(enabled=1, workspace_gid="workspace-1")

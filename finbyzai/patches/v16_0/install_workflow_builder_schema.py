@@ -35,6 +35,7 @@ WORKFLOW_DOCTYPES = (
 	"automation_settings",
 	"automation_suppression_rule",
 	"automation_timer",
+	"automation_trigger_match",
 	"automation_trigger_subscription",
 	"automation_workflow",
 	"automation_workflow_folder",

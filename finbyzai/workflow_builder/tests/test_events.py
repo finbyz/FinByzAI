@@ -854,8 +854,8 @@ class TestAutomationEvents(IntegrationTestCase):
 				self.assertEqual(emit.call_args.args[:3], (expected_topic, "Lead", "LEAD-1"))
 				self.assertEqual(emit.call_args.args[3]["email_queue"], "EMAIL-QUEUE-1")
 
-	def test_complaint_event_is_not_produced(self):
-		self.assertNotIn("Marked As Spam", integrations.EMAIL_DELIVERY_TOPICS)
+	def test_complaint_event_is_produced_for_spam_reports(self):
+		self.assertEqual(integrations.EMAIL_DELIVERY_TOPICS["Marked As Spam"], "email.complained")
 		doc = frappe._dict(
 			doctype="Communication",
 			name="COMM-SPAM",
@@ -868,7 +868,8 @@ class TestAutomationEvents(IntegrationTestCase):
 		with patch.object(integrations, "_signal") as emit:
 			integrations.capture_communication_event(doc, "on_update")
 
-		emit.assert_not_called()
+		emit.assert_called_once()
+		self.assertEqual(emit.call_args.args[:3], ("email.complained", "Lead", "LEAD-1"))
 
 	def test_reach_campaign_tracking_row_does_not_duplicate_topic_unsubscribe(self):
 		doc = frappe._dict(

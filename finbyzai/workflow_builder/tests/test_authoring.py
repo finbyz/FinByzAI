@@ -619,7 +619,7 @@ class TestAutomationAuthoring(IntegrationTestCase):
 		self.assertEqual(
 			{call.args[1:3] for call in set_value.call_args_list},
 			{
-				("history_retention_days", 180),
+				("history_retention_days", 365),
 				("log_cleanup_interval_hours", 24),
 				("log_cleanup_batch_size", 500),
 				("ai_max_context_characters", 50000),

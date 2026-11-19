@@ -946,7 +946,10 @@ def _writable_despite_read_only(doctype: str, df) -> bool:
 		return True
 	if df.fieldtype in SUPPORTED_COLLECTION_FIELD_TYPES or df.fetch_from:
 		return False
-	custom = frappe.local.__dict__.setdefault("automation_custom_field_names", {})
+	custom = getattr(frappe.local, "automation_custom_field_names", None)
+	if custom is None:
+		custom = {}
+		frappe.local.automation_custom_field_names = custom
 	if doctype not in custom:
 		custom[doctype] = set(frappe.get_all("Custom Field", filters={"dt": doctype}, pluck="fieldname", limit_page_length=0))
 	return df.fieldname in custom[doctype]
