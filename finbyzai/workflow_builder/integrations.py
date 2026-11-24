@@ -491,12 +491,10 @@ def _capture_delivery_report(doc) -> bool:
 	if outbound.delivery_status == delivery_status:
 		return True
 
-	frappe.db.set_value(
-		"Communication",
-		outbound.name,
-		"delivery_status",
-		delivery_status,
-		update_modified=False,
+	# db_set, not frappe.db.set_value: it runs on_change, where other apps keep
+	# bounce counts and suppressions in step with the delivery status.
+	frappe.get_doc("Communication", outbound.name).db_set(
+		"delivery_status", delivery_status, update_modified=False
 	)
 	email_queue = frappe.db.get_value("Email Queue", {"communication": outbound.name}, "name")
 	payload = {

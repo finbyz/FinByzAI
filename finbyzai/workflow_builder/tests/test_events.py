@@ -695,17 +695,15 @@ class TestAutomationEvents(IntegrationTestCase):
 						"get_value",
 						side_effect=[outbound, "EMAIL-QUEUE-1"],
 					),
-					patch.object(integrations.frappe.db, "set_value") as set_value,
+					patch.object(integrations.frappe, "get_doc") as get_doc,
 					patch.object(integrations, "_signal") as emit,
 				):
 					integrations.capture_communication_event(incoming, "after_insert")
 
-				set_value.assert_called_once_with(
-					"Communication",
-					"COMM-SENT-1",
-					"delivery_status",
-					delivery_status,
-					update_modified=False,
+				# db_set, so on_change hooks (bounce counts, suppressions) run.
+				get_doc.assert_called_once_with("Communication", "COMM-SENT-1")
+				get_doc.return_value.db_set.assert_called_once_with(
+					"delivery_status", delivery_status, update_modified=False
 				)
 				emit.assert_called_once()
 				self.assertEqual(emit.call_args.args[:3], (expected_topic, "Lead", "LEAD-1"))
