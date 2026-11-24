@@ -86,6 +86,70 @@ class TestAutomationExternalSafety(IntegrationTestCase):
 		urls.assert_called_once()
 		native.assert_not_called()
 
+	def _real_consent_boundary(self, status, *, test_recipient=None, consent_required=1,
+			deliver_while_pending=0, email_type="Updates"):
+		class ReachedMessageBuilding(Exception):
+			pass
+
+		run = SimpleNamespace(record_doctype="Lead", record_name="LEAD-1")
+		config = {"recipient": {"kind": "literal", "value": "person@example.com"}, "subscription_topic": email_type}
+		content = {"subject": "Hi", "message": "<p>Hi</p>", "raw_html": True, "email_type": email_type}
+		policy = frappe._dict(available=True, name=email_type, consent_required=consent_required,
+			deliver_while_pending=deliver_while_pending)
+		with (
+			patch("finbyzai.workflow_builder.external.external_actions_enabled", return_value=True),
+			patch("finbyzai.workflow_builder.external.resolve_email_content", return_value=content),
+			patch.object(frappe, "get_installed_apps", return_value=["finbyzreach"]),
+			patch("finbyzreach.consent.policy_ready", return_value=True),
+			patch("finbyzreach.consent.email_policy", return_value=policy),
+			patch("finbyzreach.consent.suppressed_addresses", return_value={}),
+			patch("finbyzreach.consent._", side_effect=lambda value: value),
+			patch.object(frappe.db, "get_value", return_value=status),
+			patch("finbyzreach.email_marketing.test_recipient_exclusion",
+				return_value="Unsubscribed" if status == "Unsubscribed" and email_type != "Transactional" else None),
+			patch("finbyzai.workflow_builder.external._native_email_recipient_exclusion", return_value=None),
+			patch("finbyzreach.subscription_preferences.address_urls", side_effect=ReachedMessageBuilding) as urls,
+			patch("finbyzai.workflow_builder.external._create_outbound_communication") as communication,
+			patch.object(frappe, "sendmail") as sendmail,
+		):
+			try:
+				result = queue_email(run, config, record={}, outputs={}, test_recipient=test_recipient)
+			except ReachedMessageBuilding:
+				result = None
+		communication.assert_not_called()
+		sendmail.assert_not_called()
+		return result, urls.called
+
+	def test_normal_workflow_requires_real_consent_before_creating_mail_records(self):
+		for status in (None, "Pending", "Unsubscribed", "Subscribed"):
+			with self.subTest(status=status):
+				result, reached = self._real_consent_boundary(status)
+				self.assertEqual(reached, status == "Subscribed")
+				if status != "Subscribed":
+					self.assertTrue(result["suppressed"])
+					self.assertIsNone(result["communication"])
+					self.assertIsNone(result["email_queue"])
+
+	def test_explicit_workflow_preview_keeps_reviewer_exemption_but_not_opt_outs(self):
+		for status in (None, "Pending", "Unsubscribed"):
+			with self.subTest(status=status):
+				result, reached = self._real_consent_boundary(status, test_recipient="reviewer@example.com")
+				self.assertEqual(reached, status != "Unsubscribed")
+				if status == "Unsubscribed":
+					self.assertTrue(result["suppressed"])
+
+	def test_workflow_respects_pending_delivery_policy(self):
+		result, reached = self._real_consent_boundary("Pending", deliver_while_pending=1)
+		self.assertTrue(reached)
+		self.assertIsNone(result)
+
+	def test_optional_and_transactional_workflows_do_not_need_positive_consent(self):
+		for email_type in ("Updates", "Transactional"):
+			with self.subTest(email_type=email_type):
+				result, reached = self._real_consent_boundary(None, consent_required=0, email_type=email_type)
+				self.assertTrue(reached)
+				self.assertIsNone(result)
+
 	def test_workflow_email_creates_frappe_automated_message_for_record_timeline(self):
 		run = SimpleNamespace(record_doctype="Lead", record_name="LEAD-1")
 		communication = Mock()

@@ -171,10 +171,16 @@ def _native_email_recipient_exclusion(run, recipient: str) -> str | None:
 	return None
 
 
-def _reach_recipient_exclusion(recipient: str, subscription_topic: str | None = None) -> str | None:
-	"""Apply the optional campaign-topic preference maintained by Finbyz Reach."""
+def _reach_recipient_exclusion(recipient: str, subscription_topic: str | None = None, *, require_confirmed: bool = False) -> str | None:
+	"""Normal sends need real consent; explicit previews retain the reviewer exemption."""
 	if "finbyzreach" not in frappe.get_installed_apps():
 		return None
+	if require_confirmed:
+		from finbyzreach.consent import consent_exclusion
+		reason = consent_exclusion(recipient, subscription_topic)
+		if reason:
+			return str(reason)
+	# Also enforce address/record opt-outs, including for reviewer previews.
 	checker = frappe.get_attr("finbyzreach.email_marketing.test_recipient_exclusion")
 	return checker(recipient, subscription_topic or None)
 
@@ -327,7 +333,9 @@ def queue_email(run, config: dict, *, record, outputs: dict[str, Any], workflow_
 			raise AutomationError(_("The workflow email type must match its Email Template."))
 		subscription_topic = template_type or configured_type
 		policy = email_policy(subscription_topic)
-		suppression_reason = _reach_recipient_exclusion(recipient, subscription_topic)
+		suppression_reason = _reach_recipient_exclusion(
+			recipient, subscription_topic, require_confirmed=not bool(test_recipient)
+		)
 		if not suppression_reason and subscription_topic != "Transactional":
 			suppression_reason = _native_email_recipient_exclusion(run, recipient)
 	else:
