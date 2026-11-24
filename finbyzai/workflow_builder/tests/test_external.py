@@ -76,6 +76,10 @@ class TestAutomationExternalSafety(IntegrationTestCase):
 		_result, native, _urls = self._policy_email("Marketing E-Mails", consent_required=1)
 		native.assert_called_once()
 
+	def test_optional_consent_marketing_still_checks_native_opt_outs(self):
+		_result, native, _urls = self._policy_email("Marketing E-Mails", consent_required=0)
+		native.assert_called_once()
+
 	def test_transactional_email_ignores_marketing_opt_outs(self):
 		result, native, urls = self._policy_email("Transactional", consent_required=0)
 		self.assertIsNone(result)  # reached message building: not suppressed

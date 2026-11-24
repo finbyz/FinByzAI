@@ -328,7 +328,7 @@ def queue_email(run, config: dict, *, record, outputs: dict[str, Any], workflow_
 		subscription_topic = template_type or configured_type
 		policy = email_policy(subscription_topic)
 		suppression_reason = _reach_recipient_exclusion(recipient, subscription_topic)
-		if not suppression_reason and policy.consent_required:
+		if not suppression_reason and subscription_topic != "Transactional":
 			suppression_reason = _native_email_recipient_exclusion(run, recipient)
 	else:
 		subscription_topic = str(config.get("subscription_topic") or "").strip() if run.record_doctype == "Lead" else ""
@@ -357,9 +357,10 @@ def queue_email(run, config: dict, *, record, outputs: dict[str, Any], workflow_
 	if policy_enabled:
 		from finbyzreach.subscription_preferences import address_urls
 		from finbyzreach.consent import delivery_footer
-		consent_urls = address_urls(recipient, subscription_topic)
+		language = record.get("language") or "de"
+		consent_urls = address_urls(recipient, subscription_topic, language=language)
 		if subscription_topic != "Transactional":
-			message = delivery_footer(message, consent_urls)
+			message = delivery_footer(message, consent_urls, language=language)
 	# Keep Communication and Email Queue atomic. Without the Communication link,
 	# a successfully delivered workflow email disappears from the record activity
 	# timeline; without the savepoint, a queueing failure could leave a false
@@ -410,7 +411,7 @@ def queue_email(run, config: dict, *, record, outputs: dict[str, Any], workflow_
 		if consent_urls:
 			sendmail_options.update(add_unsubscribe_link=0,
 				unsubscribe_method="/api/method/finbyzreach.subscription_preferences.unsubscribe_address",
-				unsubscribe_params={"email_type": subscription_topic})
+				unsubscribe_params={"email_type": subscription_topic, "is_test": bool(test_recipient)})
 		elif run.record_doctype != "Lead":
 			sendmail_options["unsubscribe_method"] = (
 				"/api/method/finbyzai.workflow_builder.integrations.unsubscribe_workflow_email"
