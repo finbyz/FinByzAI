@@ -17,12 +17,6 @@ on_session_creation = "finbyzai.workflow_builder.integrations.capture_customer_p
 # app_include_css = "/assets/finbyzai/css/finbyzai.css"
 # app_include_js = "/assets/finbyzai/js/finbyzai.js"
 
-# Frappe resolves these bundle names to content-hashed assets.
-app_include_js = ["finbyzai_copilot.bundle.js"]
-app_include_css = ["finbyzai_copilot.bundle.css"]
-
-extend_bootinfo = "finbyzai.copilot.boot.boot_session"
-
 
 # include js, css files in header of web template
 # web_include_css = "/assets/finbyzai/css/finbyzai.css"
@@ -76,7 +70,7 @@ extend_bootinfo = "finbyzai.copilot.boot.boot_session"
 # before_install = "finbyzai.install.before_install"
 after_install = "finbyzai.install.after_install"
 
-after_migrate = ["finbyzai.install.after_migrate", "finbyzai.copilot.setup.ensure_defaults"]
+after_migrate = ["finbyzai.install.after_migrate"]
 
 # Uninstallation
 # ------------
@@ -123,35 +117,11 @@ permission_query_conditions = {
         "finbyzai.ai.doctype.ai_conversation.ai_conversation."
         "get_permission_query_conditions"
     ),
-    "Copilot User Settings": (
-        "finbyzai.copilot.doctype.copilot_user_settings.copilot_user_settings."
-        "get_permission_query_conditions"
-    ),
-    "Copilot Conversation": (
-        "finbyzai.copilot.doctype.copilot_conversation.copilot_conversation."
-        "get_permission_query_conditions"
-    ),
-    "Copilot Run": (
-        "finbyzai.copilot.doctype.copilot_run.copilot_run."
-        "get_permission_query_conditions"
-    ),
 }
 
 has_permission = {
     "AI Conversation": (
         "finbyzai.ai.doctype.ai_conversation.ai_conversation.has_permission"
-    ),
-    "Copilot User Settings": (
-        "finbyzai.copilot.doctype.copilot_user_settings.copilot_user_settings."
-        "has_permission"
-    ),
-    "Copilot Conversation": (
-        "finbyzai.copilot.doctype.copilot_conversation.copilot_conversation."
-        "has_permission"
-    ),
-    "Copilot Run": (
-        "finbyzai.copilot.doctype.copilot_run.copilot_run."
-        "has_permission"
     ),
 }
 

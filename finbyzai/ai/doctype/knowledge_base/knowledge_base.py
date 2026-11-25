@@ -375,8 +375,6 @@ def process_knowledge_base(kb_name):
 def queue_knowledge_base_processing(kb_name):
     """
     Internal: mark the Knowledge Base queued and enqueue the processing job.
-    Used by the form endpoint above and by copilot's remember tool, which checks
-    the user's access itself before adding a note.
     """
     current_status = frappe.db.get_value("Knowledge Base", kb_name, "status")
 
