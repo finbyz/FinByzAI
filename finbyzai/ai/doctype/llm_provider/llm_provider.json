@@ -41,7 +41,7 @@
    "label": "API Base URL"
   },
   {
-   "description": "Shown in the Copilot model picker. Leave empty to use the bundled provider logo.",
+   "description": "Leave empty to use the bundled provider logo.",
    "fieldname": "logo",
    "fieldtype": "Attach Image",
    "label": "Logo"
@@ -73,26 +73,6 @@
    "read": 1,
    "report": 1,
    "role": "Social Media Manager"
-  },
-  {
-   "role": "Copilot Admin",
-   "read": 1,
-   "write": 1,
-   "create": 1,
-   "delete": 1,
-   "report": 1,
-   "export": 1,
-   "share": 1,
-   "print": 1,
-   "email": 1
-  },
-  {
-   "role": "Copilot User",
-   "read": 1,
-   "report": 1,
-   "export": 1,
-   "print": 1,
-   "email": 1
   }
  ],
  "row_format": "Dynamic",

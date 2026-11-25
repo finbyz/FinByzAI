@@ -110,21 +110,6 @@ class TestGenerationPolicy(unittest.TestCase):
         self.assertIsInstance(llm, ProviderChatLiteLLM)
         self.assertEqual(llm.model_kwargs["cached_content"], cache.cache_name)
 
-    def test_copilot_override_validation_and_zero(self):
-        from finbyzai.copilot.agent import model
-        agent = SimpleNamespace(llm="openai/o3", thinking_level="High", temperature=0, max_tokens=10000)
-        settings = SimpleNamespace(default_model="openai/gpt-4o")
-        with patch("finbyzai.copilot.agent.access.require_read", side_effect=lambda dt, name, **kw: name), \
-             patch("frappe.get_doc", return_value=SimpleNamespace(llm=Mock())), \
-             patch("frappe.throw", side_effect=lambda message: (_ for _ in ()).throw(ValueError(message))):
-            with self.assertRaisesRegex(ValueError, "does not support"):
-                model(agent, settings, override="openai/gpt-4o")
-        llm = Mock()
-        with patch("finbyzai.copilot.agent.access.require_read", side_effect=lambda dt, name, **kw: name), \
-             patch("frappe.get_doc", return_value=SimpleNamespace(llm=llm)):
-            model(agent, settings)
-        self.assertEqual(llm.bind.call_args.kwargs["temperature"], 0)
-
     def test_async_invoke_and_stream(self):
         response = {"choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}]}
         llm = ProviderChatLiteLLM(model="gemini/gemini-3.8-flash", api_key="test", thinking_level="Medium")

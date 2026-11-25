@@ -17,13 +17,6 @@ on_session_creation = "finbyzai.workflow_builder.integrations.capture_customer_p
 # app_include_css = "/assets/finbyzai/css/finbyzai.css"
 # app_include_js = "/assets/finbyzai/js/finbyzai.js"
 
-# Frappe resolves these bundle names to content-hashed assets.
-# The Copilot panel bundle loads on demand (public/js/copilot_loader.bundle.js).
-app_include_js = ["copilot_loader.bundle.js"]
-
-extend_bootinfo = "finbyzai.copilot.boot.boot_session"
-
-
 # include js, css files in header of web template
 # web_include_css = "/assets/finbyzai/css/finbyzai.css"
 # web_include_js = "/assets/finbyzai/js/finbyzai.js"
@@ -76,7 +69,7 @@ extend_bootinfo = "finbyzai.copilot.boot.boot_session"
 # before_install = "finbyzai.install.before_install"
 after_install = "finbyzai.install.after_install"
 
-after_migrate = ["finbyzai.install.after_migrate", "finbyzai.copilot.setup.ensure_defaults"]
+after_migrate = ["finbyzai.install.after_migrate"]
 
 # Uninstallation
 # ------------
@@ -111,49 +104,25 @@ after_migrate = ["finbyzai.install.after_migrate", "finbyzai.copilot.setup.ensur
 # Permissions evaluated in scripted ways
 
 # permission_query_conditions = {
+    "Copilot Scheduled Task": "finbyzai.copilot.doctype.copilot_scheduled_task.copilot_scheduled_task.get_permission_query_conditions",
 # 	"Event": "frappe.desk.doctype.event.event.get_permission_query_conditions",
 # }
 #
 # has_permission = {
+    "Copilot Scheduled Task": "finbyzai.copilot.doctype.copilot_scheduled_task.copilot_scheduled_task.has_permission",
 # 	"Event": "frappe.desk.doctype.event.event.has_permission",
 # }
 
 permission_query_conditions = {
-    "Copilot Scheduled Task": "finbyzai.copilot.doctype.copilot_scheduled_task.copilot_scheduled_task.get_permission_query_conditions",
     "AI Conversation": (
         "finbyzai.ai.doctype.ai_conversation.ai_conversation."
-        "get_permission_query_conditions"
-    ),
-    "Copilot User Settings": (
-        "finbyzai.copilot.doctype.copilot_user_settings.copilot_user_settings."
-        "get_permission_query_conditions"
-    ),
-    "Copilot Conversation": (
-        "finbyzai.copilot.doctype.copilot_conversation.copilot_conversation."
-        "get_permission_query_conditions"
-    ),
-    "Copilot Run": (
-        "finbyzai.copilot.doctype.copilot_run.copilot_run."
         "get_permission_query_conditions"
     ),
 }
 
 has_permission = {
-    "Copilot Scheduled Task": "finbyzai.copilot.doctype.copilot_scheduled_task.copilot_scheduled_task.has_permission",
     "AI Conversation": (
         "finbyzai.ai.doctype.ai_conversation.ai_conversation.has_permission"
-    ),
-    "Copilot User Settings": (
-        "finbyzai.copilot.doctype.copilot_user_settings.copilot_user_settings."
-        "has_permission"
-    ),
-    "Copilot Conversation": (
-        "finbyzai.copilot.doctype.copilot_conversation.copilot_conversation."
-        "has_permission"
-    ),
-    "Copilot Run": (
-        "finbyzai.copilot.doctype.copilot_run.copilot_run."
-        "has_permission"
     ),
 }
 
