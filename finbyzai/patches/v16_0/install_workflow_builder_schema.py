@@ -25,6 +25,7 @@ WORKFLOW_DOCTYPES = (
 	"automation_inbound_webhook",
 	"automation_integration_secret",
 	"automation_metric_daily",
+	"automation_metric_delta",
 	"automation_outbox_event",
 	"automation_policy_evaluation",
 	"automation_round_robin_cursor",

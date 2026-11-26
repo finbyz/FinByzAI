@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import json
+from collections import defaultdict
+from time import sleep
 from typing import Any
+from uuid import uuid4
 
 import frappe
 from frappe.utils import cint, getdate, now_datetime, sha256_hash
+from frappe.utils.file_lock import LockTimeoutError
+from frappe.utils.synchronization import filelock
 
 from .errors import AutomationError
 from .notifications import enqueue_notification_for_user
@@ -64,26 +69,84 @@ def record_enrollment_decision(
 	return row.name
 
 
+METRIC_DELTA = "Automation Metric Delta"
+METRIC_BATCH_SIZE = 200
+METRIC_BATCHES_PER_RUN = 10
+METRIC_WRITE_ATTEMPTS = 3
+
+
 def increment_metric(workflow: str, workflow_version: str, fieldname: str, amount: float = 1) -> None:
+	"""Append a delta in the workflow transaction, without locking a shared counter."""
 	if fieldname not in METRIC_FIELDS:
 		raise ValueError(f"Unsupported automation metric: {fieldname}")
 	if not frappe.db.table_exists("Automation Metric Daily"):
 		return
-	filters = {"metric_date": getdate(), "workflow": workflow, "workflow_version": workflow_version}
+	timestamp = now_datetime()
+	user = frappe.session.user
+	frappe.db.bulk_insert(
+		METRIC_DELTA,
+		["name", "creation", "modified", "owner", "modified_by", "metric_date",
+		 "workflow", "workflow_version", "metric", "amount"],
+		[(uuid4().hex, timestamp, timestamp, user, user, getdate(timestamp),
+		  workflow, workflow_version, fieldname, amount)],
+	)
+
+
+def _apply_metric_delta(metric_date, workflow, workflow_version, fieldname, amount):
+	filters = {"metric_date": metric_date, "workflow": workflow, "workflow_version": workflow_version}
 	name = frappe.db.get_value("Automation Metric Daily", filters, "name", for_update=True)
 	if not name:
-		save_point = f"automation_metric_{frappe.generate_hash(length=8)}"
-		frappe.db.savepoint(save_point)
-		try:
-			name = frappe.get_doc({"doctype": "Automation Metric Daily", **filters}).insert(ignore_permissions=True).name
-		except frappe.DuplicateEntryError:
-			frappe.db.rollback(save_point=save_point)
-			name = frappe.db.get_value("Automation Metric Daily", filters, "name", for_update=True)
-		else:
-			frappe.db.release_savepoint(save_point)
-	if name:
-		current = frappe.db.get_value("Automation Metric Daily", name, fieldname, for_update=True) or 0
-		frappe.db.set_value("Automation Metric Daily", name, fieldname, float(current) + amount, update_modified=False)
+		name = frappe.get_doc({"doctype": "Automation Metric Daily", **filters}).insert(ignore_permissions=True).name
+	current = frappe.db.get_value("Automation Metric Daily", name, fieldname, for_update=True) or 0
+	frappe.db.set_value("Automation Metric Daily", name, fieldname, float(current) + amount, update_modified=False)
+
+
+def _aggregate_metric_batch():
+	# A locking read makes concurrent aggregators re-read rows after waiting;
+	# consuming the deltas and updating their totals commit or roll back together.
+	rows = frappe.qb.get_query(
+		METRIC_DELTA, fields=["name", "metric_date", "workflow", "workflow_version", "metric", "amount"],
+		order_by="creation asc, name asc", limit=METRIC_BATCH_SIZE,
+		for_update=True, ignore_permissions=True,
+	).run(as_dict=True)
+	if not rows:
+		return 0
+	totals = defaultdict(float)
+	for row in rows:
+		if row.metric not in METRIC_FIELDS:
+			raise ValueError(f"Unsupported automation metric: {row.metric}")
+		totals[(row.metric_date, row.workflow, row.workflow_version, row.metric)] += row.amount
+	for key, amount in totals.items():
+		_apply_metric_delta(*key, amount)
+	frappe.db.delete(METRIC_DELTA, {"name": ["in", [row.name for row in rows]]})
+	return len(rows)
+
+
+def aggregate_metric_deltas():
+	"""Scheduler-owned transactions: metric conflicts never replay business effects."""
+	if not frappe.db.table_exists(METRIC_DELTA):
+		return
+	try:
+		with filelock("automation_metric_aggregation", timeout=1):
+			frappe.db.commit()
+			for _ in range(METRIC_BATCHES_PER_RUN):
+				for attempt in range(METRIC_WRITE_ATTEMPTS):
+					try:
+						count = _aggregate_metric_batch()
+						frappe.db.commit()
+						break
+					except (frappe.QueryDeadlockError, frappe.QueryTimeoutError, frappe.DuplicateEntryError):
+						frappe.db.rollback()
+						if attempt == METRIC_WRITE_ATTEMPTS - 1:
+							raise
+						sleep(0.05 * (attempt + 1))
+					except Exception:
+						frappe.db.rollback()
+						raise
+				if count < METRIC_BATCH_SIZE:
+					return
+	except LockTimeoutError:
+		return
 
 
 def _incident_fingerprint(source_type: str, workflow: str | None, node_id: str | None, error_code: str) -> str:

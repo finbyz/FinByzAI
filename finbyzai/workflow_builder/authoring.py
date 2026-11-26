@@ -970,6 +970,7 @@ def _delete_workflow_history(workflow) -> dict[str, int]:
 	remove("Automation Policy Evaluation", {"workflow": workflow_name})
 	remove("Automation Enrollment Ledger", {"workflow": workflow_name})
 	remove("Automation Run", {"workflow": workflow_name})
+	remove("Automation Metric Delta", {"workflow": workflow_name})
 	remove("Automation Metric Daily", {"workflow": workflow_name})
 	remove("Automation Suppression Rule", {"workflow": workflow_name})
 	remove("Automation Workflow Comment", {"workflow": workflow_name})

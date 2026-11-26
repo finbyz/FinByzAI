@@ -247,6 +247,7 @@ doc_events = {
 scheduler_events = {
     "cron": {"* * * * *": ["finbyzai.copilot.schedules.dispatch_due_tasks"]},
 	"all": [
+		"finbyzai.workflow_builder.observability.aggregate_metric_deltas",
 		"finbyzai.workflow_builder.events.dispatch_pending_outbox",
 		"finbyzai.workflow_builder.engine.recover_stale_external_effects",
 		"finbyzai.workflow_builder.engine.recover_orphaned_active_runs",

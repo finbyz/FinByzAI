@@ -1,0 +1,51 @@
+{
+ "doctype": "DocType",
+ "name": "Automation Metric Delta",
+ "module": "Workflow Builder",
+ "engine": "InnoDB",
+ "autoname": "hash",
+ "field_order": [
+  "metric_date",
+  "workflow",
+  "workflow_version",
+  "metric",
+  "amount"
+ ],
+ "fields": [
+  {
+   "fieldname": "metric_date",
+   "fieldtype": "Date",
+   "label": "Metric Date",
+   "reqd": 1
+  },
+  {
+   "fieldname": "workflow",
+   "fieldtype": "Link",
+   "label": "Workflow",
+   "options": "Automation Workflow",
+   "reqd": 1
+  },
+  {
+   "fieldname": "workflow_version",
+   "fieldtype": "Link",
+   "label": "Workflow Version",
+   "options": "Automation Workflow Version"
+  },
+  {
+   "fieldname": "metric",
+   "fieldtype": "Data",
+   "label": "Metric",
+   "reqd": 1
+  },
+  {
+   "fieldname": "amount",
+   "fieldtype": "Float",
+   "label": "Amount",
+   "reqd": 1
+  }
+ ],
+ "permissions": [],
+ "sort_field": "creation",
+ "sort_order": "ASC",
+ "track_changes": 0
+}
