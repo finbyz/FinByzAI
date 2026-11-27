@@ -1727,7 +1727,8 @@ def _execute_node(run, token, node, record, value_record, outputs: dict[str, Any
 		fetch_field = str(config.get("fetch_field") or "")
 		ref_value = value_record.get(reference_field)
 		if not ref_value:
-			return {"status": "COMPLETE", "output": {"value": None}}
+			# Same output shape as a filled link, so later steps can always read linked_name.
+			return {"status": "COMPLETE", "output": {"value": None, "linked_name": None}}
 		meta = frappe.get_meta(record.doctype)
 		df = meta.get_field(reference_field)
 		if not df or df.fieldtype not in {"Link", "Dynamic Link"}:

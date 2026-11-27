@@ -9,8 +9,10 @@ from finbyzai.workflow_builder.ai_support import (
 	_provider_prompt,
 	build_ai_context,
 	resolve_ai_field_path,
+	simulated_step_outputs,
 	validate_ai_node_binding,
 )
+from finbyzai.workflow_builder.engine import _execute_node
 from finbyzai.workflow_builder.errors import AutomationError
 from finbyzai.workflow_builder.principal import execution_principal
 
@@ -158,3 +160,78 @@ class TestAIStepOutputs(IntegrationTestCase):
 	def test_profile_mode_does_not_send_step_outputs(self):
 		config = {"ai_profile": "Agent", "field_allowlist": [], "user_prompt": f'{{{{ steps["{self.NODE}"].value }}}}'}
 		self.assertNotIn("steps", self._context(config, {self.NODE: {"value": "x"}}))
+
+
+class TestFetchStepForAI(IntegrationTestCase):
+	FETCH = "7d3c9a10-1b2e-4f5a-8c6d-0e9f8a7b6c5d"
+	AI = "ai-node-1"
+
+	def _graph(self, user_prompt):
+		return {
+			"schema_version": 1,
+			"primary_doctype": "Sales Order",
+			"start_node_id": "trigger-1",
+			"nodes": [
+				{"id": "trigger-1", "type": "trigger.manual", "type_version": 1, "position": {"x": 0, "y": 0}, "config": {}},
+				{
+					"id": self.FETCH,
+					"type": "transform.associated_record",
+					"type_version": 1,
+					"position": {"x": 0, "y": 0},
+					"config": {"reference_field": "customer", "fetch_field": "customer_group"},
+				},
+				{
+					"id": self.AI,
+					"type": "action.ai_generate",
+					"type_version": 1,
+					"position": {"x": 0, "y": 0},
+					"config": {"prompt_mode": "inline", "model": "any", "user_prompt": user_prompt},
+				},
+			],
+			"edges": [
+				{"id": "e1", "source": "trigger-1", "target": self.FETCH},
+				{"id": "e2", "source": self.FETCH, "target": self.AI},
+			],
+		}
+
+	def test_fetch_step_with_empty_link_keeps_its_output_shape(self):
+		node = {"id": self.FETCH, "type": "transform.associated_record", "config": {"reference_field": "customer", "fetch_field": "customer_group"}}
+		result = _execute_node(frappe._dict(), None, node, frappe._dict(doctype="Sales Order"), {"customer": None}, {})
+		self.assertEqual(result, {"status": "COMPLETE", "output": {"value": None, "linked_name": None}})
+
+	def test_ai_test_fills_earlier_step_outputs_from_simulation(self):
+		order = frappe.db.get_value("Sales Order", {"customer": ["is", "set"]}, ["name", "customer"], as_dict=True)
+		if not order:
+			self.skipTest("No Sales Order with a customer on this site.")
+		expected = frappe.db.get_value("Customer", order.customer, "customer_group")
+		prompt = f'Group {{{{ steps["{self.FETCH}"].value }}}} for {{{{ steps["{self.FETCH}"].linked_name }}}}'
+		graph = self._graph(prompt)
+		config = graph["nodes"][2]["config"]
+		outputs = simulated_step_outputs(
+			graph,
+			frappe.get_doc("Sales Order", order.name),
+			node_id=self.AI,
+			config=config,
+			execution_user="Administrator",
+		)
+		self.assertEqual(outputs[self.FETCH], {"value": expected, "linked_name": order.customer})
+		self.assertNotIn(self.AI, outputs)
+
+		with (
+			patch("finbyzai.workflow_builder.ai_support.int_setting", side_effect=lambda _field, default: default),
+			execution_principal("Administrator", {"trace_id": "ai-fetch-test"}),
+		):
+			context = build_ai_context(
+				frappe._dict(record_doctype="Sales Order", record_name=order.name), config, record={}, outputs=outputs
+			)[0]
+		_system, human = _provider_prompt({"prompt_mode": "inline", **config}, config, context, [], {})
+		self.assertIn(f"Group {expected} for {order.customer}", human)
+
+	def test_ai_test_skips_simulation_when_prompt_names_no_step(self):
+		graph = self._graph("Summarise {{ doc.customer }}")
+		with patch("finbyzai.workflow_builder.engine.simulate_graph") as simulate:
+			outputs = simulated_step_outputs(
+				graph, frappe._dict(doctype="Sales Order"), node_id=self.AI, config=graph["nodes"][2]["config"], execution_user="Administrator"
+			)
+		self.assertEqual(outputs, {})
+		simulate.assert_not_called()

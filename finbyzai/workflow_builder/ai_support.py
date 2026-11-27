@@ -587,6 +587,29 @@ def _step_output_context(config: dict, outputs: dict | None) -> dict:
 	return steps
 
 
+def simulated_step_outputs(graph: dict, record, *, node_id: str, config: dict, execution_user: str) -> dict:
+	"""Outputs of the steps before an AI node, from the side-effect-free simulation.
+
+	Used only by Test AI, so {{ steps["..."].value }} placeholders are filled the way a
+	real run would fill them. Returns nothing when the prompt names no step or the
+	simulation cannot reach the referenced steps.
+	"""
+	if not _is_inline_ai_config(config) or not _prompt_step_references(config):
+		return {}
+	from .engine import simulate_graph
+
+	try:
+		simulation = simulate_graph(graph, record, execution_user=execution_user)
+	except Exception:  # noqa: BLE001 - best effort: a test still runs, with unfilled step placeholders
+		frappe.log_error(title="Workflow AI test: step simulation failed", message=frappe.get_traceback())
+		return {}
+	return {
+		entry["node_id"]: entry.get("output") or {}
+		for entry in simulation.get("path") or []
+		if entry.get("node_id") != node_id and entry.get("status") != "REQUIRES_AI_TEST"
+	}
+
+
 def _resolve_prompt_field_path(doctype: str, path: str, *, user: str | None):
 	"""Resolve a prompt reference leniently: unknown or unreadable fields are left out, never sent.
 
@@ -1331,6 +1354,7 @@ def test_ai_action(
 	workflow,
 	record,
 	invoked_by: str,
+	outputs: dict | None = None,
 ) -> dict:
 	"""Run one explicitly confirmed AI-only test and persist its cost evidence.
 
@@ -1367,7 +1391,7 @@ def test_ai_action(
 		record_doctype=record.doctype,
 		record_name=record.name,
 	)
-	context, _last_communication = build_ai_context(run, config, record=record.as_dict())
+	context, _last_communication = build_ai_context(run, config, record=record.as_dict(), outputs=outputs)
 	context_hash = frappe.utils.sha256_hash(canonical_json(context))
 	effect_key = frappe.utils.sha256_hash(
 		f"ai-test\0{workflow.name}\0{record.doctype}\0{record.name}\0{frappe.generate_hash(length=20)}"

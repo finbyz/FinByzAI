@@ -828,19 +828,27 @@ def test_ai_node(envelope=None, workflow_id=None, record_name=None, node_id=None
 		user=workflow.execution_user,
 	):
 		raise AutomationPermissionError(_("Workflow execution user cannot read this record."))
-	from .ai_support import test_ai_action
+	from .ai_support import simulated_step_outputs, test_ai_action
 
 	actor = frappe.session.user
 	with preview_principal(
 		workflow.execution_user,
 		{"trace_id": "ai-test", "causation_id": "ai-test", "recursion_depth": 0},
 	):
+		outputs = simulated_step_outputs(
+			validation["graph"],
+			record,
+			node_id=selected,
+			config=node.get("config") or {},
+			execution_user=workflow.execution_user,
+		)
 		result = test_ai_action(
 			str(node["type"]),
 			node.get("config") or {},
 			workflow=workflow,
 			record=record,
 			invoked_by=actor,
+			outputs=outputs,
 		)
 	return {"valid": True, "issues": [], **result}
 
