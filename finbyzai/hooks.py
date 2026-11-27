@@ -104,12 +104,10 @@ after_migrate = ["finbyzai.install.after_migrate"]
 # Permissions evaluated in scripted ways
 
 # permission_query_conditions = {
-    "Copilot Scheduled Task": "finbyzai.copilot.doctype.copilot_scheduled_task.copilot_scheduled_task.get_permission_query_conditions",
 # 	"Event": "frappe.desk.doctype.event.event.get_permission_query_conditions",
 # }
 #
 # has_permission = {
-    "Copilot Scheduled Task": "finbyzai.copilot.doctype.copilot_scheduled_task.copilot_scheduled_task.has_permission",
 # 	"Event": "frappe.desk.doctype.event.event.has_permission",
 # }
 
@@ -214,7 +212,6 @@ doc_events = {
 # ---------------
 
 scheduler_events = {
-    "cron": {"* * * * *": ["finbyzai.copilot.schedules.dispatch_due_tasks"]},
 	"all": [
 		"finbyzai.workflow_builder.observability.aggregate_metric_deltas",
 		"finbyzai.workflow_builder.events.dispatch_pending_outbox",

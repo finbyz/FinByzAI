@@ -6,6 +6,7 @@
 import frappe
 
 COPILOT_DOCTYPES = (
+	"Copilot Scheduled Task",
 	"Copilot Message",
 	"Copilot Run",
 	"Copilot Conversation",

@@ -39,7 +39,6 @@ dependencies = [
 
     "PyMuPDF~=2.0",
     "python-docx~=1.2",
-    "markitdown[docx,pptx]~=0.1.9",
     "opentelemetry-proto>=1.42.1",
     "opentelemetry-exporter-otlp>=1.42.1",
     "opentelemetry-exporter-otlp-proto-grpc>=1.42.1"
