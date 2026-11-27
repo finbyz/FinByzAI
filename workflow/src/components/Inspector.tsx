@@ -30,7 +30,7 @@ import { HelpTooltip } from './HelpTooltip'
 import { DeleteWorkflowStepButton } from './DeleteWorkflowStepButton'
 import { useDialogA11y } from './useDialogA11y'
 import { call, fetchFieldCatalog, invalidateMetadataCaches, mutationEnvelope, searchDoctypes, searchLink } from '../lib/api'
-import { availableOutputNodes, conditionToFilterGroups, emptyPredicate, filterGroupsToCondition, isRequiredAuthoringValueMissing, outputCatalog, parseCondition, parseWebhookPayload, type NodeOutputCatalog } from '../lib/inspectorAuthoring'
+import { availableOutputNodes, conditionToFilterGroups, loadAiContextFieldOptions, emptyPredicate, filterGroupsToCondition, isRequiredAuthoringValueMissing, outputCatalog, parseCondition, parseWebhookPayload, type NodeOutputCatalog } from '../lib/inspectorAuthoring'
 import { useWorkflowActions, useWorkflowDocument, useWorkflowEditor } from '../state/WorkflowContext'
 import type { BusinessEventType, ConditionExpression, ConditionPredicate, FieldCatalogItem, NodeCatalogItem, NodeConfig, ValidationIssue, WorkflowGraph, WorkflowNode, WorkflowObjectProfile, WorkflowValueSpec } from '../types'
 
@@ -251,7 +251,7 @@ export function SendEmailEditor({
 	</>
 }
 
-import { PromptVariableEditor } from './PromptVariableEditor'
+import { PromptVariableEditor, type PromptStepOutput } from './PromptVariableEditor'
 
 interface AiAuthoringCatalog {
 	profiles: Array<{ name: string; title?: string; agent_type?: string; llm?: string; knowledge_base?: string }>
@@ -290,7 +290,7 @@ function AiActionEditor({
 	primaryDoctype,
 	graph,
 	readFields,
-	outputNodes = [],
+	stepOutputs = [],
 	update,
 }: {
 	node: WorkflowNode
@@ -299,7 +299,7 @@ function AiActionEditor({
 	primaryDoctype: string
 	graph: WorkflowGraph
 	readFields: FieldCatalogItem[]
-	outputNodes?: WorkflowNode[]
+	stepOutputs?: PromptStepOutput[]
 	update(config: NodeConfig, key: string): void
 }) {
 	const support = node.type === 'action.ai_support_agent'
@@ -437,8 +437,9 @@ function AiActionEditor({
 						onSystemPromptChange={(system_prompt) => update({ ...config, system_prompt }, 'system_prompt')}
 						onUserPromptChange={(user_prompt) => update({ ...config, user_prompt }, 'user_prompt')}
 						readFields={readFields}
-						outputNodes={outputNodes}
+						stepOutputs={stepOutputs}
 						primaryDoctype={primaryDoctype}
+						workflowId={workflowId}
 					/>
 
 					{/* Output Format */}
@@ -534,15 +535,11 @@ function AiActionEditor({
 						<MultiValueInput
 							values={fieldValues}
 							onChange={(field_allowlist) => update({ ...config, field_allowlist }, 'field_allowlist')}
-							loadOptions={async (search) =>
-								readFields
-									.filter((field) => (field.capabilities?.scalar_read ?? !['Table', 'Table MultiSelect'].includes(field.fieldtype)) && (!search || `${field.label} ${field.fieldname}`.toLowerCase().includes(search.toLowerCase())))
-									.map((field) => ({ value: field.fieldname, label: field.label, description: `${field.fieldtype} · ${field.fieldname}` }))
-							}
-							placeholder="Search permitted scalar fields…"
+							loadOptions={(search) => loadAiContextFieldOptions(search, readFields, workflowId)}
+							placeholder="Search permitted fields, or type customer. for linked fields…"
 							ariaLabel="AI context fields"
 						/>
-						<Hint>Only these fields leave Frappe. Secret-like field names are rejected server-side and secret-looking text is redacted before the provider call.</Hint>
+						<Hint>Only these fields leave Frappe. For a Link field, type its fieldname and a dot (for example customer.) to pick a field of the linked document. Secret-like field names are rejected server-side and secret-looking text is redacted before the provider call.</Hint>
 					</div>
 					{primaryDoctype === 'Issue' && (
 						<label className="text-body flex items-start gap-2 text-[10.5px]">
@@ -1263,7 +1260,7 @@ export function Inspector({ width, minWidth, maxWidth, expanded, onWidthChange, 
 		{node.type === 'action.complete_goal' && <InspectorSection title="Complete goal" description="Record a named goal and end this path successfully.">{text('goal', 'Goal name', false, 'Goal reached')}<Hint>You can also use the workflow-wide goal condition when completion should be driven by record fields.</Hint></InspectorSection>}
 		{node.type === 'action.go_to' && <InspectorSection title="Go to an existing step" description="Continue at one existing step so paths can converge without duplicating actions."><div><label className={labelClass}>Destination step</label><select className={inputClass} value={String(config.target_node_id || '')} onChange={(event) => update({ ...config, target_node_id: event.target.value }, 'target_node_id')}><option value="">Choose a step…</option>{graph?.nodes.filter((candidate) => candidate.id !== node.id && candidate.id !== graph.start_node_id).map((candidate) => <option value={candidate.id} key={candidate.id}>{nodeLabels[candidate.type]} · {candidate.id.slice(0, 8)}</option>)}</select></div><Hint>The server treats this as a real graph link, rejects loops, and does not allow a second outgoing edge from this step.</Hint></InspectorSection>}
 		{node.type === 'action.notify_user' && <InspectorSection title="Internal notification" description="Send a notification inside Frappe without exposing record data externally."><div><label className={labelClass}>Audience</label><select className={inputClass} value={String(config.audience || 'specific')} onChange={(event) => update({ ...config, audience: event.target.value }, 'audience')}><option value="specific">Specific user</option><option value="assigned">Users assigned to this record</option><option value="all">All enabled system users</option></select></div>{String(config.audience || 'specific') === 'specific' && <div><label className={labelClass}>Recipient user</label><AsyncCombobox ariaLabel="Recipient user" value={String(config.for_user || '')} onChange={(value) => update({ ...config, for_user: value }, 'for_user')} loadOptions={loadUsers} placeholder="Search enabled users…" /></div>}<div><label className={labelClass}>How to notify</label><select className={inputClass} value={String(config.channels || 'in_app')} onChange={(event) => update({ ...config, channels: event.target.value }, 'channels')}><option value="in_app">In-app notification</option><option value="email">E-mail with a link to the record</option><option value="in_app,email">In-app and e-mail</option><option value="sms">SMS (needs SMS settings and the user's mobile number)</option><option value="in_app,email,sms">In-app, e-mail and SMS</option></select></div>{text('subject', 'Subject', false, 'What happened?')}{text('message', 'Message', true, 'Add useful context for the recipient…')}{config.audience === 'all' && <Hint>Safety limit: at most 500 enabled System Users receive one notification each.</Hint>}</InspectorSection>}
-		{(node.type === 'action.ai_generate' || node.type === 'action.ai_support_agent') && graph && <AiActionEditor node={node} config={config} workflowId={workflowId} primaryDoctype={primaryDoctype || ''} graph={graph} readFields={scalarReadFields} outputNodes={outputNodes} update={update} />}
+		{(node.type === 'action.ai_generate' || node.type === 'action.ai_support_agent') && graph && <AiActionEditor node={node} config={config} workflowId={workflowId} primaryDoctype={primaryDoctype || ''} graph={graph} readFields={scalarReadFields} stepOutputs={outputNodes.map((step) => ({ id: step.id, type: step.type, label: nodeTypes.find((item) => item.type === step.type)?.label, paths: outputPaths[step.type] || [] }))} update={update} />}
 		{node.type === 'action.human_approval' && <InspectorSection title="Human approval" description="Pause this run until an assigned teammate reviews the prepared draft. Approved text becomes available to later actions; this step never sends it by itself."><div data-config-path="reviewer"><label className={labelClass}>Reviewer</label><AsyncCombobox ariaLabel="Approval reviewer" value={String(config.reviewer || '')} onChange={(reviewer) => update({ ...config, reviewer }, 'reviewer')} loadOptions={loadUsers} placeholder="Search enabled System Users…" /></div>{text('title', 'Review title', false, 'Review workflow draft')}{text('instructions', 'Instructions for reviewer', true, 'What should the reviewer check?')}{bindingEditor('draft_text', 'Draft to review')}{bindingEditor('evidence', 'Evidence for reviewer (optional)')}{bindingEditor('ai_attempt', 'AI attempt ID (optional)')}<div className="grid grid-cols-2 items-end gap-2"><div><label className={labelClass}>Expires after days</label><input className={inputClass} type="number" min="1" max="30" value={Number(config.expires_days || 7)} onChange={(event) => update({ ...config, expires_days: Number(event.target.value) }, 'expires_days')} /></div><label className="text-body flex items-center gap-2 pb-2 text-[11px]"><input type="checkbox" checked={Boolean(config.allow_edit ?? true)} onChange={(event) => update({ ...config, allow_edit: event.target.checked ? 1 : 0 }, 'allow_edit')} />Reviewer may edit</label></div><Hint>Connect both Approved and Rejected paths before publishing. Use final_text from the Approved path in a later Send email or Update record action.</Hint></InspectorSection>}
         {node.type === 'action.send_email' && <SendEmailEditor config={config} workflowId={workflowId} primaryDoctype={primaryDoctype || ''} update={update} recipientEditor={bindingEditor('recipient', 'Recipient email')} subjectOverrideEditor={bindingEditor('subject_override', 'Subject override (optional)')} subjectEditor={bindingEditor('subject', 'Subject')} messageEditor={bindingEditor('message', 'Message', true)} />}
         {node.type === 'action.send_sms' && <InspectorSection title="Consent-aware SMS" description="Submit synchronously through Frappe SMS Settings and report the gateway response.">{bindingEditor('recipient', 'Recipient mobile')}{bindingEditor('message', 'Message')}{text('purpose', 'Consent purpose', false, 'workflow')}<label className="text-body flex items-center gap-2 text-[11px]"><input type="checkbox" checked={Boolean(config.require_consent ?? true)} onChange={(event) => update({ ...config, require_consent: event.target.checked ? 1 : 0 }, 'require_consent')} />Require a current consent grant <HelpTooltip label="Consent requirement" content="When enabled, the recipient needs a current GRANTED SMS consent record for the same purpose. A missing, expired, denied, or revoked grant blocks submission." /></label><Hint>Native Frappe SMS Settings remain authoritative.</Hint></InspectorSection>}

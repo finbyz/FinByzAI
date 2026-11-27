@@ -792,6 +792,7 @@ def execute_external(
 			effect_key=effect_key,
 			node_id=node_id,
 			token_name=token_name,
+			outputs=outputs,
 		)
 	if node_type == "action.send_email":
 		output = queue_email(run, config, record=record, outputs=outputs, workflow_settings=workflow_settings)

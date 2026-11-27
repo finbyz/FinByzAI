@@ -350,15 +350,7 @@ def validate_ai_node_binding(
 				raise AutomationError(_("Choose between one and fifty unique record fields for AI context."))
 		else:
 			for fieldname in fields:
-				if any(fragment in str(fieldname).lower() for fragment in SENSITIVE_FIELD_FRAGMENTS):
-					raise AutomationError(_("Sensitive field {0} cannot be sent to AI.").format(fieldname))
-				assert_field_access(
-					primary_doctype,
-					str(fieldname),
-					permission_type="read",
-					user=execution_user,
-					capability="scalar_read",
-				)
+				resolve_ai_field_path(primary_doctype, fieldname, user=execution_user)
 
 	if cint(config.get("include_thread")):
 		if primary_doctype != "Issue":
@@ -506,20 +498,156 @@ def _thread_context(run, *, limit: int) -> tuple[list[dict], str | None]:
 	return messages, rows[-1].name if rows else None
 
 
-def build_ai_context(run, config: dict, *, record: dict) -> tuple[dict, str | None]:
-	max_chars = min(max(int_setting("ai_max_context_characters", 50000), 5000), 200000)
-	fields = {}
-	for fieldname in config.get("field_allowlist") or []:
-		if any(fragment in str(fieldname).lower() for fragment in SENSITIVE_FIELD_FRAGMENTS):
-			continue
-		assert_field_access(
-			run.record_doctype,
-			str(fieldname),
-			permission_type="read",
-			user=current_execution_user(),
-			capability="scalar_read",
+MAX_AI_CONTEXT_FIELDS = 50
+PROMPT_FIELD_REFERENCE = re.compile(r"\bdoc\.([A-Za-z_][A-Za-z0-9_]*)(?:\.([A-Za-z_][A-Za-z0-9_]*))?")
+# {{ steps["<node id>"].text }} (node ids are UUIDs) or {{ steps.simple_id.text }}.
+PROMPT_STEP_REFERENCE = re.compile(
+	r"\bsteps(?:\[\s*['\"]([A-Za-z0-9][A-Za-z0-9._:-]{0,139})['\"]\s*\]|\.([A-Za-z_][A-Za-z0-9_]*))"
+	r"((?:\.[A-Za-z_][A-Za-z0-9_]*)+)"
+)
+
+
+def _is_sensitive_fieldname(fieldname: Any) -> bool:
+	return any(fragment in str(fieldname).lower() for fragment in SENSITIVE_FIELD_FRAGMENTS)
+
+
+def _is_inline_ai_config(config: dict) -> bool:
+	return bool(config.get("prompt_mode") == "inline" or (not config.get("ai_profile") and config.get("model")))
+
+
+def resolve_ai_field_path(doctype: str, path: Any, *, user: str | None) -> tuple[str, str | None, str | None]:
+	"""Check one AI context field path and return (field, linked_doctype, linked_field).
+
+	A plain fieldname reads the enrolled record. "link_field.fieldname" reads one
+	field of the document that a Link field points to (one level only). The
+	execution user needs read access to both fields.
+	"""
+	path = str(path or "").strip()
+	parts = path.split(".")
+	if len(parts) > 2 or not all(parts):
+		raise AutomationError(
+			_("AI context field {0} is invalid. Use a fieldname, or link_field.fieldname for one linked document.").format(path)
 		)
-		fields[str(fieldname)] = _safe_scalar(record.get(fieldname))
+	if any(_is_sensitive_fieldname(part) for part in parts):
+		raise AutomationError(_("Sensitive field {0} cannot be sent to AI.").format(path))
+	row = assert_field_access(doctype, parts[0], permission_type="read", user=user, capability="scalar_read")
+	if len(parts) == 1:
+		return parts[0], None, None
+	target_doctype = row.get("options") if row.get("fieldtype") == "Link" else None
+	if not target_doctype:
+		raise AutomationError(
+			_("Field {0}.{1} is not a Link field, so {2} cannot be read through it.").format(doctype, parts[0], path)
+		)
+	assert_field_access(target_doctype, parts[1], permission_type="read", user=user, capability="scalar_read")
+	return parts[0], target_doctype, parts[1]
+
+
+def _prompt_field_paths(config: dict) -> list[str]:
+	"""Return the record fields an inline prompt references as {{ doc.x }} or {{ doc.link.x }}."""
+	text = "\n".join(str(config.get(key) or "") for key in ("system_prompt", "user_prompt"))
+	paths = []
+	for match in PROMPT_FIELD_REFERENCE.finditer(text):
+		path = match.group(1) if not match.group(2) else f"{match.group(1)}.{match.group(2)}"
+		if path not in paths:
+			paths.append(path)
+	return paths
+
+
+def _prompt_step_references(config: dict) -> list[tuple[str, list[str]]]:
+	"""Return the earlier-step outputs an inline prompt references, as (node_id, path parts)."""
+	text = "\n".join(str(config.get(key) or "") for key in ("system_prompt", "user_prompt"))
+	references = []
+	for match in PROMPT_STEP_REFERENCE.finditer(text):
+		reference = (match.group(1) or match.group(2), match.group(3).strip(".").split("."))
+		if reference not in references:
+			references.append(reference)
+	return references
+
+
+def _step_output_context(config: dict, outputs: dict | None) -> dict:
+	"""Copy only the referenced values of completed earlier steps, redacted like record fields."""
+	steps: dict[str, dict] = {}
+	if not outputs:
+		return steps
+	for node_id, parts in _prompt_step_references(config):
+		value: Any = outputs.get(node_id)
+		if not isinstance(value, dict):
+			continue
+		for part in parts:
+			value = value.get(part) if isinstance(value, dict) else None
+		if value is None:
+			continue
+		target = steps.setdefault(node_id, {})
+		for part in parts[:-1]:
+			existing = target.get(part)
+			if not isinstance(existing, dict):
+				existing = target[part] = {}
+			target = existing
+		target[parts[-1]] = _safe_scalar(value)
+	return steps
+
+
+def _resolve_prompt_field_path(doctype: str, path: str, *, user: str | None):
+	"""Resolve a prompt reference leniently: unknown or unreadable fields are left out, never sent.
+
+	"doc.customer_name.upper" is not a linked path, so it falls back to "customer_name".
+	"""
+	candidates = [path, path.split(".", 1)[0]] if "." in path else [path]
+	for candidate in candidates:
+		try:
+			return resolve_ai_field_path(doctype, candidate, user=user)
+		except (AutomationError, frappe.PermissionError, frappe.DoesNotExistError):
+			continue
+	return None
+
+
+def _linked_field_values(target_doctype: str, name: Any, fieldnames: list[str], *, user: str | None) -> dict:
+	"""Read the chosen fields of one linked document, or None values when it is missing or not readable."""
+	values = dict.fromkeys(fieldnames)
+	if not name or not frappe.db.exists(target_doctype, name):
+		return values
+	if not frappe.has_permission(target_doctype, "read", doc=name, user=user):
+		return values
+	columns = [fieldname for fieldname in fieldnames if fieldname != "__record_link"]
+	row = frappe.db.get_value(target_doctype, name, columns, as_dict=True) if columns else {}
+	for fieldname in fieldnames:
+		if fieldname == "__record_link":
+			values[fieldname] = frappe.utils.get_url_to_form(target_doctype, name)
+		else:
+			values[fieldname] = _safe_scalar((row or {}).get(fieldname))
+	return values
+
+
+def build_ai_context(run, config: dict, *, record: dict, outputs: dict | None = None) -> tuple[dict, str | None]:
+	max_chars = min(max(int_setting("ai_max_context_characters", 50000), 5000), 200000)
+	user = current_execution_user()
+	fields = {}
+	links: dict[str, tuple[str, list[str]]] = {}
+	resolved = []
+	for fieldname in config.get("field_allowlist") or []:
+		if _is_sensitive_fieldname(fieldname):
+			continue
+		resolved.append(resolve_ai_field_path(run.record_doctype, fieldname, user=user))
+	if _is_inline_ai_config(config):
+		for path in _prompt_field_paths(config):
+			if len(resolved) >= MAX_AI_CONTEXT_FIELDS:
+				break
+			result = _resolve_prompt_field_path(run.record_doctype, path, user=user)
+			if result and result not in resolved:
+				resolved.append(result)
+	for fieldname, target_doctype, target_field in resolved:
+		fields[fieldname] = _safe_scalar(record.get(fieldname))
+		if target_doctype:
+			linked_fields = links.setdefault(fieldname, (target_doctype, []))[1]
+			if target_field not in linked_fields:
+				linked_fields.append(target_field)
+	linked = {
+		fieldname: {
+			"doctype": target_doctype,
+			"fields": _linked_field_values(target_doctype, record.get(fieldname), linked_fields, user=user),
+		}
+		for fieldname, (target_doctype, linked_fields) in links.items()
+	}
 	thread = []
 	last_communication = None
 	if cint(config.get("include_thread")):
@@ -536,6 +664,11 @@ def build_ai_context(run, config: dict, *, record: dict) -> tuple[dict, str | No
 		},
 		"conversation": thread,
 	}
+	if linked:
+		context["record"]["linked"] = linked
+	steps = _step_output_context(config, outputs) if _is_inline_ai_config(config) else {}
+	if steps:
+		context["steps"] = steps
 	encoded = canonical_json(context)
 	if len(encoded) > max_chars:
 		# Keep the newest customer context and deterministic field manifest. Trim
@@ -554,10 +687,14 @@ def _context_manifest(context: dict) -> str:
 	"""Return useful audit metadata without retaining the model input itself."""
 	record = context.get("record") if isinstance(context.get("record"), dict) else {}
 	conversation = context.get("conversation") if isinstance(context.get("conversation"), list) else []
+	fieldnames = [str(fieldname) for fieldname in (record.get("fields") or {})]
+	for link_field, linked in (record.get("linked") or {}).items():
+		fieldnames.extend(f"{link_field}.{fieldname}" for fieldname in (linked.get("fields") or {}))
 	return canonical_json(
 		{
 			"record_doctype": record.get("doctype"),
-			"fieldnames": sorted(str(fieldname) for fieldname in (record.get("fields") or {})),
+			"fieldnames": sorted(fieldnames),
+			**({"step_outputs": sorted(context["steps"])} if context.get("steps") else {}),
 			"conversation_messages": len(conversation),
 			"conversation_directions": sorted(
 				{str(row.get("direction") or "") for row in conversation if isinstance(row, dict)}
@@ -765,6 +902,53 @@ def _normalise_citations(result: dict, sources: list[dict]) -> list[dict]:
 	return normalised
 
 
+class _LinkedRecord:
+	"""Prompt-template view of a Link field.
+
+	{{ doc.customer }} still prints the linked ID, and {{ doc.customer.customer_group }}
+	reads a field that was fetched from the linked document.
+	"""
+
+	__slots__ = ("_fields", "_name")
+
+	def __init__(self, name: Any, fields: dict):
+		self._name = name
+		self._fields = fields or {}
+
+	def __getattr__(self, item: str) -> Any:
+		fields = object.__getattribute__(self, "_fields")
+		if item in fields:
+			return fields[item]
+		if item == "name":
+			return object.__getattribute__(self, "_name")
+		raise AttributeError(item)
+
+	def __getitem__(self, item: str) -> Any:
+		try:
+			return self.__getattr__(item)
+		except AttributeError as exc:
+			raise KeyError(item) from exc
+
+	def __str__(self) -> str:
+		return "" if self._name is None else str(self._name)
+
+	def __bool__(self) -> bool:
+		return bool(self._name)
+
+	def __eq__(self, other: object) -> bool:
+		return self._name == (other._name if isinstance(other, _LinkedRecord) else other)
+
+	def __hash__(self) -> int:
+		return hash(self._name)
+
+
+def _prompt_doc(record: dict) -> dict:
+	doc = dict(record.get("fields") or {})
+	for link_field, linked in (record.get("linked") or {}).items():
+		doc[link_field] = _LinkedRecord(doc.get(link_field), linked.get("fields") or {})
+	return doc
+
+
 def _provider_prompt(snapshot: dict, config: dict, context: dict, sources: list[dict], schema: dict) -> tuple[str, str]:
 	is_inline = snapshot.get("prompt_mode") == "inline"
 	source_payload = [{key: row[key] for key in ("source_id", "title", "locator", "content")} for row in sources]
@@ -775,9 +959,10 @@ def _provider_prompt(snapshot: dict, config: dict, context: dict, sources: list[
 		output_format = str(snapshot.get("output_format") or config.get("output_format") or "text")
 
 		render_ctx = {
-			"doc": (context.get("record", {}).get("fields", {}) or {}),
+			"doc": _prompt_doc(context.get("record", {}) or {}),
 			"record": context.get("record", {}),
 			"conversation": context.get("conversation", []),
+			"steps": context.get("steps") or {},
 		}
 		try:
 			system_rendered = frappe.render_template(system_tmpl, render_ctx)
@@ -973,6 +1158,7 @@ def execute_ai_action(
 	effect_key: str,
 	node_id: str,
 	token_name: str,
+	outputs: dict | None = None,
 ) -> dict:
 	"""Execute one pinned AI action without performing downstream side effects."""
 	if not ai_actions_enabled():
@@ -980,7 +1166,7 @@ def execute_ai_action(
 	_daily_budget_available()
 	profile, snapshot = _profile_for_run(run, node_id)
 	mode = "grounded_answer" if node_type == "action.ai_support_agent" else str(config.get("mode") or "")
-	context, last_communication = build_ai_context(run, config, record=record)
+	context, last_communication = build_ai_context(run, config, record=record, outputs=outputs)
 	context_hash = frappe.utils.sha256_hash(canonical_json(context))
 	attempt = _attempt(
 		effect_key,

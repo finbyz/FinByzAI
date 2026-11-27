@@ -1,4 +1,6 @@
-import type { ConditionExpression, ConditionGroup, ConditionPredicate, NodeCatalogItem, NodeType, WorkflowAssignment, WorkflowGraph, WorkflowNode, WorkflowValueSpec } from '../types'
+import type { ComboboxOption } from '../components/AsyncCombobox'
+import { fetchFieldCatalog } from './api'
+import type { ConditionExpression, ConditionGroup, ConditionPredicate, FieldCatalogItem, NodeCatalogItem, NodeType, WorkflowAssignment, WorkflowGraph, WorkflowNode, WorkflowValueSpec } from '../types'
 
 export type NodeOutputCatalog = Partial<Record<NodeType, string[]>>
 
@@ -137,4 +139,28 @@ export function parseAssignments(value: unknown): WorkflowAssignment[] {
 	if (spec.kind === 'node_output') return [{ field: String(assignment.field || ''), ...operationValue, value: { kind: 'node_output', node_id: String(spec.node_id || ''), path: String(spec.path || '') } as WorkflowValueSpec }]
 	return [{ field: String(assignment.field || ''), ...operationValue, value: { kind: 'literal', value: spec.value } as WorkflowValueSpec }]
   })
+}
+
+const isReadableScalar = (field: FieldCatalogItem) => field.capabilities?.scalar_read ?? !['Table', 'Table MultiSelect'].includes(field.fieldtype)
+
+/** Options for the AI context field list: record fields, or "link.field" once a Link fieldname and a dot are typed. */
+export async function loadAiContextFieldOptions(search: string, readFields: FieldCatalogItem[], workflowId?: string): Promise<ComboboxOption[]> {
+  const query = search.trim().toLowerCase()
+  const dot = query.indexOf('.')
+  if (dot > 0) {
+    const linkField = readFields.find((field) => field.fieldname.toLowerCase() === query.slice(0, dot) && field.fieldtype === 'Link' && field.options)
+    if (!linkField?.options) return []
+    const subSearch = query.slice(dot + 1)
+    const catalog = await fetchFieldCatalog(linkField.options, 'read', workflowId)
+    return catalog.fields
+      .filter((field) => isReadableScalar(field) && field.fieldname !== '__record_link' && (!subSearch || `${field.label} ${field.fieldname}`.toLowerCase().includes(subSearch)))
+      .map((field) => ({ value: `${linkField.fieldname}.${field.fieldname}`, label: `${linkField.label} › ${field.label}`, description: `${linkField.options} · ${field.fieldtype} · ${field.fieldname}` }))
+  }
+  return readFields
+    .filter((field) => isReadableScalar(field) && (!query || `${field.label} ${field.fieldname}`.toLowerCase().includes(query)))
+    .map((field) => ({
+      value: field.fieldname,
+      label: field.label,
+      description: field.fieldtype === 'Link' && field.options ? `Link to ${field.options} · type ${field.fieldname}. for its fields` : `${field.fieldtype} · ${field.fieldname}`,
+    }))
 }

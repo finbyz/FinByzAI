@@ -26,7 +26,7 @@ EDITOR_AGENT = "Workflow Builder Editor"
 # ---------------------------------------------------------------------------
 GRAPH_OUTPUT_SCHEMA: dict = {
 	"title": "WorkflowDraft",
-	"$comment": "finbyz-wf-authoring-schema-v20",
+	"$comment": "finbyz-wf-authoring-schema-v22",
 	"type": "object",
 	# Nothing is globally required - a ``reply_type="question"`` turn carries only
 	# ``message``/``questions`` while a proposal carries ``summary``/``graph``. The
@@ -281,6 +281,17 @@ this needs BOTH halves or the AI step receives nothing:
   e.g. to summarise a call recording:
      "field_allowlist": ["recording_url", "summary"],
      "user_prompt": "Summarise this call recording: {{{{ doc.recording_url }}}}"
+  LINKED DOCUMENTS: when a readable field has fieldtype "Link", its value is
+  only the linked ID. To read data from the linked document, write
+  {{{{ doc.LINKFIELD.FIELDNAME }}}} (one level only), e.g. on a Sales Order
+  {{{{ doc.customer.customer_group }}}}, and add "LINKFIELD.FIELDNAME" to
+  field_allowlist. {{{{ doc.LINKFIELD }}}} still prints the ID. Use only
+  standard fields you are sure exist on the linked DocType ("options").
+  EARLIER STEP RESULTS: an inline AI prompt can also read the output of an
+  earlier step (for example "transform.associated_record" -> value or
+  linked_name, "transform.child_records" -> values or count, another AI step
+  -> text or summary) as {{{{ steps["NODE_ID"].OUTPUT_PATH }}}}, using that
+  node's exact id and one of its output_paths. These need no field_allowlist.
   "model": set it ONLY to an LLM name the user gave you verbatim in this
   conversation (an unrecognised name is discarded). Otherwise leave it blank and
   follow the RECORD REFERENCES rule below. Same for "ai_profile" and
@@ -561,7 +572,7 @@ def _refresh_seed_if_stale(seed: dict) -> None:
 	try:
 		doc = frappe.get_doc("AI Agent", seed["name"])
 		joined = "\n".join((getattr(m, "content", "") or "") for m in (doc.messages or []))
-		if "{chat_history}" in joined and "finbyz-wf-authoring-schema-v20" in (doc.output_schema or ""):
+		if "{chat_history}" in joined and "finbyz-wf-authoring-schema-v22" in (doc.output_schema or ""):
 			return
 		doc.output_schema = seed["output_schema"]
 		doc.set("messages", [])

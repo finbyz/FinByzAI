@@ -163,11 +163,16 @@ NODE_GUIDE: dict[str, dict[str, Any]] = {
 			"system_prompt": "Role instructions. Jinja: {{ doc.FIELDNAME }} is substituted.",
 			"user_prompt": (
 				"The task. Jinja: {{ doc.FIELDNAME }} is substituted. This is how you "
-				"pass record data in - and the fieldname must ALSO be in field_allowlist."
+				"pass record data in - and the fieldname must ALSO be in field_allowlist. "
+				"For a Link field, {{ doc.LINKFIELD.FIELDNAME }} reads one field of the "
+				"linked document (one level only). {{ steps[\"NODE_ID\"].OUTPUT_PATH }} "
+				"reads an earlier step's output, e.g. the value of a Read associated record step."
 			),
 			"field_allowlist": (
 				"1-50 fieldnames from readable_fields. THESE ARE THE ONLY RECORD "
-				"FIELDS THE AI CAN SEE. Empty list means it sees no record data at all."
+				"FIELDS THE AI CAN SEE. Empty list means it sees no record data at all. "
+				"LINKFIELD.FIELDNAME (e.g. customer.customer_group) reads a field of the "
+				"document a Link field points to."
 			),
 			"output_format": "One of: text, json.",
 			"mode": "One of: summarize, classify_extract, draft_reply, grounded_answer.",
@@ -183,7 +188,7 @@ NODE_GUIDE: dict[str, dict[str, Any]] = {
 		"params": {
 			"ai_profile": "The AI profile to run. Required.",
 			"knowledge_base": "Knowledge Base to answer from. Required.",
-			"field_allowlist": "Record fields the agent may read. Required.",
+			"field_allowlist": "Record fields the agent may read, or LINKFIELD.FIELDNAME for a linked document. Required.",
 		},
 	},
 

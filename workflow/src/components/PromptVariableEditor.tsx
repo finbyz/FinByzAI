@@ -1,5 +1,6 @@
-import { Bot, ChevronDown, Copy, Sparkles, Tag, Variable } from 'lucide-react'
+import { Bot, ChevronDown, ChevronRight, Copy, Link2, Sparkles, Tag, Variable } from 'lucide-react'
 import { useRef, useState } from 'react'
+import { fetchFieldCatalog } from '../lib/api'
 import type { FieldCatalogItem } from '../types'
 
 interface PromptVariableEditorProps {
@@ -8,8 +9,28 @@ interface PromptVariableEditorProps {
 	onSystemPromptChange: (value: string) => void
 	onUserPromptChange: (value: string) => void
 	readFields: FieldCatalogItem[]
-	outputNodes?: Array<{ id: string; label?: string; type?: string }>
+	stepOutputs?: PromptStepOutput[]
 	primaryDoctype: string
+	workflowId?: string
+}
+
+export interface PromptStepOutput {
+	id: string
+	type?: string
+	label?: string
+	paths: string[]
+}
+
+// Audit and plumbing outputs that are rarely useful inside a prompt.
+const HIDDEN_STEP_PATHS = new Set(['attempt_id', 'provider', 'model', 'usage', 'profile_version', 'error_code', 'error_message', 'session_id', 'turn_number'])
+
+/** Jinja reference to an earlier step's output. Node ids are UUIDs, so bracket syntax is required. */
+const stepOutputTag = (nodeId: string, path: string) => `{{ steps["${nodeId}"].${path} }}`
+
+interface LinkedFieldsState {
+	loading: boolean
+	error?: string
+	fields: FieldCatalogItem[]
 }
 
 const TEMPLATES = [
@@ -41,14 +62,36 @@ export function PromptVariableEditor({
 	onSystemPromptChange,
 	onUserPromptChange,
 	readFields,
-	outputNodes = [],
+	stepOutputs = [],
 	primaryDoctype,
+	workflowId,
 }: PromptVariableEditorProps) {
 	const userPromptRef = useRef<HTMLTextAreaElement>(null)
 	const systemPromptRef = useRef<HTMLTextAreaElement>(null)
 	const [activeFieldCategory, setActiveFieldCategory] = useState<'record' | 'steps'>('record')
 	const [fieldSearch, setFieldSearch] = useState('')
 	const [showTemplates, setShowTemplates] = useState(false)
+	const [expandedLink, setExpandedLink] = useState('')
+	const [linkedFields, setLinkedFields] = useState<Record<string, LinkedFieldsState>>({})
+
+	const toggleLinkedFields = (field: FieldCatalogItem) => {
+		if (expandedLink === field.fieldname) {
+			setExpandedLink('')
+			return
+		}
+		setExpandedLink(field.fieldname)
+		const target = field.options || ''
+		if (!target || linkedFields[target]?.fields.length) return
+		setLinkedFields((current) => ({ ...current, [target]: { loading: true, fields: [] } }))
+		fetchFieldCatalog(target, 'read', workflowId)
+			.then((catalog) => {
+				const fields = catalog.fields.filter((item) => (item.capabilities?.scalar_read ?? !['Table', 'Table MultiSelect'].includes(item.fieldtype)) && item.fieldname !== '__record_link')
+				setLinkedFields((current) => ({ ...current, [target]: { loading: false, fields, error: catalog.available ? undefined : catalog.explanation || 'Not readable' } }))
+			})
+			.catch((reason) => {
+				setLinkedFields((current) => ({ ...current, [target]: { loading: false, fields: [], error: reason instanceof Error ? reason.message : 'Unable to load fields' } }))
+			})
+	}
 
 	const insertVariable = (variableTag: string, target: 'user' | 'system' = 'user') => {
 		const textarea = target === 'user' ? userPromptRef.current : systemPromptRef.current
@@ -167,7 +210,7 @@ export function PromptVariableEditor({
 						>
 							{primaryDoctype} Fields ({readFields.length})
 						</button>
-						{outputNodes.length > 0 && (
+						{stepOutputs.length > 0 && (
 							<button
 								type="button"
 								className={`rounded px-2 py-1 font-semibold transition-colors ${
@@ -177,7 +220,7 @@ export function PromptVariableEditor({
 								}`}
 								onClick={() => setActiveFieldCategory('steps')}
 							>
-								Step Outputs ({outputNodes.length})
+								Step Outputs ({stepOutputs.length})
 							</button>
 						)}
 					</div>
@@ -195,21 +238,70 @@ export function PromptVariableEditor({
 						<>
 							{filteredFields.map((field) => {
 								const pillTag = `{{ doc.${field.fieldname} }}`
+								const isLink = field.fieldtype === 'Link' && Boolean(field.options)
 								return (
+									<span key={field.fieldname} className="inline-flex items-stretch">
 									<button
-										key={field.fieldname}
 										type="button"
 										draggable
 										onDragStart={(e) => e.dataTransfer.setData('text/plain', pillTag)}
 										onClick={() => insertVariable(pillTag, 'user')}
-										title={`Click to insert ${pillTag} (${field.fieldtype})`}
-										className="group flex items-center gap-1 rounded-md border border-brand-200/60 bg-brand-50/70 px-2 py-0.5 font-mono text-[10px] font-semibold text-brand-700 transition-colors hover:border-brand-400 hover:bg-brand-100 dark:border-brand-900/60 dark:bg-brand-500/10 dark:text-brand-300"
+										title={`Click to insert ${pillTag} (${field.fieldtype}${isLink ? ` to ${field.options}` : ''})`}
+										className={`group flex items-center gap-1 ${isLink ? 'rounded-l-md' : 'rounded-md'} border border-brand-200/60 bg-brand-50/70 px-2 py-0.5 font-mono text-[10px] font-semibold text-brand-700 transition-colors hover:border-brand-400 hover:bg-brand-100 dark:border-brand-900/60 dark:bg-brand-500/10 dark:text-brand-300`}
 									>
-										<Tag size={10} className="opacity-60" />
+										{isLink ? <Link2 size={10} className="opacity-60" /> : <Tag size={10} className="opacity-60" />}
 										<span>doc.{field.fieldname}</span>
 									</button>
+									{isLink && (
+										<button
+											type="button"
+											onClick={() => toggleLinkedFields(field)}
+											aria-expanded={expandedLink === field.fieldname}
+											aria-label={`Show ${field.options} fields of ${field.fieldname}`}
+											title={`Read data from the linked ${field.options}`}
+											className="flex items-center rounded-r-md border border-l-0 border-brand-200/60 bg-brand-50/70 px-1 text-brand-700 transition-colors hover:border-brand-400 hover:bg-brand-100 dark:border-brand-900/60 dark:bg-brand-500/10 dark:text-brand-300"
+										>
+											{expandedLink === field.fieldname ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+										</button>
+									)}
+									</span>
 								)
 							})}
+							{expandedLink && (() => {
+								const link = readFields.find((field) => field.fieldname === expandedLink)
+								const state = link?.options ? linkedFields[link.options] : undefined
+								if (!link) return null
+								return (
+									<div className="mt-1 w-full rounded-lg border border-dashed border-brand-200/80 p-1.5 dark:border-brand-900/60">
+										<p className="mb-1 text-[9.5px] text-muted">
+											Fields of the linked <strong className="text-heading">{link.options}</strong> (via doc.{link.fieldname})
+										</p>
+										{state?.loading && <p className="text-[10px] text-muted">Loading fields…</p>}
+										{state?.error && <p className="text-[10px] text-red-600">{state.error}</p>}
+										<div className="flex flex-wrap gap-1">
+											{(state?.fields || [])
+												.filter((sub) => !fieldSearch || `${sub.label} ${sub.fieldname}`.toLowerCase().includes(fieldSearch.toLowerCase()) || `${link.label} ${link.fieldname}`.toLowerCase().includes(fieldSearch.toLowerCase()))
+												.map((sub) => {
+													const subTag = `{{ doc.${link.fieldname}.${sub.fieldname} }}`
+													return (
+														<button
+															key={sub.fieldname}
+															type="button"
+															draggable
+															onDragStart={(e) => e.dataTransfer.setData('text/plain', subTag)}
+															onClick={() => insertVariable(subTag, 'user')}
+															title={`Click to insert ${subTag} (${sub.label}, ${sub.fieldtype})`}
+															className="flex items-center gap-1 rounded-md border border-brand-200/60 bg-[var(--surface-ground)] px-2 py-0.5 font-mono text-[10px] font-semibold text-brand-700 transition-colors hover:border-brand-400 hover:bg-brand-100 dark:border-brand-900/60 dark:text-brand-300"
+														>
+															<Tag size={10} className="opacity-60" />
+															<span>doc.{link.fieldname}.{sub.fieldname}</span>
+														</button>
+													)
+												})}
+										</div>
+									</div>
+								)
+							})()}
 							{filteredFields.length === 0 && (
 								<p className="p-2 text-[10px] text-muted">No matching fields found.</p>
 							)}
@@ -217,29 +309,42 @@ export function PromptVariableEditor({
 					)}
 
 					{activeFieldCategory === 'steps' && (
-						<>
-							{outputNodes.map((step) => {
-								const pillTag = `{{ steps.${step.id}.text }}`
+						<div className="w-full space-y-1.5">
+							{stepOutputs.map((step) => {
+								const paths = step.paths.filter((path) => !HIDDEN_STEP_PATHS.has(path) && (!fieldSearch || `${step.label || ''} ${path}`.toLowerCase().includes(fieldSearch.toLowerCase())))
+								if (!paths.length) return null
 								return (
-									<button
-										key={step.id}
-										type="button"
-										draggable
-										onDragStart={(e) => e.dataTransfer.setData('text/plain', pillTag)}
-										onClick={() => insertVariable(pillTag, 'user')}
-										title={`Click to insert ${pillTag}`}
-										className="flex items-center gap-1 rounded-md border border-purple-200/60 bg-purple-50/70 px-2 py-0.5 font-mono text-[10px] font-semibold text-purple-700 transition-colors hover:border-purple-400 hover:bg-purple-100 dark:border-purple-900/60 dark:bg-purple-500/10 dark:text-purple-300"
-									>
-										<Copy size={10} className="opacity-60" />
-										<span>steps.{step.id}.text</span>
-									</button>
+									<div key={step.id}>
+										<p className="mb-0.5 text-[9.5px] text-muted" title={step.id}>
+											<strong className="text-heading">{step.label || step.type || 'Step'}</strong> · {step.id.slice(0, 8)}
+										</p>
+										<div className="flex flex-wrap gap-1">
+											{paths.map((path) => {
+												const pillTag = stepOutputTag(step.id, path)
+												return (
+													<button
+														key={path}
+														type="button"
+														draggable
+														onDragStart={(e) => e.dataTransfer.setData('text/plain', pillTag)}
+														onClick={() => insertVariable(pillTag, 'user')}
+														title={`Click to insert ${pillTag}`}
+														className="flex items-center gap-1 rounded-md border border-purple-200/60 bg-purple-50/70 px-2 py-0.5 font-mono text-[10px] font-semibold text-purple-700 transition-colors hover:border-purple-400 hover:bg-purple-100 dark:border-purple-900/60 dark:bg-purple-500/10 dark:text-purple-300"
+													>
+														<Copy size={10} className="opacity-60" />
+														<span>{path}</span>
+													</button>
+												)
+											})}
+										</div>
+									</div>
 								)
 							})}
-						</>
+						</div>
 					)}
 				</div>
 				<p className="mt-2 text-[9px] text-light">
-					Tip: Click any tag or drag it into the prompt box to interpolate dynamic data at runtime.
+					Tip: Click any tag or drag it into the prompt box to interpolate dynamic data at runtime. Use the arrow on a linked field to read data from the document it points to. Only fields used in the prompt are sent to the AI.
 				</p>
 			</div>
 		</div>
