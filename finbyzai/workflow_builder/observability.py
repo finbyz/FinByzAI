@@ -79,7 +79,7 @@ def increment_metric(workflow: str, workflow_version: str, fieldname: str, amoun
 	"""Append a delta in the workflow transaction, without locking a shared counter."""
 	if fieldname not in METRIC_FIELDS:
 		raise ValueError(f"Unsupported automation metric: {fieldname}")
-	if not frappe.db.table_exists("Automation Metric Daily"):
+	if not frappe.db.table_exists(METRIC_DELTA):
 		return
 	timestamp = now_datetime()
 	user = frappe.session.user

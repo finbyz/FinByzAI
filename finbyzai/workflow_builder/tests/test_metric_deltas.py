@@ -84,6 +84,11 @@ class MetricDeltaTest(TestCase):
         self.assertEqual(list(self.connection.execute('SELECT * FROM totals')), [])
         self.assertEqual(self.db.rollback.call_count, metrics.METRIC_WRITE_ATTEMPTS)
 
+    def test_capture_is_skipped_until_the_delta_table_exists(self):
+        self.db.table_exists.side_effect = lambda doctype: doctype != metrics.METRIC_DELTA
+        metrics.increment_metric('W', 'V', 'completed_runs')
+        self.db.bulk_insert.assert_not_called()
+
     def test_invalid_metrics_cannot_be_queued(self):
         with self.assertRaises(ValueError):
             metrics.increment_metric('W', 'V', 'untrusted_column')
